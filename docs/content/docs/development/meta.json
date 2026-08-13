@@ -2,5 +2,5 @@
   "title": "Development",
   "root": true,
   "defaultOpen": true,
-  "pages": ["local-development", "canvas-data-structure", "local-codex-canvas"]
+  "pages": ["project-structure", "local-development", "canvas-data-structure", "local-codex-canvas"]
 }
