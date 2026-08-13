@@ -17,7 +17,7 @@ description: 账号体系与后端服务规划第四期的详细开发底稿，�
 
 **不做用户自定义渠道的后端转发。** 用户自己配置的渠道保持现有的浏览器直连不变，`image.ts`、`video.ts`、`audio.ts` 里那套直连第三方的实现原样保留，理由见下面的「为什么用户渠道不走后端」。
 
-支付与点数充值。点数的发放仍然只能通过第三期的管理后台手工调整，接入支付渠道不在规划范围内。
+**本期不新增支付相关改动，充值链路已经在第三期交付。** `GET /api/credit-packages`、`POST /api/orders`、`POST /api/orders/{id}/cancel` 与 `POST /api/payments/webhook/{provider}` 连同前端的充值页都已经可用，本期既不改这几个接口，也不新增充值入口，只是让第三期建好的账本真正开始被消费。
 
 也不做**服务端执行用户自定义脚本**。`model-plugin.ts` 那套用户脚本继续留在浏览器里跑，只对用户自己的渠道生效，本期这个文件一行都不改，理由见下面的「用户自定义脚本只保留给用户渠道」。
 
@@ -25,11 +25,11 @@ description: 账号体系与后端服务规划第四期的详细开发底稿，�
 
 ## 为什么必须做这一期
 
-第三期引入了点数收费，但点数目前扣不准，因为生成行为压根不经过本项目的服务端。第三期的文档已经把这件事写成了「软约束」：浏览器直连用户自己配置的第三方渠道，服务端只能依赖前端在生成完成后主动上报一条生成记录来计数，改几行前端代码就能绕过。当计数只用于「每天最多生成 50 张」这类礼貌性限制时，软约束是可接受的；一旦点数变成要花钱买的东西，软约束就等于卖一个无法计量的商品——用户付了钱，我们不知道他用了多少；用户没付钱，我们也拦不住他用。
+第三期引入了点数收费，但点数目前扣不准，因为生成行为压根不经过本项目的服务端。这件事在早期方案里是被当成「软约束」接受的：浏览器直连用户自己配置的第三方渠道，服务端只能依赖前端在生成完成后主动上报一条生成记录来计数，改几行前端代码就能绕过。当计数只用于「每天最多生成 50 张」这类礼貌性限制时，软约束是可接受的；一旦点数变成要花钱买的东西，软约束就等于卖一个无法计量的商品——用户付了钱，我们不知道他用了多少；用户没付钱，我们也拦不住他用。
 
 **要让点数变成硬约束，唯一的办法是让密钥只存在于服务端。** 只要浏览器持有可用的 API Key，任何前端侧的计费都只是提示。这不是补丁能解决的问题，只能改架构，而这正是当初选择凭据托管方案时被推迟的第三个选项。本期只把这条结论用在平台模型上：平台的 Key 从头到尾不出服务端，所以平台模型的点数是硬约束；用户渠道的 Key 本来就在用户手里，而那条路径压根不扣点，也就不需要硬约束。
 
-**有一件事本期做不到，需要提前说清楚：第二期留下的凭据明文下发不会消失。** 第二期的 `GET /api/credentials` 返回的是**完整明文** API Key，理由是前端必须拿着它直连第三方渠道；本期用户渠道继续直连，这个理由依然成立，所以这个接口继续返回明文，第二期文档里「第四期会关掉它」的说法在本期不兑现。它的直接后果是任何拿到用户 access token 的人仍然能读走该用户全部厂商密钥，因此第一期定下的「access token 只存内存、refresh token 走 httpOnly cookie」这条防线必须长期维持，不能因为平台模型有了后端转发就放松。本期真正消掉的暴露面只有一个：平台自己的渠道 Key 从头到尾不进浏览器。
+**有一件事本期做不到，需要提前说清楚：第二期留下的凭据明文下发不会消失。** 第二期的 `GET /api/credentials` 返回的是**完整明文** API Key，理由是前端必须拿着它直连第三方渠道；本期用户渠道继续直连，这个理由依然成立，所以这个接口继续返回明文，早期方案里「第四期会把它关掉」的设想不会兑现。它的直接后果是任何拿到用户 access token 的人仍然能读走该用户全部厂商密钥，因此第一期定下的「access token 只存内存、refresh token 走 httpOnly cookie」这条防线必须长期维持，不能因为平台模型有了后端转发就放松。本期真正消掉的暴露面只有一个：平台自己的渠道 Key 从头到尾不进浏览器。
 
 还有一项顺带的收益，但要说清楚它的边界。**平台模型这条路径上的错误处理和厂商差异都退到了服务端**：平台请求的失败统一按第一期的 `error.code` 约定返回，前端不用再靠猜 HTTP 状态码、翻找 `msg` / `message` / `error.message` / `detail` 拼文案，Gemini 与 Seedance 那类协议适配也由服务端的 provider 承担。但 `image.ts` 里的 Gemini 分支、`video.ts` 里的 Seedance 分支、以及三个文件里各自那份 `readApiErrorMessage` 与 `readAxiosError` **不能删**，用户渠道仍然要靠它们直连上游。收敛的是新增的平台路径，不是存量代码。
 
@@ -148,6 +148,7 @@ description: 账号体系与后端服务规划第四期的详细开发底稿，�
   "images": [
     { "storageKey": "image:Ab3xY", "width": 1024, "height": 1024, "bytes": 812345, "mimeType": "image/png" }
   ],
+  "generationId": "g1...",
   "durationMs": 8421
 }
 ```
@@ -187,6 +188,7 @@ description: 账号体系与后端服务规划第四期的详细开发底稿，�
   "taskId": "3f2a...",
   "status": "pending",
   "credits": { "cost": 40, "balance": 92 },
+  "generationId": "g2...",
   "pollAfterMs": 5000
 }
 ```
@@ -205,6 +207,7 @@ description: 账号体系与后端服务规划第四期的详细开发底稿，�
   "status": "succeeded",
   "video": { "storageKey": "video:Qm4tR", "bytes": 4821334, "mimeType": "video/mp4", "durationMs": 6000 },
   "credits": { "cost": 40, "refunded": 0 },
+  "generationId": "g2...",
   "pollAfterMs": 5000
 }
 ```
@@ -348,7 +351,9 @@ nginx 默认开启 `proxy_buffering`，会先把上游响应攒进缓冲区再�
 
 扣点在一个数据库事务里完成：校验余额、扣减余额、写一条消费流水。事务提交之后才发起上游请求。余额不足时返回 402 `INSUFFICIENT_CREDITS` 并带上 `required` 与 `balance`，前端据此提示还差多少。
 
-退还写一条 `type=refund` 流水（第三期的点数流水表，下文按 `credit_ledger` 指代，实际表名以第三期为准），金额与被退的消费流水相等，并且**在流水里记 `ref_id` 指向那条消费记录**，同时对 `(ref_id, type)` 建唯一索引。这个唯一索引是幂等的关键：重试、并发、进程重启导致退还逻辑被执行两次时，第二次会因为唯一冲突而失败，用户不会拿到双倍退款。
+退还往第三期的 `credit_transactions` 里写一条 `type=refund` 流水，金额与被退的消费流水相等，并且**在流水里记 `ref_id` 指向被退的那条 `type=consume` 流水的 id**，一条消费最多对应一条退还。
+
+幂等由数据库兜底，但索引必须是**部分唯一索引** `(type, ref_id) WHERE type = 'refund'`，不能对 `(ref_id, type)` 无条件建唯一。第三期管理员手工增减点数写的是 `type=grant`、`ref_id` 为操作管理员 id，无条件的唯一索引会让同一个管理员发第二次点就撞上冲突被拒。只约束 refund 之后，这个索引仍然是退还幂等的关键：重试、并发、进程重启导致退还逻辑被执行两次时，第二次会因为唯一冲突而失败，用户不会拿到双倍退款。
 
 退还本身也可能失败（数据库抖动、进程被杀）。这种情况下把 `ai_requests.refund_pending` 置为真并记 error 级日志，管理后台的用户详情页提供一个「重试待退还」的入口。不要为此引入定时任务或消息队列，出现频率极低，人工触发足够。
 
@@ -471,6 +476,14 @@ type PlatformChannel struct {
 **本期只有这一处出站攻击面，这正是选择「用户渠道保持直连」的理由之一。** 如果按被否决的那条路线让服务端替用户去打用户填写的 `baseUrl`，那么除了结果 URL 之外还会多出一个由用户完全控制的目标地址，防护强度就取决于这套校验有没有写漏。保持直连之后这个面根本不存在，服务端主动发起的外部请求只有两类：打平台自己配置的上游，以及下载平台上游返回的结果 URL。校验逻辑集中在 `service/upstream.go` 一处。
 
 落盘失败等同生成失败，全额退还点数。用户拿不到产物却被扣了钱，无论技术上是哪一步出的问题，对他来说都是一样的。
+
+**生成记录由服务端写，不由前端补。** 第三期把 `generations` 定成了生成历史的权威来源，`/api/me` 的 `usage.imageGenerateToday` 与管理后台 `/api/admin/stats` 的今日生成量都直接从它 `count(*)` 数出来，所以平台路径的每一次生成都必须在这张表里留下、且只留下一条记录。**这条记录由服务端在结果落盘的同一个事务里写**：`kind`、`model`、`prompt`、`config`、`result`、`durationMs` 这些字段服务端在那一刻全都有，写 `media_files` 与更新存储用量计数本来就在同一个数据库事务里，顺手多写一条生成记录不引入任何新的一致性风险。
+
+**前端的平台分支不再调 `POST /api/generations`。** 第二期那个接口从本期起只服务用户渠道分支——用户渠道的生成不经过服务端，服务端无从知晓，只能由前端在生成完成后补写。责任必须唯一：两边都写「今日生成量」会翻倍，两边都不写它就恒为 0。所以规则是裸模型名的记录由服务端写，含 `::` 的记录由前端写。为了让前端拿到服务端刚写的那条记录（预览、删除、列表定位都要用 `id`），图像与视频接口的响应体里回一个 `generationId`。
+
+**语音与文本两个接口不写 `generations`，也不返回 `generationId`。** 第二期的 `kind` 只有 `image` 与 `video` 两个取值，语音合成与文本对话本来就不进生成历史，本期也不为它们新增 `kind`。这两条链路的计量依据是 `credit_transactions` 的消费流水，与生成历史是两回事。
+
+**视频任务的记录由服务端管完整个生命周期。** `POST /api/ai/videos/generations` 在扣点、写 `ai_tasks` 的同一个事务里落一条 `status=pending` 的生成记录，`generationId` 随 202 一起返回；后台轮询拿到终态后，由服务端在结果落盘的同一个事务里把这条记录收敛成 `success` 或 `failed`。`GET /api/ai/videos/tasks/{id}` 是纯查询，不写任何记录，**前端也不再调第二期的 `PATCH /api/generations/{id}`**，那个接口同样只留给用户渠道的视频任务。理由与「上游轮询由服务端主动做」是同一条：用户关掉页面之后没有任何前端在跑，把终态收敛交给前端等于让记录永远停在 `pending`。
 
 ## 限流与并发控制
 
@@ -655,6 +668,8 @@ type AITask struct {
 
 六处调用方需要跟着改：`web/src/pages/image/index.tsx`、`web/src/pages/video/index.tsx`、`web/src/pages/canvas/project.tsx`、`web/src/pages/canvas/hooks/use-plugin-host.tsx`、`web/src/components/canvas/canvas-node-generation.ts`、`web/src/lib/agent/agent-site-tools.ts`。改动集中在返回值形状（平台路径拿到的是 `storageKey`，用户渠道路径仍然是 Blob 或 dataURL，由 `image.ts` / `video.ts` / `audio.ts` 在内部抹平）和错误处理上。
 
+**其中生成记录的写入要从平台分支里去掉。** 全项目只有 `web/src/pages/image/index.tsx` 与 `web/src/pages/video/index.tsx` 两个工作台页面写生成记录（现在是各自的 `saveLog` 往 localforage 里塞，第二期之后换成 `createGeneration` 与 `patchGeneration`），这两处都要按分流判断收窄：平台分支不再调 `createGeneration`，视频的终态也不再调 `patchGeneration`，服务端已经写过了，页面拿响应里的 `generationId` 直接 `invalidateQueries(["generations", kind])` 即可；用户渠道分支这两次写入原样保留。画布侧的 `canvas-node-generation.ts`、`project.tsx`、`use-plugin-host.tsx` 与 Agent 的 `agent-site-tools.ts` 本来就不写生成记录，这一条与它们无关。
+
 **错误处理要同时留两套，不能只留一套。** 平台路径按第一期的约定按 `error.code` 查本地化文案；用户渠道路径的错误仍然来自第三方，仍然只能靠 `readApiErrorMessage` 那套猜测逻辑，所以 `apiErrors.*` 里那批靠猜 HTTP 状态码生成的条目（`authenticationFailed`、`badGateway`、`serviceBusy`、`httpFailed`、`rateLimited`、`notFound`、`htmlError`）**不能退休**。它们确实难看，但只要还有一条链路是浏览器直连第三方，就还得靠它们兜底。
 
 平台路径生成成功后要让 `/api/me` 的 react-query 查询失效，让点数余额跟着刷新，这与第三期处理配额的做法一致；用户渠道路径不扣点，不需要刷新。402 `INSUFFICIENT_CREDITS` 要给出明确的「还差多少点」提示和充值引导入口。
@@ -671,7 +686,7 @@ type AITask struct {
 
 ```txt
 location /api/ai/ {
-    proxy_pass http://api:8080/ai/;
+    proxy_pass http://api:8080;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_buffering off;
@@ -687,7 +702,7 @@ location /api/ai/ {
 }
 ```
 
-三个细节容易踩。`proxy_pass` 结尾的路径要与第一期 `location /api/` 的 `proxy_pass http://api:8080/;` 保持同样的改写规则（都把 `/api` 前缀剥掉），写错了就是全线 404。`proxy_http_version 1.1` 加上清空 `Connection` 头是分块传输的前提，默认的 HTTP/1.0 不支持分块，SSE 会被整段缓冲。`client_max_body_size` 可以比第一期媒体上传的 200m 小很多，因为参考图现在传的是 `storageKey` 而不是 base64。
+三个细节容易踩。`proxy_pass` **不能带尾斜杠，也不能带任何 URI 部分**，要与第一期 `location /api/` 的 `proxy_pass http://api:8080;` 保持同一种写法，也就是都不剥前缀。写成 `http://api:8080/ai/` 时，nginx 会把 location 匹配到的 `/api/ai/` 剥掉再换成 `/ai/`，`/api/ai/images/generations` 到后端就成了 `/ai/images/generations`；而后端所有路由统一注册在 `r.Group("/api")` 下，实际路径是 `/api/ai/images/generations`，照那么写就是全线 404。不带 URI 部分则路径原样透传，与后端前缀严格对齐。`proxy_http_version 1.1` 加上清空 `Connection` 头是分块传输的前提，默认的 HTTP/1.0 不支持分块，SSE 会被整段缓冲。`client_max_body_size` 可以比第一期媒体上传的 200m 小很多，因为参考图现在传的是 `storageKey` 而不是 base64。
 
 ### 超时链路对齐
 
@@ -754,6 +769,8 @@ Go 侧还有一个必踩的坑：`http.Server.WriteTimeout` 是从响应开始�
 - 只返回 URL 的视频模型同样落到 `storageKey`，等第三方 URL 过期后画布里的视频仍能播放。
 - 存储超额时返回 507 `STORAGE_QUOTA_EXCEEDED` 且点数被退还。
 - 未验证邮箱调用生成接口，在扣点之前就返回 403 `EMAIL_NOT_VERIFIED`。
+- 用平台模型生成一张图后，`GET /api/generations?kind=image` 恰好多出一条记录，浏览器网络面板里没有 `POST /api/generations` 请求，`/api/me` 的 `imageGenerateToday` 只加一。
+- 平台视频任务在创建时就出现一条 `status=pending` 的生成记录；关掉页面等任务跑完再打开，这条记录已经是 `success` 并带着产物的 `storageKey`，全程没有前端发出的 `PATCH /api/generations/{id}`。
 
 安全：
 

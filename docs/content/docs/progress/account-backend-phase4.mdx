@@ -17,7 +17,7 @@ Backend proxy endpoints for the four AI capabilities (image, video, audio, text)
 
 **Backend proxying for user-defined channels is out of scope.** Channels the user configures themselves keep the browser-direct behavior they have today, and the direct-to-provider implementations in `image.ts`, `video.ts` and `audio.ts` are preserved as-is; the reasoning is in "Why User Channels Do Not Go Through the Backend" below.
 
-Payments and credit top-ups. Credits are still granted only by hand through the phase 3 admin console; integrating a payment provider is not in the plan.
+**No payment-related changes this phase; the top-up path already shipped in phase 3.** `GET /api/credit-packages`, `POST /api/orders`, `POST /api/orders/{id}/cancel` and `POST /api/payments/webhook/{provider}` are available along with the frontend top-up page, so this phase neither modifies those endpoints nor adds new top-up entry points; it simply starts consuming the ledger phase 3 built.
 
 **Server-side execution of user scripts** is also out of scope. The user scripts behind `model-plugin.ts` keep running in the browser and apply only to the user's own channels, and that file is not touched at all this phase; the reasoning is in "User Scripts Stay on User Channels Only" below.
 
@@ -25,11 +25,11 @@ Distributed concurrency counting and task scheduling across multiple instances a
 
 ## Why This Phase Is Necessary
 
-Phase 3 introduced credit-based billing, but credits cannot be charged accurately today because generation never touches this project's server. Phase 3 documented this as a "soft constraint": the browser talks directly to the user's own third-party channel, so the server can only count what the frontend voluntarily reports after the fact, and a few lines of frontend code bypass it. A soft constraint is acceptable while counting merely enforces something polite like "50 images per day"; once credits become something people pay for, a soft constraint means selling a product that cannot be metered — paying users generate an unknown amount, and non-paying users cannot be stopped.
+Phase 3 introduced credit-based billing, but credits cannot be charged accurately today because generation never touches this project's server. An earlier design accepted this as a "soft constraint": the browser talks directly to the user's own third-party channel, so the server can only count what the frontend voluntarily reports after the fact, and a few lines of frontend code bypass it. A soft constraint is acceptable while counting merely enforces something polite like "50 images per day"; once credits become something people pay for, a soft constraint means selling a product that cannot be metered — paying users generate an unknown amount, and non-paying users cannot be stopped.
 
 **The only way to make credits a hard constraint is to keep the keys on the server.** As long as the browser holds a usable API key, any billing done on the frontend is a suggestion. This cannot be patched; it requires the architecture change that was deferred as the third option back when credential custody was chosen. This phase applies that conclusion to platform models only: the platform's keys never leave the server, so platform credits are a hard constraint; user channel keys are in the user's hands already, and since that path is never charged, it needs no hard constraint.
 
-**One thing this phase cannot deliver, stated up front: the plaintext credential delivery left by phase 2 does not go away.** `GET /api/credentials` returns **full plaintext** API keys because the frontend needs them to reach third-party channels, and since user channels keep calling providers directly, that reason still holds — so the endpoint keeps returning plaintext and the phase 2 promise that "phase 4 closes it" is not kept here. The direct consequence is that anyone holding a user's access token can still read every vendor key that user owns, which means the phase 1 defense of "access tokens live in memory only, refresh tokens ride an httpOnly cookie" has to be maintained indefinitely and must not be relaxed just because platform models are now proxied. Exactly one exposure does disappear this phase: the platform's own channel keys never enter a browser.
+**One thing this phase cannot deliver, stated up front: the plaintext credential delivery left by phase 2 does not go away.** `GET /api/credentials` returns **full plaintext** API keys because the frontend needs them to reach third-party channels, and since user channels keep calling providers directly, that reason still holds — so the endpoint keeps returning plaintext and the early assumption that "phase 4 will close it" is not going to be honored. The direct consequence is that anyone holding a user's access token can still read every vendor key that user owns, which means the phase 1 defense of "access tokens live in memory only, refresh tokens ride an httpOnly cookie" has to be maintained indefinitely and must not be relaxed just because platform models are now proxied. Exactly one exposure does disappear this phase: the platform's own channel keys never enter a browser.
 
 There is one secondary benefit, and its boundary is worth stating precisely. **On the platform path, error handling and vendor differences both move to the server**: platform failures come back through the phase 1 `error.code` convention, so the frontend stops guessing at HTTP status codes and digging through `msg` / `message` / `error.message` / `detail`, and protocol adaptation for the likes of Gemini and Seedance is handled by server-side providers. But the Gemini branch in `image.ts`, the Seedance branch in `video.ts` and each file's copy of `readApiErrorMessage` and `readAxiosError` **cannot be deleted** — user channels still depend on them to reach upstream. What converges is the new platform path, not the existing code.
 
@@ -148,6 +148,7 @@ Success returns 200:
   "images": [
     { "storageKey": "image:Ab3xY", "width": 1024, "height": 1024, "bytes": 812345, "mimeType": "image/png" }
   ],
+  "generationId": "g1...",
   "durationMs": 8421
 }
 ```
@@ -187,6 +188,7 @@ Success returns 202:
   "taskId": "3f2a...",
   "status": "pending",
   "credits": { "cost": 40, "balance": 92 },
+  "generationId": "g2...",
   "pollAfterMs": 5000
 }
 ```
@@ -205,6 +207,7 @@ Queries video task state. Tasks belong to the current user, and querying someone
   "status": "succeeded",
   "video": { "storageKey": "video:Qm4tR", "bytes": 4821334, "mimeType": "video/mp4", "durationMs": 6000 },
   "credits": { "cost": 40, "refunded": 0 },
+  "generationId": "g2...",
   "pollAfterMs": 5000
 }
 ```
@@ -348,7 +351,9 @@ The order is **deduct first, generate second**, not the other way around. Genera
 
 Deduction happens in one database transaction: check the balance, decrement it, and write a consumption ledger entry. The upstream request starts only after that transaction commits. An insufficient balance returns 402 `INSUFFICIENT_CREDITS` with `required` and `balance` so the frontend can say exactly how short the user is.
 
-A refund writes a `type=refund` ledger entry (the phase 3 credit ledger, referred to below as `credit_ledger`; the actual table name follows phase 3) for the same amount as the consumption entry it reverses, and **records `ref_id` pointing at that consumption entry**, with a unique index on `(ref_id, type)`. That unique index is what makes refunds idempotent: when retries, concurrency or a process restart run the refund path twice, the second attempt fails on the unique constraint and the user does not get paid back twice.
+A refund writes a `type=refund` entry into phase 3's `credit_transactions` for the same amount as the consumption entry it reverses, and **records `ref_id` pointing at the id of that `type=consume` entry**, so one consumption maps to at most one refund.
+
+Idempotency is backstopped by the database, but the index must be a **partial unique index** `(type, ref_id) WHERE type = 'refund'` rather than an unconditional unique index on `(ref_id, type)`. Phase 3's manual credit adjustments in the admin console write `type=grant` with `ref_id` set to the acting administrator's id, so an unconditional unique index would reject the second grant that administrator ever issues. Constrained to refunds only, the index still does its job: when retries, concurrency or a process restart run the refund path twice, the second attempt fails on the unique constraint and the user does not get paid back twice.
 
 The refund itself can fail too (a database hiccup, a killed process). When it does, set `ai_requests.refund_pending` and log at error level, and give the admin console's user detail page a "retry pending refunds" action. Do not introduce a scheduler or a message queue for this; it happens rarely enough that a manual trigger is sufficient.
 
@@ -471,6 +476,14 @@ Downloading external URLs requires outbound protection, which is a new attack su
 **This is the only outbound attack surface in this phase, and that is one of the reasons for keeping user channels browser-direct.** Under the rejected route, where the server calls the `baseUrl` a user typed in, there would be a second target address under the user's complete control, and the strength of the defense would rest entirely on whether that validation stack missed a branch. With direct connections that surface simply does not exist: the only external requests the server initiates are to the platform's own configured upstreams and to result URLs those upstreams return. The validation logic lives in one place, `service/upstream.go`.
 
 Failing to persist counts as a failed generation and refunds in full. From the user's perspective, being charged without receiving output is the same regardless of which step broke.
+
+**The generation record is written by the server, not filled in afterwards by the frontend.** Phase 3 made `generations` the authority on generation history, and both `usage.imageGenerateToday` in `/api/me` and the "generations today" figure in the admin console's `/api/admin/stats` are a plain `count(*)` over it, so every generation on the platform path must leave exactly one row in that table. **The server writes that row in the same transaction that persists the result**: `kind`, `model`, `prompt`, `config`, `result` and `durationMs` are all in hand at that moment, and inserting into `media_files` and updating the storage usage counter already share one database transaction, so one more row introduces no new consistency risk.
+
+**The frontend's platform branch no longer calls `POST /api/generations`.** From this phase on, that phase 2 endpoint serves the user channel branch only — user channel generations never reach the server, so the server cannot know about them and the frontend has to record them after the fact. Ownership must be unambiguous: writing on both sides doubles "generations today", and writing on neither pins it at zero. The rule is therefore that bare model names are recorded by the server and `::` identifiers by the frontend. So that the frontend can address the row the server just wrote (preview, deletion and list positioning all need the `id`), the image and video endpoints return a `generationId`.
+
+**The audio and text endpoints write no `generations` row and return no `generationId`.** Phase 2's `kind` has exactly two values, `image` and `video`; speech synthesis and text conversation were never part of generation history, and this phase does not add a `kind` for them. Metering for those two paths rests on the consumption entries in `credit_transactions`, which is a separate matter from generation history.
+
+**For video tasks the server owns the whole record lifecycle.** `POST /api/ai/videos/generations` writes a `status=pending` generation row in the same transaction that deducts credits and inserts into `ai_tasks`, returning `generationId` alongside the 202; once background polling reaches a terminal state, the server settles that row to `success` or `failed` in the same transaction that persists the result. `GET /api/ai/videos/tasks/{id}` is a pure read and writes nothing, and **the frontend no longer calls phase 2's `PATCH /api/generations/{id}`** either — that endpoint is likewise reserved for user channel video tasks. The reason is the same one behind server-side active polling: once the user closes the page there is no frontend running, so leaving the terminal settlement to the frontend leaves the row stuck at `pending` forever.
 
 ## Rate Limiting and Concurrency Control
 
@@ -655,6 +668,8 @@ On the canvas side, `canvas-image-settings-popover.tsx`, `canvas-video-settings-
 
 Six call sites change: `web/src/pages/image/index.tsx`, `web/src/pages/video/index.tsx`, `web/src/pages/canvas/project.tsx`, `web/src/pages/canvas/hooks/use-plugin-host.tsx`, `web/src/components/canvas/canvas-node-generation.ts` and `web/src/lib/agent/agent-site-tools.ts`. The changes concentrate on return shapes (the platform path yields a `storageKey` while the user channel path still yields a Blob or data URL, smoothed over inside `image.ts` / `video.ts` / `audio.ts`) and on error handling.
 
+**Part of that is removing the generation-record write from the platform branch.** Only two files in the whole project record generations — the `web/src/pages/image/index.tsx` and `web/src/pages/video/index.tsx` workbench pages, where `saveLog` currently pushes into localforage and phase 2 replaces it with `createGeneration` and `patchGeneration`. Both must narrow along the split: the platform branch stops calling `createGeneration`, and video terminal states stop calling `patchGeneration`, because the server already wrote the row; the page simply takes `generationId` from the response and calls `invalidateQueries(["generations", kind])`. The user channel branch keeps both writes exactly as they are. On the canvas side, `canvas-node-generation.ts`, `project.tsx`, `use-plugin-host.tsx` and the Agent's `agent-site-tools.ts` never wrote generation records in the first place, so none of this applies to them.
+
 **Both error-handling styles have to survive; you cannot keep only one.** The platform path looks up localized copy by `error.code` per the phase 1 convention, while user channel errors still come from third parties and still depend on the guesswork in `readApiErrorMessage`, so the `apiErrors.*` entries that exist purely to guess at HTTP status codes (`authenticationFailed`, `badGateway`, `serviceBusy`, `httpFailed`, `rateLimited`, `notFound`, `htmlError`) **cannot retire**. They are ugly, but as long as one path is a browser talking to a third party, they are the fallback.
 
 After a successful generation on the platform path, invalidate the react-query entry for `/api/me` so the credit balance refreshes, the same way phase 3 handles quota; the user channel path charges nothing and needs no refresh. A 402 `INSUFFICIENT_CREDITS` should say exactly how many credits are missing and link to where more can be obtained.
@@ -671,7 +686,7 @@ Give `/api/ai/` its own location, placed before phase 1's `location /api/`:
 
 ```txt
 location /api/ai/ {
-    proxy_pass http://api:8080/ai/;
+    proxy_pass http://api:8080;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_buffering off;
@@ -687,7 +702,7 @@ location /api/ai/ {
 }
 ```
 
-Three details are easy to get wrong. The trailing path on `proxy_pass` must follow the same rewriting rule as phase 1's `proxy_pass http://api:8080/;` under `location /api/` (both strip the `/api` prefix); getting it wrong 404s everything. `proxy_http_version 1.1` plus clearing the `Connection` header is a prerequisite for chunked transfer, since the default HTTP/1.0 does not support chunking and SSE gets buffered whole. `client_max_body_size` can be far smaller than the 200m phase 1 needed for media upload, because reference images are now passed as `storageKey` rather than base64.
+Three details are easy to get wrong. `proxy_pass` **must carry no trailing slash and no URI part**, matching phase 1's `proxy_pass http://api:8080;` under `location /api/` — neither strips the prefix. Written as `http://api:8080/ai/`, nginx replaces the `/api/ai/` that the location matched with `/ai/`, so `/api/ai/images/generations` reaches the backend as `/ai/images/generations`; every backend route is registered under `r.Group("/api")` and the real path is `/api/ai/images/generations`, so writing it that way 404s everything. With no URI part the path passes through untouched and lines up exactly with the backend prefix. `proxy_http_version 1.1` plus clearing the `Connection` header is a prerequisite for chunked transfer, since the default HTTP/1.0 does not support chunking and SSE gets buffered whole. `client_max_body_size` can be far smaller than the 200m phase 1 needed for media upload, because reference images are now passed as `storageKey` rather than base64.
 
 ### Aligning the Timeout Chain
 
@@ -754,6 +769,8 @@ Result persistence:
 - Video models that only return a URL also land as a `storageKey`, and the canvas still plays the video after the third-party URL expires.
 - Exceeding the storage quota returns 507 `STORAGE_QUOTA_EXCEEDED` and refunds the credits.
 - An unverified email address gets 403 `EMAIL_NOT_VERIFIED` before any deduction happens.
+- After generating an image with a platform model, `GET /api/generations?kind=image` has exactly one more row, the browser network panel shows no `POST /api/generations`, and `imageGenerateToday` in `/api/me` increases by one.
+- A platform video task shows a `status=pending` generation row as soon as it is created; close the page, let the task finish, reopen, and the row is already `success` with the output's `storageKey`, with no `PATCH /api/generations/{id}` ever sent by the frontend.
 
 Security:
 

@@ -15,9 +15,11 @@ Backend account system (registration, login, logout, token refresh, password cha
 
 ### Out of Scope
 
-Credential custody, data sync, media upload, plan entitlements, quota enforcement and the admin console. Those belong to phases 2 and 3.
+Credential custody, data sync, media upload, tier entitlements, quota enforcement and the admin console. Those belong to phases 2 and 3.
 
-However, **the data model must be built correctly from the start**: the `role` and `email_verified_at` columns on `users`, plus the `plans` and `subscriptions` tables, are created and seeded in this phase, and registration assigns the `free` plan automatically. The reason is that once registration ships it continuously produces users, and retrofitting plan associations later requires backfilling historical rows. Quota **enforcement** waits for phase 3, but the **ownership relation** is established now.
+However, **the data model must be built correctly from the start**: the `role` and `email_verified_at` columns on `users`, plus the `plans` table, are created in this phase and seeded with the `free` and `paid` tiers. The reason is that once registration ships it continuously produces users, and retrofitting columns later requires backfilling historical rows. Quota **enforcement** waits for phase 3, but the tier definitions have to be right now.
+
+**No `subscriptions` table is created.** Billing is credit-based rather than subscription-based, paid status is derived directly from the credit balance in phase 3, and there is no subscription lifecycle for a table to maintain; anything built here would be dropped as the first act of phase 3. For the same reason there is no "assign a plan at registration" step. Neither this phase nor phase 2 has a `credits` table, so no tier can be determined, and **every user is therefore checked against the `free` tier for the per-file ceiling** — phase 2's `FILE_TOO_LARGE` reads `max_file_bytes` straight off the `plans` row where `id = free`. Only once phase 3 ships the credit system does that become "look up the tier by whether `credits.balance` is above zero, then read that row's ceilings". The `paid` row is seeded now anyway so phase 3 only has to wire up the decision logic instead of going back to fix the seed.
 
 ## Shared Conventions
 
@@ -115,7 +117,7 @@ In-process memory counters are sufficient for this phase and a single-instance d
 
 ### `server/cmd/server/main.go`
 
-The wiring entry point, in order: load configuration, connect to the database, run AutoMigrate, seed default plans, create the initial administrator, initialize the mail client, register routes, and start the HTTP server with graceful shutdown.
+The wiring entry point, in order: load configuration, connect to the database, run AutoMigrate, seed the default tiers, create the initial administrator, initialize the mail client, register routes, and start the HTTP server with graceful shutdown.
 
 Every business route is registered under a single `r.Group("/api")`, so no handler prepends `/api` on its own; only the `/healthz` and `/readyz` health checks sit at the root outside that group, because they are probed exclusively from inside the compose network. This prefix must line up exactly with how nginx writes `proxy_pass` — see the `nginx.conf` section below.
 
@@ -125,9 +127,9 @@ Reads configuration from environment variables into a struct and validates requi
 
 ### `server/internal/db/db.go`
 
-Connects GORM to PostgreSQL, runs `AutoMigrate` for all models, provides `SeedPlans` to write the `free` and `pro` defaults, and provides `EnsureAdmin` to create or promote the first administrator from `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
+Connects GORM to PostgreSQL, runs `AutoMigrate` for all models, provides `SeedPlans` to write the `free` and `paid` defaults, and provides `EnsureAdmin` to create or promote the first administrator from `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
 
-`SeedPlans` and `EnsureAdmin` run on every container start, so their idempotency semantics must be pinned down rather than left at "must be idempotent". `SeedPlans` is insert-if-missing: it writes a default row only when no plan carries that `id` and never touches an existing row. Quota values an operator adjusted through the admin console or by hand in SQL therefore survive a restart. The trade-off is that editing quotas in `.env` no longer takes effect after the first boot — later plan changes go through the admin console or straight to the database, deliberately.
+`SeedPlans` and `EnsureAdmin` run on every container start, so their idempotency semantics must be pinned down rather than left at "must be idempotent". `SeedPlans` is insert-if-missing: it writes a default row only when no plan carries that `id` and never touches an existing row. Quota values an operator adjusted through the admin console or by hand in SQL therefore survive a restart. The trade-off is that editing quotas in `.env` no longer takes effect after the first boot — later tier changes go through the admin console or straight to the database, deliberately.
 
 `EnsureAdmin` follows the same rule: it creates the administrator only when no user matches `ADMIN_EMAIL`, promotes that user when it exists with a non-`admin` role, and **never resets the password of an existing administrator**. Otherwise the password the administrator was told to change would be overwritten by the initial value from `.env` on the next restart.
 
@@ -171,25 +173,17 @@ type EmailToken struct {
 }
 
 type Plan struct {
-    ID            string `gorm:"primaryKey"` // free | pro
+    ID            string `gorm:"primaryKey"` // free | paid
     Name          string
     StorageBytes  int64
     MaxFileBytes  int64
-    DailyImages   int
-    DailyVideos   int
-}
-
-type Subscription struct {
-    ID        uuid.UUID  `gorm:"type:uuid;primaryKey"`
-    UserID    uuid.UUID  `gorm:"type:uuid;index;not null"`
-    PlanID    string     `gorm:"not null"`
-    StartsAt  time.Time
-    ExpiresAt *time.Time // nil means perpetual
-    Status    string     `gorm:"not null;default:active"`
-    CreatedAt time.Time
-    UpdatedAt time.Time
+    RetentionDays int
 }
 ```
+
+`plans` holds tier definitions rather than subscription packages, describing only the three storage-side ceilings. The two rows `SeedPlans` writes must match phase 3 exactly: the `free` tier gets `storage_bytes` 500 MB (524288000), `max_file_bytes` 50 MB (52428800) and `retention_days` 7; the `paid` tier gets 1 GB (1073741824), 200 MB (209715200) and 14. Phase 2's per-file check and phase 3's storage quota check both read this table directly, so a wrong seed value is inherited verbatim downstream and nothing else corrects it.
+
+There is no `subscriptions` table and no `plan_id` on `users`: paid status is a function of `credits.balance > 0`, computable at any moment, so no table has to maintain its lifecycle and none of the expiry, renewal and grace-period state machine is needed. Nothing in this phase reads `retention_days`; it is modeled now because it is an intrinsic property of a tier definition and phase 3's media retention cleanup uses it directly, without another schema change at that point.
 
 `users.last_login_at` feeds the "last login" column of the phase 3 admin console and is updated both on successful login and on successful token refresh. Updating it only on login is not enough: a user who keeps the page open and rides on silent refresh would look permanently inactive.
 
@@ -222,7 +216,7 @@ Every request gets an `X-Request-Id` generated at the edge (reusing the inbound 
 
 ### `server/internal/handler/auth.go` and `account.go`
 
-Implemented against the endpoint definitions below. All writes use transactions; registration must create the user, subscription and email token in a single transaction.
+Implemented against the endpoint definitions below. All writes use transactions; registration creates exactly two rows in one transaction, the user and the email token. The `credits` table arrives in phase 3, which backfills a zero-balance row for existing users and folds that insert into the registration transaction from then on; do not reserve an empty table or a placeholder row for it here.
 
 ## Endpoint Definitions
 
@@ -301,7 +295,7 @@ Requires login. Returns:
 ```json
 {
   "user": { "id": "...", "email": "...", "username": "...", "displayName": "...", "avatarUrl": "", "role": "user", "emailVerified": true, "createdAt": "..." },
-  "plan": { "id": "free", "name": "Free", "storageBytes": 5368709120, "maxFileBytes": 209715200, "dailyImages": 50, "dailyVideos": 10 }
+  "plan": { "id": "free", "name": "Free", "storageBytes": 524288000, "maxFileBytes": 52428800, "retentionDays": 7 }
 }
 ```
 
@@ -420,7 +414,7 @@ Keys under `auth.errors.*` use the lower-camel form of the backend error codes s
 
 ### `docker-compose.yml`
 
-Three services. `app` is nginx plus the frontend build, publishing 3000; `api` is the Go backend exposed only on the internal network at 8080; `db` is PostgreSQL exposed only internally at 5432. `api` waits for the `db` health check before starting, and `app` depends on `api`.
+Three services. `app` is nginx plus the frontend build, publishing 3000; `api` is the Go backend exposed only on the internal network at 8080; `db` runs the `postgres:17-alpine` image, exposed only internally at 5432. `api` waits for the `db` health check before starting, and `app` depends on `api`.
 
 Volumes: `pgdata` for the database and `media` for the media directory (unused this phase but created up front).
 
@@ -471,8 +465,14 @@ Base variables live in the deployment section of the plan document; this phase a
 | `COOKIE_SECURE` | `true` | Whether cookies carry the `Secure` attribute; must be `false` on internal or local environments without TLS and must stay `true` on anything public |
 | `LOG_LEVEL` | `info` | Log level, one of `debug`, `info`, `warn`, `error` |
 | `MAIL_DRIVER` | `smtp` | How mail is delivered: `smtp` uses a real mail service, `log` only prints the message and its link to the log for local development |
+| `PORT` | `8080` | The backend HTTP listen port, which must not be hardcoded; changing it requires updating the `api` healthcheck and the `proxy_pass` in `nginx.conf` too |
+| `POSTGRES_DB` | none | Name of the database the `db` container creates on initialization |
+| `POSTGRES_PASSWORD` | none | Initial database password for the `db` container |
+| `POSTGRES_USER` | none | Initial database user for the `db` container, also read by its healthcheck `pg_isready -U $POSTGRES_USER` |
 
 With `MAIL_DRIVER=log` the SMTP variables are excluded from required-value validation; otherwise an empty one still fails startup.
+
+The three `POSTGRES_*` variables belong to the `db` container and are read by the postgres image itself — the backend process reads none of them — but they must match the user, password and database name inside `DATABASE_URL` exactly, otherwise the database starts and the backend cannot connect. They take effect only when the data volume is first initialized: once `pgdata` exists, changing them does not alter the real credentials in the database and only breaks `DATABASE_URL`, so changing the values means dropping the volume first.
 
 ## Local Development
 
@@ -515,6 +515,8 @@ The backend uses the standard library `net/http/httptest` for test servers and i
 
 The frontend uses Vitest, focused on the "single-flight refresh with request queueing" in `client.ts`: with a stubbed fetch, fire several concurrent requests that all return `TOKEN_EXPIRED` and assert that refresh is called exactly once, that every request receives the replayed success result, and that a failed refresh rejects all of them with the same error while clearing the session. This document already calls that logic the easiest place to introduce a bug, and concurrency problems cannot be found by clicking through the UI, so the automated test is mandatory.
 
+`web/package.json` currently has neither a `vitest` dependency nor a `test` script — the existing scripts are only `dev`, `build`, `typecheck`, `start`, `format` and `format:check` — so this phase must run `bun add -d vitest` and add `"test": "vitest run"` under `scripts`. Without that step there is no entry point to run the tests above.
+
 Localization gets a key-symmetry check script: flatten the nested keys of `zh-CN.ts` and `en-US.ts`, compare the two sets, and fail with a non-zero exit code when either side is missing one. Wire it into CI or run it ahead of `bun run typecheck`. Error-code copy is the most likely thing to drift, because the code table lives in the backend while the copy lives in the frontend and the two rarely change in the same commit.
 
 ## Acceptance Checklist
@@ -523,7 +525,7 @@ Deployment:
 
 - On a clean environment, `docker compose up -d` brings all three services up healthy, `/` serves the frontend and `/api/me` returns 401 when logged out.
 - With SMTP variables missing under the default `MAIL_DRIVER=smtp`, the backend fails to start and the log states why.
-- Restarting the database does not duplicate the default plans or the administrator account.
+- Restarting the database does not duplicate the default tiers or the administrator account.
 - With `COOKIE_SECURE=false` on a TLS-less environment, logging in over `http://ip:3000` works, a page reload keeps the session, and the `ic_refresh` cookie is visible in the browser.
 - Inside the compose network `/healthz` returns 200 and `/readyz` returns 200 while the database is up; stopping the `db` container makes `/readyz` return 503 and turns the `api` healthcheck unhealthy.
 - After adjusting quotas in `plans` and changing the administrator password by hand, restarting the containers preserves both instead of letting `SeedPlans` and `EnsureAdmin` reset them.

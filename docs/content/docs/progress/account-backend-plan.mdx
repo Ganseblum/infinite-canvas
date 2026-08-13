@@ -134,7 +134,8 @@ infinite-canvas/
       middleware/           # auth, rate limiting, logging
       storage/              # object storage interface and local disk implementation
       payment/              # payment provider adapters: order creation, signature verification, webhooks
-      proxy/                # AI request forwarding: OpenAI-compatible passthrough and SSE streaming
+      provider/             # AI upstream adapters: the OpenAI, Gemini and Ark protocols plus SSE streaming
+      service/              # business services: quota, credits, cleanup, channel selection and failover
       handler/              # HTTP handlers
         auth.go
         account.go
@@ -156,7 +157,7 @@ infinite-canvas/
 
 `internal/storage` is an interface plus a local disk implementation, so switching to MinIO or S3 later only replaces the implementation without touching callers.
 
-`internal/payment` splits into Alipay, WeChat Pay and Stripe implementations behind one shared order-creation and webhook interface, with signature verification always delegated to each provider's official SDK rather than assembling signature strings by hand. `internal/proxy` handles only protocol passthrough and stream forwarding and parses no business semantics; deduction, metering and balance checks all live in `handler/ai.go` around the forwarding call. Keeping those responsibilities apart is what makes the forwarding layer replaceable.
+`internal/payment` splits into Alipay, WeChat Pay and Stripe implementations behind one shared order-creation and webhook interface, with signature verification always delegated to each provider's official SDK rather than assembling signature strings by hand. `internal/provider` splits by upstream protocol into OpenAI, Gemini and Ark implementations that only translate a unified request into each vendor's call and parse the response back into one shape, never touching business semantics; channel selection, failover and timeout configuration live in `internal/service/upstream.go`; deduction, metering and balance checks live in `handler/ai.go` around the forwarding call. Keeping the three apart is what lets a vendor swap leave the billing code untouched.
 
 ## Technology Choices
 
@@ -170,7 +171,7 @@ infinite-canvas/
 | Credential encryption | Standard library crypto/aes and cipher.GCM | No third-party crypto library required |
 | Object storage | Local disk volume | Simplest for private deployment, with an interface left for extension |
 | Payment providers | Each provider's official Go SDK | Order parameters and webhook signature verification come from the SDK; signature logic is never hand-written |
-| AI forwarding | Standard library net/http | The OpenAI-compatible protocol only needs verbatim passthrough, and SSE flushes chunk by chunk through `http.Flusher`, so no extra framework is needed |
+| AI forwarding | Standard library net/http | Upstream calls and chunk-by-chunk SSE flushing need nothing beyond `http.Flusher`, and per-vendor protocol differences live in the adapters under `internal/provider`, so no extra framework is needed |
 
 This follows the project convention that general-purpose capabilities always use mature, stable libraries rather than hand-written protocol, crypto or date implementations.
 
@@ -248,7 +249,7 @@ Canvases, assets and generation records each get their own table with one row pe
 
 The index `(user_id, deleted_at, updated_at desc)` covers exactly the default list query: current user, not deleted, newest first. `node_count` and `connection_count` are deliberate denormalizations that let the list endpoint avoid touching `data`, a column that can run to several megabytes.
 
-`cover_key` deserves a separate note: **the list view has no cover image today**, its cards being a flat color block with a title and some statistics. This column reserves a future capability rather than carrying over an existing one. Where the cover comes from (a screenshot of the canvas at save time, or the first image node), when it is generated and how the card layout changes are all undefined. Create the column in phase 2 but leave it unimplemented, and schedule the feature separately once the resource model is proven.
+`cover_key` deserves a separate note: **the list view has no cover image today**, its cards being a flat color block with a title and some statistics. Phase 2 implements the column outright — the server derives the value from `data.nodes` as the `storageKey` of the first image node and ignores whatever the client sends, and the list card renders a plain `<img src={"/api/media/" + coverKey}>`, keeping the existing solid color block when `coverKey` is empty. One scheduling caveat stands: rendering a cover on the card is new UI work rather than a port of something that already exists, so budget it separately instead of assuming it falls out of the data layer rework for free.
 
 **assets** — user assets
 
@@ -377,7 +378,7 @@ The ledger is a table of its own rather than just a balance column because a pai
 
 The uniqueness of `provider_order_id` is the foundation of webhook idempotency: a repeated callback for the same payment is stopped by the unique index, making double-crediting impossible. Providers retry callbacks as a matter of course, so this is the normal path and not an exceptional one.
 
-**usage_records** — usage counters, unique by `(user_id, metric, period)`, where `metric` is `image_generate` / `video_generate` / `storage_bytes` and `period` is a date or `total`.
+**usage_records** — usage counters, unique by `(user_id, metric, period)`. It serves **`storage_bytes` and nothing else**, with `period` only ever `total`: storage has to be validated before every upload and `SUM(bytes)` degrades as the file count grows, which does not belong on the upload hot path, so a counter is the necessary compromise. Generation counts stay out of this table — display figures such as "images generated today" are counted straight from `generations`, and billing is settled from the credit ledger.
 
 ### Model Catalog
 
@@ -498,7 +499,9 @@ Uploads still travel as ordinary requests carrying an `Authorization` header; th
 | --- | --- | --- |
 | GET | `/api/plans` | Tier list returning storage quota, per-file limit and retention period for both tiers |
 
-Tiers need no assignment endpoint — which tier a user belongs to is derived from the credit balance, and `/api/me` simply returns the current tier, storage usage, credit balance and the nearest media expiry time. Storage usage is aggregated from `media_files` and credit consumption is read from `credit_transactions`, so neither needs a separate usage-accounting endpoint.
+`/api/plans` is implemented in phase 3, requires login like everything else, and returns every field of both tiers: `id`, `name`, `storageBytes`, `maxFileBytes` and `retentionDays`. It does not duplicate `/api/me`, which reports only the current tier, whereas the top-up page has to spell out what the paid tier adds and needs both tiers side by side to do that.
+
+Tiers need no assignment endpoint — which tier a user belongs to is derived from the credit balance, and `/api/me` simply returns the current tier, storage usage, credit balance and the nearest media expiry time. Storage usage is read from the `storage_bytes` counter in `usage_records` rather than computed per request as `SUM(media_files.bytes)`, and credit consumption is read from `credit_transactions`, so neither needs a separate usage-accounting endpoint.
 
 ### Credits
 
@@ -537,14 +540,17 @@ Added in phase 4 and requiring login throughout. Only platform-preset models tak
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/api/ai/images/generations` | Image generation |
-| POST | `/api/ai/videos/generations` | Video generation |
+| POST | `/api/ai/images/generations` | Image generation, one entry point for both text-to-image and image editing |
+| POST | `/api/ai/videos/generations` | Video generation, creates an asynchronous task and returns a `taskId` |
+| GET | `/api/ai/videos/tasks/{id}` | Look up a video task's status and artifact |
 | POST | `/api/ai/audio/speech` | Speech synthesis |
 | POST | `/api/ai/chat/completions` | Chat completion, SSE streaming |
 
-The paths deliberately mirror the shape of the OpenAI-compatible protocol, and request and response bodies pass through verbatim, so existing calls under `web/src/services/api/` only need their baseUrl swapped and their key removed — no protocol layer to rewrite. `/api/ai/chat/completions` must support SSE with the backend flushing chunk by chunk while forwarding, rather than waiting for the upstream to finish and emitting everything at once, otherwise assistant conversations in the canvas regress from streaming to a single block appearing at the end.
+The paths mirror the shape of the OpenAI-compatible protocol, but **neither request nor response bodies pass through verbatim**. Requests define their own fields per capability and reference images travel as a `storageKey` rather than base64; responses always carry `credits` plus artifacts as `storageKey`s, with every upstream difference in field naming, envelopes and `b64_json` versus `url` collapsed server-side. `/api/ai/chat/completions` is the same story: it emits our own event stream rather than relaying the upstream SSE, with the backend flushing chunk by chunk instead of waiting for the upstream to finish and emitting everything at once, otherwise assistant conversations in the canvas regress from streaming to a single block appearing at the end.
 
-The deduction order is: before forwarding, estimate the credits from the model's `credit_cost` and the current parameters and check the balance, rejecting immediately if it is insufficient; after a successful forward, deduct against the actual result and append a ledger row; on upstream failure or timeout, deduct nothing and refund anything already held. The consistency of this path is what phase 4 needs to test hardest.
+The frontend therefore cannot get away with swapping a baseUrl. It gains a new `web/src/services/api/ai.ts` covering these five endpoints, and each generation entry point in `image.ts`, `video.ts` and `audio.ts` splits on the model identifier — a bare model name is a catalog model and goes through `ai.ts`, while an identifier containing `::` is a user channel model and keeps the existing browser-direct implementation. Video also moves from polling the upstream locally to polling this site's task endpoint.
+
+Deduction happens **before generation, with a refund on failure**: before forwarding, the credits are computed from the model's `credit_cost` and the current parameters, then one transaction checks the balance, deducts it and appends a consumption ledger row, returning 402 outright when the balance is insufficient; an upstream failure or timeout refunds the full deducted amount and appends a `type = refund` row. There is no "settle the difference against the actual result" — phase 3 exposes only `Reserve` and `Refund` and has no settlement capability, and a second settlement path is just one more way for the books to disagree. The consistency of this path is what phase 4 needs to test hardest.
 
 ### Admin Console
 
@@ -607,6 +613,7 @@ The cost has to be stated plainly: **the frontend data layer changes far more th
 | `web/src/services/api/credits.ts` | Credit client: balance lookup and cursor-paginated ledger |
 | `web/src/services/api/orders.ts` | Payment client: top-up packages, order creation, order list and cancellation |
 | `web/src/services/api/models.ts` | Platform model catalog client: models, parameter constraints and pricing rules |
+| `web/src/services/api/ai.ts` | Platform model forwarding client: image generation, video task creation and lookup, speech and streaming chat, added in phase 4 |
 | `web/src/stores/use-auth-store.ts` | Auth state, current user, tokens, entitlements |
 | `web/src/pages/login/index.tsx` | Combined login and registration page with tab switching |
 | `web/src/pages/verify-email/index.tsx` | Landing page for the verification link |
@@ -632,7 +639,7 @@ The four resource clients only issue requests and convert types. They carry no m
 | `web/src/stores/use-asset-store.ts` | Asset listing moves to server-side pagination and filtering, with no full local copy; wholesale actions such as `replaceAssets` become per-page writes |
 | `web/src/services/image-storage.ts` | Image and video history no longer lands in IndexedDB; it is loaded on demand from `/api/generations` via cursor pagination and appended with one record when a generation finishes |
 | `web/src/stores/use-config-store.ts` | Remove the `webdav` field and `WebdavSyncConfig` type; credentials are fetched from the server after login and written back on change, with local storage as a cache only; the model list merges two sources, the platform catalog from `/api/models` carrying its own `capability` and `constraints` plus user-defined models, leaving `guessCapability` in use for custom models only |
-| `web/src/services/api/image.ts` / `video.ts` / `audio.ts` / `model-plugin.ts` | Platform-preset models call `/api/ai/*` and no longer carry a key; global hardcoded constraints such as `QUALITY_BASE` and `IMAGE_MAX_EDGE` are replaced by the selected model's `constraints`; user-configured channels keep going directly from the browser. Phase 4 change |
+| `web/src/services/api/image.ts` / `video.ts` / `audio.ts` | Each generation entry point splits on the model identifier at the top of the function: a bare model name calls `ai.ts` against `/api/ai/*` with no key attached, while a `::` identifier keeps going directly from the browser; the existing direct-to-provider implementations and global constraints such as `QUALITY_BASE` and `IMAGE_MAX_EDGE` are **all kept** and continue serving user channels, with only platform models rendering their options from the model's `constraints`. Phase 4 change |
 | `web/src/services/config-file.ts` | Remove the `webdav` field from config export |
 | `web/src/components/layout/app-top-nav.tsx` | Add the user entry near `UserStatusActions` on the right |
 | `web/src/constant/runtime-config.ts` | Add `API_BASE_URL` |
@@ -641,6 +648,8 @@ The four resource clients only issue requests and convert types. They carry no m
 | `web/src/pages/config/` | Remove the WebDAV block, replacing it with account status plus entitlement and usage display |
 | `web/src/i18n/locales/zh-CN.ts` | Add `auth.*`, `profile.*`, `billing.*` and `admin.*` strings, remove `config.webdav.*` |
 | `web/src/i18n/locales/en-US.ts` | Matching English strings; both files must stay symmetric |
+
+`web/src/services/api/model-plugin.ts` is deliberately absent from this table: custom scripts serve only the user's own channels, phase 4 does not touch a single line of the file, and they keep running in the browser against the user's own key. Platform models offer no script entry point at all — the platform guarantees how they are called, the run spends the platform's key and the user's credits, and letting a script in would leave nobody able to say whose fault a failure was.
 
 ### Deleted Files
 
@@ -661,41 +670,53 @@ Removing WebDAV has ripple effects beyond deleting the file: the `webdav` field 
 ```txt
 app   nginx plus the frontend static build, exposes 3000 publicly
 api   Go backend, exposes 8080 on the internal network only
-db    PostgreSQL, exposes 5432 on the internal network only
+db    PostgreSQL 17 (`postgres:17-alpine`), exposes 5432 on the internal network only
 ```
 
-Volumes: `pgdata` persists the database and `media` persists user-uploaded images and videos.
+Volumes: `pgdata` persists the database and `media` persists user-uploaded images and videos. The `db` service takes its initial account, password and database name from `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB`, its healthcheck runs `pg_isready -U $POSTGRES_USER`, and `api` starts only once that check passes.
 
 `nginx.conf` gains a reverse proxy so frontend and backend are same-origin and CORS is unnecessary:
 
 ```txt
-location /api/ {
-    proxy_pass http://api:8080/;
+location /api/media/ {
+    proxy_pass http://api:8080;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     client_max_body_size 200m;
 }
+
+location /api/ {
+    proxy_pass http://api:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    client_max_body_size 2m;
+}
 ```
 
-`client_max_body_size` must be raised to 200MB, the per-file limit of the paid tier, because the 1MB default would fail uploads outright. The stricter 50 MB limit of the free tier is enforced by the backend against the user's tier and is not distinguished at the nginx layer — a tier flips with the credit balance, and a gateway can neither see the user's identity nor track that in real time.
+**`proxy_pass` must carry no URI part at all**, the easiest trap in this file. Written as `http://api:8080/`, nginx strips the `/api/` prefix the location matched before forwarding, so `/api/auth/login` reaches the backend as `/auth/login`; every endpoint in this document is written as `/api/...` and the backend registers everything under `r.Group("/api")`, so a literal implementation would 404 across the board. Without the trailing slash the path passes through untouched and lines up exactly with the backend's route prefix.
+
+The body-size ceiling has to be split in two. 200MB is the per-file limit of the paid tier and the 1MB default would fail uploads outright, but that allowance belongs to `/api/media/` alone: applied uniformly to everything under `/api/` it also opens up the canvas save endpoint, and canvas `data` is stored as jsonb and counts against no storage quota, so a user could bloat the database by repeatedly submitting a 200 MB canvas JSON. Media is therefore raised to 200m while everything else is capped at 2m; nginx prefix matching is longest-first, so the order of the two locations does not matter. The stricter 50 MB limit of the free tier is enforced by the backend against the user's tier and is not distinguished at the nginx layer — a tier flips with the credit balance, and a gateway can neither see the user's identity nor track that in real time.
 
 Backend environment variables go into `server/.env.example`:
 
 | Variable | Notes |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Initial account, password and database name for the `db` service, also used by the compose healthcheck `pg_isready -U $POSTGRES_USER` |
+| `DATABASE_URL` | PostgreSQL connection string, which must agree with the three variables above |
+| `PORT` | Backend listening port, 8080 by default; changing it means updating the nginx `proxy_pass` and the compose healthcheck too |
 | `JWT_SECRET` | Access token signing secret |
-| `CREDENTIAL_MASTER_KEY` | AES-GCM master key for credentials, 32 bytes |
+| `CREDENTIAL_MASTER_KEY` | AES-GCM master key for credentials, 32 bytes; the phase 4 platform channel keys reuse this same key rather than introducing a second one |
 | `MEDIA_ROOT` | On-disk path for media files, backed by the `media` volume |
 | `APP_BASE_URL` | Public site address, used to build verification and reset links in emails |
 | `SMTP_HOST` / `SMTP_PORT` | Mail server address and port |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | Mail service account |
 | `SMTP_FROM` | Sender address |
 | `REGISTRATION_ENABLED` | Master switch for registration, enabled by default, can be shut off in an emergency |
-| `PLATFORM_AI_BASE_URL` | Upstream address for platform-preset models, used from phase 4 |
-| `PLATFORM_AI_API_KEY` | The platform's own third-party key, server-side only and never delivered to a browser |
 | `ALIPAY_*` / `WECHATPAY_*` / `STRIPE_*` | Merchant ids, secrets and callback URLs per payment provider; unconfigured providers are automatically not listed |
-| `MEDIA_RETENTION_ENABLED` | Switch for the media retention cleanup job, allowing a scan-only run during validation |
+
+The upstream address and key for platform-preset models **do not travel through environment variables**. Phase 4 adds a `platform_channels` table holding each channel's `BaseURL`, an AES-GCM encrypted `Payload` (the upstream API key in plaintext), `Priority` and `Enabled`, encrypted with the same `CREDENTIAL_MASTER_KEY`, managed through `/api/admin/channels`, with requests taking the first usable channel by `Priority` and moving to the next one on failure. A table rather than variables because rotating a key, adding a standby channel or disabling an upstream temporarily should never require editing config and restarting the container — and multi-channel failover was never something a pair of environment variables could express.
+
+Media retention has no switch variable either. Whether a file is cleaned up is decided by its tier's `retention_days`, and running scan-only during validation is covered by the phase 3 approach of triggering the job on demand from the admin console and verifying it on a single user before attaching a schedule. No global master switch is needed.
 
 A misconfigured `APP_BASE_URL` makes every link in verification emails unusable, so it deserves careful review at deploy time. When the SMTP variables are all empty the backend should fail to start with a clear error rather than silently failing to send mail.
 
@@ -712,7 +733,7 @@ Payment callback URLs must be publicly reachable and directly accessible by each
 - Email tokens are stored as hashes with the plaintext appearing only in the email link; they must be single-use with a short expiry.
 - The password recovery endpoint always returns success regardless of whether the address exists, so response differences cannot be used to enumerate registered accounts.
 - Admin endpoints are guarded by dedicated `role = admin` middleware and never by frontend entry-point hiding alone. The first administrator is created through an environment variable or an initialization command; self-service privilege escalation is not offered.
-- The platform's own third-party key is read from an environment variable, used only inside `internal/proxy`, and never appears in a response body, an error message or a log line. Forwarded responses must also strip any authentication headers the upstream might echo back.
+- The platform's own third-party key is stored encrypted in the `platform_channels` table and decrypted only at the moment an upstream request is made, with the plaintext living only inside `internal/service/upstream.go` and `internal/provider`, never cached, and never appearing in a response body, an error message or a log line. Forwarded responses must also strip any authentication headers the upstream might echo back.
 - The payment webhook is the only public write endpoint. It must verify signatures before doing anything, and cap request body size and processing rate so it cannot become a way to overload the backend or forge orders.
 - AI forwarding endpoints are rate-limited per user. Any authenticated identity can drive the platform's key upstream; the balance check governs how much can be spent and the rate limit governs how fast, and neither alone is sufficient.
 - Holding users' third-party vendor keys server-side is a significant change in responsibility. `SECURITY.md` and `docs/content/docs/support/security.mdx` must document the storage method, encryption algorithm and risk boundary, and additionally cover custody of the platform key and the payment secrets.
@@ -769,7 +790,7 @@ Acceptance: uploads exceeding the storage quota or the per-file limit are reject
 
 ### Phase 4: Backend AI Forwarding and Credit Metering
 
-Add the model_catalog table and `/api/models`, moving model capability, parameter constraints and pricing rules out of frontend hardcoding into admin configuration, and add model catalog CRUD to the admin console. On the backend, add `internal/proxy` and the four `/api/ai/*` forwarding endpoints implementing OpenAI-compatible passthrough and SSE streaming, with the platform's third-party key living only on the server. On the frontend, switch every platform-preset model call in `image.ts`, `video.ts`, `audio.ts` and `model-plugin.ts` to the backend, render parameter forms from `constraints`, and leave user-configured channels going directly from the browser. Deduction happens inside the forwarding path: estimate and check before forwarding, deduct against the actual result on success, refund on failure.
+Add the model_catalog table and `/api/models`, moving model capability, parameter constraints and pricing rules out of frontend hardcoding into admin configuration, and add model catalog CRUD to the admin console. On the backend, add `internal/provider` and `internal/service/upstream.go` plus the five `/api/ai/*` forwarding endpoints (video becomes an asynchronous task, so creation and lookup take one endpoint each), implementing the three upstream protocol adaptations and SSE streaming; platform channel keys live encrypted in the `platform_channels` table, managed through `/api/admin/channels` with failover by priority. On the frontend, add `web/src/services/api/ai.ts` and split on the model identifier at each generation entry point in `image.ts`, `video.ts` and `audio.ts`, render platform model parameter forms from `constraints`, leave user-configured channels going directly from the browser, and do not touch `model-plugin.ts` at all. Deduction happens inside the forwarding path: deduct before generating, refund in full on failure.
 
 This phase and the phase 3 credit system are two sides of one thing. Phase 3 answers "how do credits get sold" and phase 4 answers "how do credits get consumed"; without the latter, the former is selling something that can be neither metered nor redeemed. That is why it must follow phase 3 closely rather than being deferred indefinitely.
 
@@ -810,7 +831,7 @@ Incidentally, the current `cleanupUnusedMedia` also carries a pre-existing defec
 
 **Webhook idempotency and ordering.** Providers retry callbacks, callbacks can arrive out of order, and one can even land after the user has already cancelled the order manually. Crediting must be governed by the `orders.provider_order_id` unique index plus the order state machine, permitting the `pending → paid` transition exactly once and answering repeated callbacks with success while writing nothing. The order status, the credit balance and the ledger row must be written in one transaction with a full rollback if any part fails — a half-succeeded callback is far harder to diagnose than one that fails outright, and the user experiences it directly as "I paid and got nothing". The case of a callback arriving before the order-creation response also needs handling: the order is invisible while its transaction is uncommitted, so there must be a retry or delayed-processing mechanism rather than discarding it as an invalid request.
 
-**Consistency between credit deduction and generation results.** This is the most failure-prone part of phase 4, and it hurts in both directions: deducting credits for a failed generation makes users believe the platform is cheating them, while a successful generation that goes undeducted costs the platform money. The reliable approach is to hold the estimated credits before forwarding with a ledger row, then settle the difference or refund the whole amount once the result is known, writing the refund as a `type = refund` ledger row rather than editing the balance directly — a balance can be reconciled later, a ledger cannot. Long-running cases such as video generation, where the result may arrive asynchronously, need particular care: when the request has gone out but the connection drops, whether credits are charged must be a decision written into the implementation rather than left to chance.
+**Consistency between credit deduction and generation results.** This is the most failure-prone part of phase 4, and it hurts in both directions: deducting credits for a failed generation makes users believe the platform is cheating them, while a successful generation that goes undeducted costs the platform money. The reliable approach is to deduct the credits from `credit_cost` before forwarding with a consumption ledger row, then refund the whole amount on failure, writing the refund as a `type = refund` ledger row rather than editing the balance directly — a balance can be reconciled later, a ledger cannot. Do not settle a difference against the actual result: phase 3 offers only `Reserve` and `Refund`, so a generation is either charged in full or refunded in full, and a second settlement path is just one more way for the books to disagree. Long-running cases such as video generation, where the result may arrive asynchronously, need particular care: when the request has gone out but the connection drops, whether credits are charged must be a decision written into the implementation rather than left to chance.
 
 **Priority conflicts between the model catalog and user-defined models.** A user can perfectly well configure a model in their own channel with the same name as one in the platform catalog. The system must then be able to say unambiguously whether this generation uses the platform key and costs credits or uses the user's key and costs nothing, and that decision can only come from which record the user selected, never from matching model names. The two kinds of model need a visible distinction in the selector, and the user should know before generating whether this run will spend credits. The other edge case is a model the platform has delisted while the user's generation history, or even a canvas node, still references it — reading that history must not error out or render blank just because the catalog lookup fails.
 

@@ -49,7 +49,7 @@ AES-256-GCM。主密钥从 `CREDENTIAL_MASTER_KEY` 读取，是 base64 编码的
 
 明文是 `AiConfig` 序列化后的 JSON，包含 `baseUrl`、`apiKey` 以及 `channels[]` 里每个渠道的 `baseUrl` 和 `apiKey`。
 
-`user_credentials` 是本期九张表里唯一一张此前只在规划文档里描述、没有给出可落地结构的表，这里补齐：
+本期新增五张表：`canvases`、`assets`、`generations`、`media_files` 与 `user_credentials`。其中 `user_credentials` 此前只在规划文档里做了字段描述、没有给出可落地结构，这里补齐：
 
 ```go
 type UserCredential struct {
@@ -301,7 +301,7 @@ WHERE id = $2 AND user_id = $3 AND revision = $4 AND deleted_at IS NULL
 
 ### 素材
 
-**GET `/api/assets?page=&size=&kind=&q=&tag=`**
+**GET `/api/assets?page=&size=&kind=&q=&tag=&sort=`**
 
 `kind` 取 `text`、`image`、`video`，缺省不筛选。`q` 只匹配两处：`title` 列与 `data->>'content'`。`tag` 可以重复传，多个标签之间是「同时包含」语义，用 `tags @> ARRAY[...]` 命中 GIN 索引。
 

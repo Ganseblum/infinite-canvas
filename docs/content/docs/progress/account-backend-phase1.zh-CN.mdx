@@ -15,9 +15,11 @@ description: 账号体系与后端服务规划第一期的详细开发底稿，�
 
 ### 本期不做
 
-凭据托管、数据同步、媒体上传、套餐权益、配额校验、管理后台。这些属于第二三期。
+凭据托管、数据同步、媒体上传、档位权益、配额校验、管理后台。这些属于第二三期。
 
-但**数据模型要一次建到位**：`users` 表的 `role`、`email_verified_at` 字段，以及 `plans`、`subscriptions` 表在本期就要建好并写入默认数据，注册时自动分配 `free` 套餐。原因是注册流程一旦上线就会持续产生用户，后期再补套餐关联需要回填历史数据，不如一开始就写对。配额的**校验逻辑**留到第三期，但**归属关系**本期建立。
+但**数据模型要一次建到位**：`users` 表的 `role`、`email_verified_at` 字段，以及 `plans` 表在本期就要建好并写入 `free` 与 `paid` 两档默认数据。原因是注册流程一旦上线就会持续产生用户，后期再补字段需要回填历史数据，不如一开始就写对。配额的**校验逻辑**留到第三期，但档位定义本期就要写对。
+
+**不建 `subscriptions` 表。** 收费模型是点数制而不是订阅制，付费身份在第三期由点数余额直接推导，不存在需要一张表去维护的订阅状态机；本期建出来，第三期第一件事就是把它删掉。同理，本期也没有「注册时分配套餐」这个动作。本期与第二期都还没有 `credits` 表，档位无从判定，因此**所有用户一律按 `free` 档校验单文件上限**——第二期的 `FILE_TOO_LARGE` 直接读 `plans` 里 `id = free` 那一行的 `max_file_bytes`。等第三期点数体系上线，才改成按 `credits.balance` 是否大于 0 判定档位、再取对应行的上限。`paid` 档的数据本期一并写入，是为了让第三期只需要接上判定逻辑，不用再回头补 seed。
 
 ## 统一约定
 
@@ -115,7 +117,7 @@ description: 账号体系与后端服务规划第一期的详细开发底稿，�
 
 ### `server/cmd/server/main.go`
 
-装配入口。按顺序：加载配置、连接数据库、执行 AutoMigrate、写入默认套餐、创建初始管理员、初始化邮件客户端、注册路由、启动 HTTP 服务并处理优雅关闭。
+装配入口。按顺序：加载配置、连接数据库、执行 AutoMigrate、写入默认档位、创建初始管理员、初始化邮件客户端、注册路由、启动 HTTP 服务并处理优雅关闭。
 
 所有业务路由统一挂在 `r.Group("/api")` 下，各 handler 不再自己拼 `/api` 前缀；只有健康检查的 `/healthz` 与 `/readyz` 挂在根路径、不进这个分组，因为它们只在 compose 网络内被探测。这个前缀必须和 nginx 的 `proxy_pass` 写法严格对应，细节见下面的 `nginx.conf` 一节。
 
@@ -125,9 +127,9 @@ description: 账号体系与后端服务规划第一期的详细开发底稿，�
 
 ### `server/internal/db/db.go`
 
-GORM 连接 PostgreSQL，`AutoMigrate` 全部模型，提供 `SeedPlans` 写入 `free` 与 `pro` 两档默认数据，提供 `EnsureAdmin` 依据 `ADMIN_EMAIL` 与 `ADMIN_PASSWORD` 创建或提升首个管理员。
+GORM 连接 PostgreSQL，`AutoMigrate` 全部模型，提供 `SeedPlans` 写入 `free` 与 `paid` 两档默认数据，提供 `EnsureAdmin` 依据 `ADMIN_EMAIL` 与 `ADMIN_PASSWORD` 创建或提升首个管理员。
 
-`SeedPlans` 与 `EnsureAdmin` 每次容器重启都会执行，所以幂等语义必须钉死，不能只写「必须幂等」。`SeedPlans` 走 insert-if-missing：只有 `plans` 表里没有对应 `id` 时才插入默认数据，已存在的记录一行都不动。这样运维在管理后台或用 SQL 手工调过的套餐额度不会被一次重启打回默认值；代价是改 `.env` 里的额度不再自动生效，后续调整套餐一律走管理后台或直接改库，这是刻意选的。
+`SeedPlans` 与 `EnsureAdmin` 每次容器重启都会执行，所以幂等语义必须钉死，不能只写「必须幂等」。`SeedPlans` 走 insert-if-missing：只有 `plans` 表里没有对应 `id` 时才插入默认数据，已存在的记录一行都不动。这样运维在管理后台或用 SQL 手工调过的档位额度不会被一次重启打回默认值；代价是改 `.env` 里的额度不再自动生效，后续调整档位一律走管理后台或直接改库，这是刻意选的。
 
 `EnsureAdmin` 同理：只在 `ADMIN_EMAIL` 对应的用户不存在时创建管理员，用户已存在但 `role` 不是 `admin` 时提升为管理员，**绝不重置已有管理员的密码**。否则管理员按提示改完密码，下一次重启又会被 `.env` 里的初始密码覆盖回去。
 
@@ -171,25 +173,17 @@ type EmailToken struct {
 }
 
 type Plan struct {
-    ID            string `gorm:"primaryKey"` // free | pro
+    ID            string `gorm:"primaryKey"` // free | paid
     Name          string
     StorageBytes  int64
     MaxFileBytes  int64
-    DailyImages   int
-    DailyVideos   int
-}
-
-type Subscription struct {
-    ID        uuid.UUID  `gorm:"type:uuid;primaryKey"`
-    UserID    uuid.UUID  `gorm:"type:uuid;index;not null"`
-    PlanID    string     `gorm:"not null"`
-    StartsAt  time.Time
-    ExpiresAt *time.Time // nil 表示永久
-    Status    string     `gorm:"not null;default:active"`
-    CreatedAt time.Time
-    UpdatedAt time.Time
+    RetentionDays int
 }
 ```
+
+`plans` 是档位定义而不是订阅套餐，只描述存储侧的三个上限。`SeedPlans` 写入的两行取值必须与第三期一致：`free` 档 `storage_bytes` 500 MB（524288000）、`max_file_bytes` 50 MB（52428800）、`retention_days` 7；`paid` 档 1 GB（1073741824）、200 MB（209715200）、14。第二期的单文件校验与第三期的存储配额校验都直接读这张表，seed 数值写错会被下游原样沿用，而不会有第二处地方把它纠正回来。
+
+没有 `subscriptions` 表，`users` 上也没有 `plan_id`：付费身份是 `credits.balance > 0` 的函数，随时能算出来，不需要一张表维护它的生命周期，也不需要处理到期、续费、宽限这一整套状态机。`retention_days` 本期没有任何代码读它，先写进模型是因为它是档位定义的固有属性，第三期的媒体保留期清理会直接用，届时不必再改表结构。
 
 `users.last_login_at` 给第三期管理后台的「最近登录」列用，登录成功和刷新令牌成功时都要更新。只在登录时更新是不够的：长期开着页面、全靠静默刷新维持会话的用户会一直显示成很久没上线。
 
@@ -222,7 +216,7 @@ SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不
 
 ### `server/internal/handler/auth.go` 与 `account.go`
 
-按下面的接口定义实现。所有写操作用事务，注册要在同一事务里创建 user、subscription 和 email_token。
+按下面的接口定义实现。所有写操作用事务，注册在同一事务里只创建 user 与 email_token 两条记录。`credits` 表第三期才建，那时会给存量用户补一行余额为 0 的记录，并把这行的创建并入注册事务；本期不要为它预留空表或占位行。
 
 ## 接口定义
 
@@ -242,7 +236,7 @@ SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不
 {
   "user": { "id": "...", "email": "a@b.com", "username": "alice", "displayName": "alice", "avatarUrl": "", "role": "user", "emailVerified": false },
   "accessToken": "eyJ...",
-  "plan": { "id": "free", "name": "免费版" }
+  "plan": { "id": "free", "name": "免费" }
 }
 ```
 
@@ -301,7 +295,7 @@ SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不
 ```json
 {
   "user": { "id": "...", "email": "...", "username": "...", "displayName": "...", "avatarUrl": "", "role": "user", "emailVerified": true, "createdAt": "..." },
-  "plan": { "id": "free", "name": "免费版", "storageBytes": 5368709120, "maxFileBytes": 209715200, "dailyImages": 50, "dailyVideos": 10 }
+  "plan": { "id": "free", "name": "免费", "storageBytes": 524288000, "maxFileBytes": 52428800, "retentionDays": 7 }
 }
 ```
 
@@ -420,7 +414,7 @@ profile.*            个人中心各字段与操作
 
 ### `docker-compose.yml`
 
-三个服务。`app` 是 nginx 加前端静态产物，对外映射 3000；`api` 是 Go 后端，只在内网暴露 8080；`db` 是 PostgreSQL，只在内网暴露 5432。`api` 依赖 `db` 健康检查通过后再启动，`app` 依赖 `api`。
+三个服务。`app` 是 nginx 加前端静态产物，对外映射 3000；`api` 是 Go 后端，只在内网暴露 8080；`db` 用 `postgres:17-alpine` 镜像，只在内网暴露 5432。`api` 依赖 `db` 健康检查通过后再启动，`app` 依赖 `api`。
 
 数据卷：`pgdata` 挂数据库，`media` 挂媒体目录（本期不写入，但先建好）。
 
@@ -471,8 +465,14 @@ location /api/ {
 | `COOKIE_SECURE` | `true` | 是否给 cookie 加 `Secure` 属性，无 TLS 的内网或本地环境必须置 `false`，公网部署必须保持 `true` |
 | `LOG_LEVEL` | `info` | 日志级别，可选 `debug`、`info`、`warn`、`error` |
 | `MAIL_DRIVER` | `smtp` | 发信方式，`smtp` 走真实邮件服务，`log` 只把邮件内容与链接打到日志，供本地开发使用 |
+| `PORT` | `8080` | 后端 HTTP 监听端口，不要写死在代码里；改这个值必须同步改 `api` 的 healthcheck 与 `nginx.conf` 的 `proxy_pass` |
+| `POSTGRES_DB` | 无 | `db` 容器初始化时创建的库名 |
+| `POSTGRES_PASSWORD` | 无 | `db` 容器的初始数据库密码 |
+| `POSTGRES_USER` | 无 | `db` 容器的初始数据库用户，`db` 的 healthcheck `pg_isready -U $POSTGRES_USER` 也读它 |
 
 `MAIL_DRIVER=log` 时 SMTP 相关变量不参与必填校验，其余情况下任一为空仍然启动失败。
+
+三个 `POSTGRES_*` 变量是给 `db` 容器用的，由 postgres 镜像自己读取，后端进程一个都不读，但它们必须与 `DATABASE_URL` 里的用户名、密码、库名完全一致，否则数据库起得来、后端连不上。它们只在数据卷首次初始化时生效，`pgdata` 已经建好之后再改这三个值不会改动数据库里的真实账号，只会让 `DATABASE_URL` 对不上，要换值必须先删卷。
 
 ## 本地开发
 
@@ -515,6 +515,8 @@ export default defineConfig({
 
 前端用 Vitest，重点是 `client.ts` 的「单飞刷新 + 请求排队」：用假的 fetch 模拟多个并发请求同时返回 `TOKEN_EXPIRED`，断言刷新接口只被调用一次、所有请求都拿到重放后的成功结果、刷新失败时全部请求以同一个错误 reject 且登录态被清空。前面已经说过这是最容易写出 bug 的地方，并发问题靠手工点是验不出来的，必须有自动化测试。
 
+`web/package.json` 目前既没有 `vitest` 依赖，也没有 `test` 脚本（现有脚本只有 `dev`、`build`、`typecheck`、`start`、`format`、`format:check`），所以本期要先执行 `bun add -d vitest`，并在 `scripts` 里新增 `"test": "vitest run"`。不补这一步，上面这段测试就没有可以运行它的入口。
+
 国际化两个语言包做一个 key 对称性检查脚本：递归展开 `zh-CN.ts` 与 `en-US.ts` 的嵌套 key 并比较集合，任一侧缺 key 就以非零退出码失败，接进 CI 或在 `bun run typecheck` 之前跑一次。错误码文案尤其容易漏，因为错误码表在后端、文案在前端，两边往往不在同一次改动里。
 
 ## 验收清单
@@ -523,7 +525,7 @@ export default defineConfig({
 
 - 全新环境执行 `docker compose up -d` 后三个服务健康，`/` 能打开前端，`/api/me` 未登录返回 401。
 - 默认 `MAIL_DRIVER=smtp` 下若 SMTP 变量缺失，容器启动失败且日志有明确报错。
-- 数据库重启后默认套餐与管理员账号不重复创建。
+- 数据库重启后默认档位与管理员账号不重复创建。
 - 无 TLS 环境下把 `COOKIE_SECURE` 置为 `false` 后，`http://ip:3000` 上能正常登录、刷新页面保持登录，浏览器里能看到 `ic_refresh` cookie。
 - compose 网络内 `/healthz` 返回 200，数据库正常时 `/readyz` 返回 200；停掉 `db` 容器后 `/readyz` 返回 503，`api` 的 healthcheck 随之变为 unhealthy。
 - 手工改过 `plans` 里的额度、改过管理员密码之后重启容器，额度与密码都保持修改后的值，不被 `SeedPlans` 与 `EnsureAdmin` 打回默认。

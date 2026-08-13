@@ -49,7 +49,7 @@ Every write generates a fresh 12-byte random nonce, stored separately from the c
 
 The plaintext is the serialized JSON of `AiConfig`, including `baseUrl`, `apiKey` and the `baseUrl` and `apiKey` of every entry in `channels[]`.
 
-`user_credentials` is the one table out of this phase's nine that was previously only described in the plan document without a structure ready to implement, so here it is:
+This phase adds five tables: `canvases`, `assets`, `generations`, `media_files` and `user_credentials`. Of those, `user_credentials` was previously only described field by field in the plan document without a structure ready to implement, so here it is:
 
 ```go
 type UserCredential struct {
@@ -301,7 +301,7 @@ Deleting a canvas **does not cascade to the media it references**, because the s
 
 ### Assets
 
-**GET `/api/assets?page=&size=&kind=&q=&tag=`**
+**GET `/api/assets?page=&size=&kind=&q=&tag=&sort=`**
 
 `kind` is one of `text`, `image` or `video` and is unfiltered when omitted. `q` matches exactly two places: the `title` column and `data->>'content'`. `tag` may be repeated, multiple tags mean "contains all of them", implemented as `tags @> ARRAY[...]` so the GIN index applies.
 

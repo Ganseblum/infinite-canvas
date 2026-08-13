@@ -94,15 +94,17 @@ type Credit struct {
 type CreditTransaction struct {
     ID           uuid.UUID `gorm:"type:uuid;primaryKey"`
     UserID       uuid.UUID `gorm:"type:uuid;index;not null"`
-    Type         string    `gorm:"type:varchar(16);not null"` // purchase | consume | refund | grant | expire
+    Type         string    `gorm:"type:varchar(16);not null;index:idx_credit_tx_refund,unique,priority:1,where:type = 'refund'"` // purchase | consume | refund | grant | expire
     Amount       int64     `gorm:"not null"`                  // 正数为增、负数为减
     BalanceAfter int64     `gorm:"not null"`
     RefType      string    `gorm:"type:varchar(16)"`          // order | generation | admin
-    RefID        string    `gorm:"type:varchar(64)"`
+    RefID        string    `gorm:"type:varchar(64);index:idx_credit_tx_refund,unique,priority:2"` // refund 时指向被退的那条 consume 流水
     Note         string    `gorm:"type:varchar(200)"`
     CreatedAt    time.Time `gorm:"index"`
 }
 ```
+
+`idx_credit_tx_refund` 是一个**部分唯一索引**，只约束 `type = 'refund'` 的行，让 `(type, ref_id)` 在退还流水里唯一。它是退还幂等的唯一机制，具体怎么用见下面的「点数扣减的一致性」。**只能建成部分索引**：管理员增减点数写的是 `type=grant`、`ref_id` 为操作管理员 id，同一个管理员必然要发很多次点，全量唯一索引会从第二次开始直接拒绝；消费流水同样允许同一个请求产生多条。GORM 的 `index` 标签支持 `where` 选项，上面的写法能让 `AutoMigrate` 直接建出部分索引；如果所用 GORM 版本不支持，就在 `AutoMigrate` 之后补一句 `CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_tx_refund ON credit_transactions (type, ref_id) WHERE type = 'refund'`，与第一期建索引的代码放在一起，不要散到 service 里。
 
 `credits` 一个用户一行，注册时随 user 在同一事务里创建余额为 0 的行，不要等到第一次充值才建，否则每个读余额的地方都要处理「行不存在」的分支。
 
@@ -175,17 +177,21 @@ type ModelCatalog struct {
 
 `name` 是发给第三方接口的模型标识，`display_name` 是给用户看的名字，两者必须分开：渠道换了模型 id 而产品名不变的情况很常见，混成一个字段就得改用户可见的文案。
 
-`constraints` 描述这个模型接受哪些参数：
+`constraints` 描述这个模型接受哪些参数。这份键集由本期定义，第四期的转发接口拿同一份键做服务端白名单校验，**两边必须逐字一致**，任何一侧改键名都会让另一侧读不到：
 
 ```json
 {
-  "sizes": ["1024x1024", "1536x1024", "1024x1536"],
-  "aspectRatios": ["1:1", "3:2", "2:3"],
-  "durations": [5, 10],
-  "qualities": ["standard", "hd"],
-  "maxReferenceImages": 4
+  "size": ["1024x1024", "1536x1024", "1024x1536"],
+  "quality": ["low", "medium", "high"],
+  "n": { "max": 4 },
+  "duration": [4, 6, 8],
+  "resolution": ["480p", "720p", "1080p"],
+  "ratio": ["16:9", "9:16", "1:1"],
+  "features": ["mask", "referenceImage"]
 }
 ```
+
+键名一律用单数，与请求体里的参数名逐个对应，服务端校验时就不需要再维护一张「参数名到约束键名」的映射表。数组型的键是取值白名单，做精确匹配；对象型的键是范围约束，目前只有 `n` 一个，`max` 给出单次最多生成几个产物；`features` 是能力开关的字符串数组，`mask` 表示支持蒙版、`referenceImage` 表示支持参考图，这类能力没有取值可枚举，塞进一个数组比给每种能力单开一个布尔键要省事得多。
 
 不适用的键直接省略，前端按「键在不在」决定渲染哪些控件，不写模型名的硬编码分支。
 
@@ -195,9 +201,9 @@ type ModelCatalog struct {
 {
   "base": 10,
   "rules": [
-    { "when": { "quality": "hd" }, "multiplier": 2 },
+    { "when": { "quality": "high" }, "multiplier": 2 },
     { "when": { "size": "1536x1024" }, "add": 5 },
-    { "when": { "duration": 10 }, "multiplier": 2 }
+    { "when": { "duration": 8 }, "multiplier": 2 }
   ]
 }
 ```
@@ -216,7 +222,7 @@ type ModelCatalog struct {
 
 本期采用**先扣后生成、失败自动退还**。判断依据是两类错误的可恢复性不同：漏扣不可恢复，算力已经消耗掉了，事后没有任何办法追回；多扣可恢复，退一笔就行。宁可走多扣退还的路径，也不要走漏扣的路径。
 
-**退还必须走流水**，写一条 `type=refund`、`amount` 为正数、`ref_type=generation`、`ref_id` 指向对应转发请求或生成记录的记录，不能直接把 `balance` 加回去。这条规则的全部价值在于让 `balance = SUM(amount)` 这条等式永远成立：一旦不等，就说明有代码绕过了账本，可以立刻定位到是哪一笔、哪个路径写的。任何时候都能对账，是财务类数据唯一可接受的状态。
+**退还必须走流水**，写一条 `type=refund`、`amount` 为正数、`ref_type=generation`、**`ref_id` 指向被退的那条 `type=consume` 流水的 id** 的记录，不能直接把 `balance` 加回去。指向消费流水而不是指向转发请求或生成记录，是因为退还的对象本来就是那一笔扣款：一次生成可能因为重试产生多条消费流水，只有流水 id 能唯一确定这次退的是哪一笔，而且它同时是下面那个唯一索引的去重键。这条规则的全部价值在于让 `balance = SUM(amount)` 这条等式永远成立：一旦不等，就说明有代码绕过了账本，可以立刻定位到是哪一笔、哪个路径写的。任何时候都能对账，是财务类数据唯一可接受的状态。
 
 供第四期调用的内部方法就两个：
 
@@ -224,11 +230,11 @@ type ModelCatalog struct {
 // 扣减，余额不足返回 ErrInsufficientCredits
 func (s *CreditService) Reserve(ctx context.Context, userID uuid.UUID, amount int64, refID string) error
 
-// 退还，按 refID 幂等
+// 退还，refID 是被退的那条 consume 流水 id，靠部分唯一索引保证幂等
 func (s *CreditService) Refund(ctx context.Context, userID uuid.UUID, amount int64, refID, note string) error
 ```
 
-`Reserve` 用上面那条带条件的 UPDATE 扣减并在同一事务里写 `type=consume` 流水，余额不足时返回 `ErrInsufficientCredits`，由 handler 转成 402。`Refund` 必须幂等：写入前先查 `credit_transactions` 里有没有同一个 `(type=refund, ref_id)` 的记录，有就直接返回成功。转发接口重试时会重复触发退还，不做幂等就会退两次。
+`Reserve` 用上面那条带条件的 UPDATE 扣减并在同一事务里写 `type=consume` 流水，余额不足时返回 `ErrInsufficientCredits`，由 handler 转成 402。`Refund` 的幂等**完全依赖 `idx_credit_tx_refund` 这个部分唯一索引**：直接插入退还流水，撞上唯一冲突就把它当成「已经退过了」返回成功。不要在写入前先查一遍有没有同一条退还记录再决定写不写，查与写之间有竞态窗口，两个并发的退还都会查到「没有」然后各写一条，而这正是唯一索引存在的理由。转发接口重试时会重复触发退还，没有这个索引就会退两次。
 
 **本期不会产生任何 `type=consume` 的流水**，因为没有任何地方调用 `Reserve`——实际扣减发生在第四期的转发接口里。本期只把这两个方法、账本表和对账不变量建好，并用管理后台的手工增减点数（`type=grant`）验证账本正确。读到这里不要以为本期上线后点数就会自动消耗。
 
@@ -430,8 +436,8 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
       "displayName": "GPT Image",
       "capability": "image",
       "provider": "openai",
-      "constraints": { "sizes": ["1024x1024", "1536x1024"], "qualities": ["standard", "hd"], "maxReferenceImages": 4 },
-      "creditCost": { "base": 10, "rules": [ { "when": { "quality": "hd" }, "multiplier": 2 } ] }
+      "constraints": { "size": ["1024x1024", "1536x1024"], "quality": ["low", "medium", "high"], "n": { "max": 4 }, "features": ["referenceImage"] },
+      "creditCost": { "base": 10, "rules": [ { "when": { "quality": "high" }, "multiplier": 2 } ] }
     }
   ]
 }
@@ -456,7 +462,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/admin/users` | 分页列表，支持 `page`、`size`、`q`（匹配邮箱或用户名）、`status`、`planId` |
+| GET | `/api/admin/users` | 分页列表，支持 `page`、`size`、`sort`、`q`（匹配邮箱或用户名）、`status`、`planId` |
 | GET | `/api/admin/users/{id}` | 用户详情，含档位、点数余额、用量、注册时间、最近登录 |
 | PATCH | `/api/admin/users/{id}` | 修改 `status`（`active`/`disabled`） |
 | POST | `/api/admin/users/{id}/password` | 重置密码，并撤销该用户全部 refresh token |
@@ -464,15 +470,21 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 | POST | `/api/admin/users/{id}/usage/recalculate` | 重算存储用量 |
 | POST | `/api/admin/users/{id}/media/reclaim` | 触发该用户的清理扫描（孤儿加过期），完成后自动重算存储用量 |
 | GET | `/api/admin/stats` | 总览：用户总数、今日新增、存储总占用、今日生成量、今日充值金额、全站点数余额总量 |
-| GET/POST/PATCH/DELETE | `/api/admin/models` | 模型目录增删改查 |
-| GET/POST/PATCH | `/api/admin/credit-packages` | 充值档位管理 |
-| GET | `/api/admin/orders` | 全站订单列表，支持按 `status`、`provider`、`userId` 筛选 |
+| GET/POST | `/api/admin/models` | 模型目录列表与新增 |
+| PATCH/DELETE | `/api/admin/models/{id}` | 单个模型的修改与删除 |
+| GET/POST | `/api/admin/credit-packages` | 充值档位列表与新增 |
+| PATCH | `/api/admin/credit-packages/{id}` | 单个充值档位的修改 |
+| GET | `/api/admin/orders` | 全站订单列表，支持 `page`、`size`、`sort`，以及按 `status`、`provider`、`userId` 筛选 |
 
 用户列表响应：
 
 ```json
 { "items": [ { "id": "...", "email": "...", "username": "...", "role": "user", "status": "active", "emailVerified": true, "planId": "paid", "balance": 1280, "storageBytes": 123, "createdAt": "..." } ], "total": 128, "page": 1, "size": 20 }
 ```
+
+两个列表接口的分页参数直接沿用第二期给业务资源定的那套约定，不另立一份：`page` 从 1 开始、缺省 1，`size` 缺省 20、上限 100，越界返回 `VALIDATION_FAILED`；`sort` 走白名单枚举再映射到列名，不能把参数拼进 SQL，前缀 `-` 表示倒序，两个接口都缺省 `-createdAt`，不在白名单内返回 `VALIDATION_FAILED`。`/api/admin/users` 的白名单是 `createdAt`、`balance`、`storageBytes`，`/api/admin/orders` 的白名单是 `createdAt`、`amountCents`。管理后台的列表页天然要在注册时间、余额、订单金额之间来回排序，沿用同一套参数名前端还能直接复用第二期已有的分页写法。
+
+`planId` 不是 `users` 表上的列，而是余额的派生值，按它筛选必须 join `credits` 判余额：`planId=paid` 对应 `credits.balance > 0`，`planId=free` 对应余额为 0。列表里的 `balance` 与 `storageBytes` 同样来自 join `credits` 与 `usage_records`，一次查询取齐，不要渲染每一行时再各查一次。
 
 全部管理接口的公共错误：`UNAUTHORIZED`（未登录）、`FORBIDDEN`（非管理员）、`NOT_FOUND`（用户或资源不存在）、`VALIDATION_FAILED`（参数不合法），下面只列各接口特有的部分。
 
@@ -572,7 +584,7 @@ type Provider interface {
 
 模型下拉的数据源改为 `GET /api/models`，参数表单**按 `constraints` 动态渲染**，不在前端硬编码每个模型支持哪些尺寸。
 
-渲染规则就是看键在不在：有 `sizes` 或 `aspectRatios` 就渲染对应选择器，有 `durations` 就渲染时长选择，有 `qualities` 就渲染质量选择，`maxReferenceImages` 决定参考图上传数量上限，键不存在就不渲染该控件。
+渲染规则就是看键在不在：有 `size` 或 `ratio` 就渲染对应选择器，有 `duration` 就渲染时长选择，有 `quality` 就渲染质量选择，有 `resolution` 就渲染分辨率选择，有 `n` 就渲染生成数量输入并把 `n.max` 作为上限，`features` 里含 `referenceImage` 才显示参考图上传、含 `mask` 才显示蒙版入口，键不存在就不渲染该控件。
 
 切换模型时要校验当前已选参数在新模型的 `constraints` 里是否仍然合法，不合法就回落到第一个可选值。漏掉这一步会出现「换了模型但尺寸还是上一个模型独有的值」，一直到第四期的转发接口才报错，用户完全看不懂。
 
@@ -594,7 +606,7 @@ type Provider interface {
 
 列表统一用 Ant Design `Table` 配 `@ant-design/pro-components`（项目已有依赖），支持搜索、筛选、分页。用户页的行操作包含封禁解封、增减点数、重置密码、触发清理扫描、查看详情。
 
-模型页支持新增、编辑、上下架，`constraints` 与 `credit_cost` 两个 jsonb 字段要用受控的表单控件编辑，**不要做成裸 JSON 文本框**：直接让管理员手写 JSON，拼错一个键就会让前端的动态表单渲染不出控件，而这个错误在保存时看不出来，要到用户打开生成页才暴露。
+模型页支持新增、编辑、上下架，`constraints` 与 `credit_cost` 两个 jsonb 字段要用受控的表单控件编辑，**不要做成裸 JSON 文本框**：直接让管理员手写 JSON，拼错一个键就会让前端的动态表单渲染不出控件，而这个错误在保存时看不出来，要到用户打开生成页才暴露。`constraints` 的七个键各配一种控件：`size`、`quality`、`duration`、`resolution`、`ratio` 五个数组键用可增删的标签输入，`n` 用一个数字输入填 `max`，`features` 用固定选项的多选框（当前只有 `mask` 与 `referenceImage`），每个键都能整体启用或删除，删掉即表示该模型不支持这个参数。控件的键集与上面数据模型一节写死的那七个键一一对应，加新键要同时改后端校验、这里的表单和前端的动态渲染，三处缺一不可。
 
 ### 路由与守卫
 
@@ -619,8 +631,8 @@ type Provider interface {
 
 扣点失败退还：
 
-- 用单元测试或临时调试入口调用 `Reserve` 后模拟生成失败再调 `Refund`，余额回到扣减前的值，流水里 `consume` 与 `refund` 成对出现且 `ref_id` 相同。
-- 用同一个 `refID` 连续调用两次 `Refund`，只产生一条 `type=refund` 流水，余额只增加一次。
+- 用单元测试或临时调试入口调用 `Reserve` 后模拟生成失败再调 `Refund`，余额回到扣减前的值，流水里 `consume` 与 `refund` 成对出现，且 `refund` 的 `ref_id` 等于那条 `consume` 的 id。
+- 用同一条消费流水的 id 连续调用两次 `Refund`，第二次撞上 `idx_credit_tx_refund` 唯一冲突后仍返回成功，只产生一条 `type=refund` 流水，余额只增加一次；同一个管理员连续给同一用户发两次点则两次都成功，不会被这个索引误伤。
 - 余额不足时 `Reserve` 返回错误且不产生任何流水，上层接口返回 402 `INSUFFICIENT_CREDITS`。
 
 支付与订单：
@@ -657,7 +669,7 @@ type Provider interface {
 模型目录：
 
 - 管理员新增一个模型后，前端生成页的下拉里立刻出现，参数表单按 `constraints` 渲染出对应控件。
-- 从某个模型的 `constraints` 里去掉 `qualities` 后，前端不再渲染质量选择器，其余控件不受影响。
+- 从某个模型的 `constraints` 里去掉 `quality` 后，前端不再渲染质量选择器，其余控件不受影响。
 - 切换模型时不合法的已选参数自动回落到第一个可选值，不会把上一个模型独有的取值带过去。
 - 生成按钮旁的预估消耗随参数变化实时更新，与服务端按同一份 `credit_cost` 算出的结果一致。
 - 已产生过流水的模型无法硬删除，只能下架；下架后前端下拉里消失，历史流水仍能读出模型名。
@@ -666,7 +678,7 @@ type Provider interface {
 
 管理后台：
 
-- 管理员能看到用户列表，能按邮箱搜索、按状态筛选、翻页，列表里能看到点数余额与当前档位。
+- 管理员能看到用户列表，能按邮箱搜索、按状态与 `planId` 筛选、按余额排序、翻页，列表里能看到点数余额与当前档位；`size` 传 500 或 `sort` 传白名单外的值都返回 `VALIDATION_FAILED`。
 - 封禁用户后其 refresh token 全部失效，最多 15 分钟后完全掉线。
 - 管理员重置用户密码后，该用户全部设备被踢下线。
 - **非管理员账号直接请求 `/api/admin/users`、`/api/admin/models`、`/api/admin/credit-packages`、`/api/admin/orders` 一律返回 403**，即使前端入口被隐藏也拦得住。

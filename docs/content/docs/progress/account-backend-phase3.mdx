@@ -94,15 +94,17 @@ type Credit struct {
 type CreditTransaction struct {
     ID           uuid.UUID `gorm:"type:uuid;primaryKey"`
     UserID       uuid.UUID `gorm:"type:uuid;index;not null"`
-    Type         string    `gorm:"type:varchar(16);not null"` // purchase | consume | refund | grant | expire
+    Type         string    `gorm:"type:varchar(16);not null;index:idx_credit_tx_refund,unique,priority:1,where:type = 'refund'"` // purchase | consume | refund | grant | expire
     Amount       int64     `gorm:"not null"`                  // positive adds, negative subtracts
     BalanceAfter int64     `gorm:"not null"`
     RefType      string    `gorm:"type:varchar(16)"`          // order | generation | admin
-    RefID        string    `gorm:"type:varchar(64)"`
+    RefID        string    `gorm:"type:varchar(64);index:idx_credit_tx_refund,unique,priority:2"` // for refunds, the consume row being reversed
     Note         string    `gorm:"type:varchar(200)"`
     CreatedAt    time.Time `gorm:"index"`
 }
 ```
+
+`idx_credit_tx_refund` is a **partial unique index** constraining only rows with `type = 'refund'`, making `(type, ref_id)` unique among refund entries. It is the sole mechanism behind refund idempotency; how it is used appears under "Consistency of Credit Deduction" below. **It can only be partial**: admin credit adjustments write `type=grant` with `ref_id` set to the acting administrator's id, and the same administrator will inevitably grant credits many times, so a full unique index would reject every grant after the first; consumption entries likewise allow several rows for one request. GORM's `index` tag supports a `where` option, so the declaration above lets `AutoMigrate` create the partial index directly; if the GORM version in use does not support it, add `CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_tx_refund ON credit_transactions (type, ref_id) WHERE type = 'refund'` right after `AutoMigrate`, alongside phase 1's index creation code rather than scattered into a service.
 
 `credits` holds one row per user, created with a zero balance in the same transaction as the user at registration. Do not defer creation to the first top-up, or every balance read grows a "row does not exist" branch.
 
@@ -175,17 +177,21 @@ type ModelCatalog struct {
 
 `name` is the model identifier sent to the third-party endpoint and `display_name` is the name shown to users; the two must stay separate, because a channel renaming its model id while the product name stays put is common, and a single field would force user-visible copy to change with it.
 
-`constraints` describes which parameters the model accepts:
+`constraints` describes which parameters the model accepts. This phase defines the key set and the phase 4 proxy validates against the very same keys server-side, so **the two must match character for character** — renaming a key on either side leaves the other unable to read it:
 
 ```json
 {
-  "sizes": ["1024x1024", "1536x1024", "1024x1536"],
-  "aspectRatios": ["1:1", "3:2", "2:3"],
-  "durations": [5, 10],
-  "qualities": ["standard", "hd"],
-  "maxReferenceImages": 4
+  "size": ["1024x1024", "1536x1024", "1024x1536"],
+  "quality": ["low", "medium", "high"],
+  "n": { "max": 4 },
+  "duration": [4, 6, 8],
+  "resolution": ["480p", "720p", "1080p"],
+  "ratio": ["16:9", "9:16", "1:1"],
+  "features": ["mask", "referenceImage"]
 }
 ```
+
+Key names are singular throughout and correspond one-to-one with request body parameter names, so server-side validation needs no "parameter name to constraint key" mapping table. Array-valued keys are allow-lists matched exactly; object-valued keys are range constraints, currently just `n`, whose `max` gives how many artifacts a single request may produce; `features` is a string array of capability switches, where `mask` means masks are supported and `referenceImage` means reference images are, capabilities that have no enumerable values and are far cheaper to express in one array than as a separate boolean key each.
 
 Keys that do not apply are simply omitted, and the frontend decides which controls to render by key presence rather than hard-coded per-model branches.
 
@@ -195,9 +201,9 @@ Keys that do not apply are simply omitted, and the frontend decides which contro
 {
   "base": 10,
   "rules": [
-    { "when": { "quality": "hd" }, "multiplier": 2 },
+    { "when": { "quality": "high" }, "multiplier": 2 },
     { "when": { "size": "1536x1024" }, "add": 5 },
-    { "when": { "duration": 10 }, "multiplier": 2 }
+    { "when": { "duration": 8 }, "multiplier": 2 }
   ]
 }
 ```
@@ -216,7 +222,7 @@ There are only two possible orderings. **Generate then charge** looks friendlier
 
 This phase takes **charge first, generate second, refund automatically on failure**. The deciding factor is that the two error classes differ in recoverability: an under-charge is unrecoverable because the compute has already been spent and there is no way to claw it back afterwards; an over-charge is recoverable with a single refund. Take the over-charge-and-refund path over the under-charge path.
 
-**Refunds must go through the ledger**, writing a row with `type=refund`, a positive `amount`, `ref_type=generation` and a `ref_id` pointing at the corresponding proxy request or generation record — never by adding to `balance` directly. The entire value of this rule is keeping `balance = SUM(amount)` true forever: the moment it is not, some code has bypassed the ledger, and the offending entry and path can be located immediately. Being reconcilable at any time is the only acceptable state for financial data.
+**Refunds must go through the ledger**, writing a row with `type=refund`, a positive `amount`, `ref_type=generation` and **a `ref_id` pointing at the id of the `type=consume` row being reversed** — never by adding to `balance` directly. It points at the consumption entry rather than at the proxy request or generation record because the thing being refunded is that particular charge: one generation may produce several consumption entries through retries, and only the ledger row id identifies which charge is being returned — it is also the deduplication key for the unique index below. The entire value of this rule is keeping `balance = SUM(amount)` true forever: the moment it is not, some code has bypassed the ledger, and the offending entry and path can be located immediately. Being reconcilable at any time is the only acceptable state for financial data.
 
 Phase 4 calls exactly two internal methods:
 
@@ -224,11 +230,11 @@ Phase 4 calls exactly two internal methods:
 // Deduct; returns ErrInsufficientCredits when the balance is too low
 func (s *CreditService) Reserve(ctx context.Context, userID uuid.UUID, amount int64, refID string) error
 
-// Refund; idempotent per refID
+// Refund; refID is the consume row being reversed, made idempotent by the partial unique index
 func (s *CreditService) Refund(ctx context.Context, userID uuid.UUID, amount int64, refID, note string) error
 ```
 
-`Reserve` deducts with the conditional UPDATE above and writes a `type=consume` row in the same transaction, returning `ErrInsufficientCredits` on a low balance for the handler to translate into 402. `Refund` must be idempotent: before writing, check `credit_transactions` for an existing `(type=refund, ref_id)` row and return success if one exists. A retrying proxy request will trigger the refund more than once, and without idempotency it refunds twice.
+`Reserve` deducts with the conditional UPDATE above and writes a `type=consume` row in the same transaction, returning `ErrInsufficientCredits` on a low balance for the handler to translate into 402. `Refund` relies **entirely on the `idx_credit_tx_refund` partial unique index** for idempotency: insert the refund row directly and treat a unique violation as "already refunded", returning success. Do not check for an existing refund row before deciding whether to write; the gap between the check and the write is a race window in which two concurrent refunds both find nothing and each write a row, which is precisely why the index exists. A retrying proxy request will trigger the refund more than once, and without the index it refunds twice.
 
 **This phase produces no `type=consume` rows at all**, because nothing calls `Reserve` — the real deduction lives in the phase 4 proxy. This phase only builds those two methods, the ledger tables and the reconciliation invariant, verifying correctness through manual admin adjustments (`type=grant`). Do not read this section and conclude that credits start being consumed once this phase ships.
 
@@ -430,8 +436,8 @@ The settlement logic and idempotency guarantees are in "Payment Implementation N
       "displayName": "GPT Image",
       "capability": "image",
       "provider": "openai",
-      "constraints": { "sizes": ["1024x1024", "1536x1024"], "qualities": ["standard", "hd"], "maxReferenceImages": 4 },
-      "creditCost": { "base": 10, "rules": [ { "when": { "quality": "hd" }, "multiplier": 2 } ] }
+      "constraints": { "size": ["1024x1024", "1536x1024"], "quality": ["low", "medium", "high"], "n": { "max": 4 }, "features": ["referenceImage"] },
+      "creditCost": { "base": 10, "rules": [ { "when": { "quality": "high" }, "multiplier": 2 } ] }
     }
   ]
 }
@@ -456,7 +462,7 @@ All routes sit under `/api/admin` behind a dedicated `RequireAdmin` middleware v
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/api/admin/users` | Paginated list supporting `page`, `size`, `q` (email or username), `status` and `planId` |
+| GET | `/api/admin/users` | Paginated list supporting `page`, `size`, `sort`, `q` (email or username), `status` and `planId` |
 | GET | `/api/admin/users/{id}` | User detail with tier, credit balance, usage, registration time and last login |
 | PATCH | `/api/admin/users/{id}` | Change `status` (`active`/`disabled`) |
 | POST | `/api/admin/users/{id}/password` | Reset the password and revoke all of that user's refresh tokens |
@@ -464,15 +470,21 @@ All routes sit under `/api/admin` behind a dedicated `RequireAdmin` middleware v
 | POST | `/api/admin/users/{id}/usage/recalculate` | Recompute storage usage |
 | POST | `/api/admin/users/{id}/media/reclaim` | Run the cleanup scan (orphans plus expired) for that user, recomputing storage usage afterwards |
 | GET | `/api/admin/stats` | Overview: total users, new today, total storage, generations today, top-up revenue today, total outstanding credits |
-| GET/POST/PATCH/DELETE | `/api/admin/models` | Model catalog CRUD |
-| GET/POST/PATCH | `/api/admin/credit-packages` | Top-up package management |
-| GET | `/api/admin/orders` | Site-wide order list filterable by `status`, `provider` and `userId` |
+| GET/POST | `/api/admin/models` | Model catalog listing and creation |
+| PATCH/DELETE | `/api/admin/models/{id}` | Updating and deleting a single model |
+| GET/POST | `/api/admin/credit-packages` | Top-up package listing and creation |
+| PATCH | `/api/admin/credit-packages/{id}` | Updating a single top-up package |
+| GET | `/api/admin/orders` | Site-wide order list supporting `page`, `size` and `sort`, filterable by `status`, `provider` and `userId` |
 
 User list response:
 
 ```json
 { "items": [ { "id": "...", "email": "...", "username": "...", "role": "user", "status": "active", "emailVerified": true, "planId": "paid", "balance": 1280, "storageBytes": 123, "createdAt": "..." } ], "total": 128, "page": 1, "size": 20 }
 ```
+
+Both list endpoints reuse the pagination contract phase 2 defined for business resources rather than inventing a second one: `page` starts at 1 and defaults to 1, `size` defaults to 20 and caps at 100, returning `VALIDATION_FAILED` when out of range; `sort` goes through an allow-list enum before being mapped to a column and is never concatenated into SQL, a `-` prefix means descending, both endpoints default to `-createdAt`, and anything outside the allow-list returns `VALIDATION_FAILED`. The allow-list for `/api/admin/users` is `createdAt`, `balance` and `storageBytes`; for `/api/admin/orders` it is `createdAt` and `amountCents`. Admin list pages naturally need to sort back and forth by registration time, balance and order amount, and reusing the same parameter names lets the frontend reuse phase 2's existing pagination code.
+
+`planId` is not a column on `users` but a value derived from the balance, so filtering by it requires joining `credits`: `planId=paid` means `credits.balance > 0` and `planId=free` means a zero balance. The `balance` and `storageBytes` fields in the list likewise come from joining `credits` and `usage_records`, fetched in one query rather than re-queried per rendered row.
 
 Errors shared by every admin endpoint: `UNAUTHORIZED` (not signed in), `FORBIDDEN` (not an administrator), `NOT_FOUND` (user or resource missing) and `VALIDATION_FAILED` (bad parameters); only endpoint-specific errors are listed below.
 
@@ -572,7 +584,7 @@ The affected locations are `web/src/pages/image/index.tsx`, `web/src/pages/video
 
 The model dropdown's data source becomes `GET /api/models`, and the parameter form is **rendered dynamically from `constraints`** rather than hard-coding which model supports which sizes.
 
-The rule is simply key presence: `sizes` or `aspectRatios` render the corresponding selector, `durations` renders a duration picker, `qualities` renders a quality picker, `maxReferenceImages` caps the reference image uploader, and an absent key renders no control.
+The rule is simply key presence: `size` or `ratio` render the corresponding selector, `duration` renders a duration picker, `quality` renders a quality picker, `resolution` renders a resolution picker, `n` renders a count input capped at `n.max`, `features` containing `referenceImage` shows the reference image uploader and containing `mask` shows the mask entry, and an absent key renders no control.
 
 When switching models, validate that the currently selected parameters are still legal under the new model's `constraints`, falling back to the first allowed value when they are not. Skipping this produces "switched model but the size is still the previous model's exclusive value", which only errors out at the phase 4 proxy where the user has no idea what went wrong.
 
@@ -594,7 +606,7 @@ Organized per existing project conventions: page-private components live in each
 
 Use the Ant Design `Table` with `@ant-design/pro-components` (already a dependency) for search, filtering and pagination. Row actions on the users page cover suspend and restore, adjust credits, reset password, trigger a cleanup scan and view detail.
 
-The models page supports create, edit and delist, and the `constraints` and `credit_cost` jsonb fields must be edited through controlled form controls, **not a raw JSON textarea**: letting an administrator hand-write JSON means one misspelled key silently renders no control in the dynamic form, an error invisible at save time that only surfaces when a user opens the generation page.
+The models page supports create, edit and delist, and the `constraints` and `credit_cost` jsonb fields must be edited through controlled form controls, **not a raw JSON textarea**: letting an administrator hand-write JSON means one misspelled key silently renders no control in the dynamic form, an error invisible at save time that only surfaces when a user opens the generation page. Each of the seven `constraints` keys gets its own control: the five array keys `size`, `quality`, `duration`, `resolution` and `ratio` use an add-and-remove tag input, `n` uses a single number input for `max`, and `features` uses a fixed-option multi-select (currently just `mask` and `referenceImage`); every key can be enabled or removed as a whole, and removing it means the model does not support that parameter. These controls correspond one-to-one with the seven keys fixed in the data model section above, and adding a key means changing backend validation, this form and the frontend's dynamic rendering together — all three, without exception.
 
 ### Routing and Guards
 
@@ -619,8 +631,8 @@ Credit ledger:
 
 Deduction failure and refund:
 
-- Calling `Reserve` from a unit test or temporary debug entry point, simulating a generation failure and then calling `Refund` returns the balance to its pre-deduction value, with `consume` and `refund` appearing as a pair sharing one `ref_id`.
-- Calling `Refund` twice with the same `refID` produces a single `type=refund` row and increases the balance only once.
+- Calling `Reserve` from a unit test or temporary debug entry point, simulating a generation failure and then calling `Refund` returns the balance to its pre-deduction value, with `consume` and `refund` appearing as a pair whose `refund` carries a `ref_id` equal to that `consume` row's id.
+- Calling `Refund` twice with the same consumption row id still returns success on the second call after hitting the `idx_credit_tx_refund` conflict, producing a single `type=refund` row and increasing the balance only once; the same administrator granting credits to the same user twice succeeds both times, unharmed by that index.
 - `Reserve` on an insufficient balance returns an error, writes no ledger row, and the calling endpoint returns 402 `INSUFFICIENT_CREDITS`.
 
 Payments and orders:
@@ -657,7 +669,7 @@ Retention and cleanup:
 Model catalog:
 
 - A model created by an administrator appears immediately in the frontend generation dropdown, with the parameter form rendering the controls described by `constraints`.
-- Removing `qualities` from a model's `constraints` stops the frontend rendering the quality selector while leaving the other controls intact.
+- Removing `quality` from a model's `constraints` stops the frontend rendering the quality selector while leaving the other controls intact.
 - Switching models falls illegal selected parameters back to the first allowed value rather than carrying over the previous model's exclusive value.
 - The estimated cost beside the generate button updates live with parameter changes and matches what the server computes from the same `credit_cost` rules.
 - A model with ledger history cannot be hard-deleted, only delisted; after delisting it disappears from the dropdown while historical ledger rows still show its name.
@@ -666,7 +678,7 @@ Model catalog:
 
 Admin console:
 
-- An administrator sees the user list and can search by email, filter by status and paginate, with the credit balance and current tier visible in the list.
+- An administrator sees the user list and can search by email, filter by status and `planId`, sort by balance and paginate, with the credit balance and current tier visible in the list; a `size` of 500 or a `sort` outside the allow-list returns `VALIDATION_FAILED`.
 - Suspending a user invalidates all their refresh tokens and drops them entirely within 15 minutes.
 - An admin password reset signs the user out on every device.
 - **A non-administrator requesting `/api/admin/users`, `/api/admin/models`, `/api/admin/credit-packages` or `/api/admin/orders` directly receives 403**, holding even though the frontend entry is hidden.
