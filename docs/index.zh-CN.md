@@ -15,6 +15,7 @@
 
 ## 开发与数据
 
+- [项目结构](/zh-CN/docs/development/project-structure)
 - [本地开发](/zh-CN/docs/development/local-development)
 - [画布数据结构](/zh-CN/docs/development/canvas-data-structure)
 
@@ -31,6 +32,11 @@
 ## 项目进度
 
 - [更新日志](/zh-CN/docs/progress/changelog)
+- [账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)
+- [第一期实施清单](/zh-CN/docs/progress/account-backend-phase1)
+- [第二期实施清单](/zh-CN/docs/progress/account-backend-phase2)
+- [第三期实施清单](/zh-CN/docs/progress/account-backend-phase3)
+- [第四期实施清单](/zh-CN/docs/progress/account-backend-phase4)
 - [待测试](/zh-CN/docs/progress/pending-test)
 - [TODO](/zh-CN/docs/progress/todo)
 

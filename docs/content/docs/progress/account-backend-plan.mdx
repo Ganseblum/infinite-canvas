@@ -1,0 +1,831 @@
+---
+title: Account System and Backend Service Plan
+description: Plan for adding a Go backend service providing authentication, cloud data sync and user entitlements, deployed privately with Docker
+---
+
+# Account System and Backend Service Plan
+
+This document plans the migration of Infinite Canvas from a pure frontend local application to a multi-user client-server system: a new Go backend service providing registration and login, cloud data synchronization and user entitlements, deployed on a self-hosted server with Docker.
+
+This document describes the plan only and contains no implementation code.
+
+## Current State
+
+The project currently has **no backend service at all**.
+
+- `web/` is a pure static SPA built with Vite + React 19 + Ant Design + Tailwind + Zustand. The build output `web/dist` is served by nginx.
+- `Dockerfile` is a two-stage build whose runtime image contains only nginx, with no server-side process. `vercel.json` is a static SPA deployment and `render.yaml` reuses the same image.
+- All business data lives in the browser: canvases, assets and plugins go through IndexedDB (localforage), while AI configuration, WebDAV credentials and theme go through localStorage.
+- AI requests go directly from the browser to the OpenAI-compatible endpoint configured by the user, without passing through any server.
+- Cross-device sync relies on a WebDAV server supplied by the user.
+- `canvas-agent/` is an Express + MCP bridge process running on the **user's own machine**, listening on `127.0.0.1:17371`, used to connect Codex / Claude Code to the canvas. It is a single-user local tool, not a backend service, and has no database.
+
+Authentication **does not exist at all**. `web/src/stores/use-user-store.ts` is only a stub where `user` is permanently `null` with a single `clearSession`. All eight business routes in `web/src/router.tsx` have no auth guard.
+
+## Goals
+
+- Users must register and log in before using any functionality including canvas, generation and assets.
+- User canvases, assets, image logs and video logs are persisted server-side and restored automatically after logging in on another device, including the original image and video files.
+- Third-party AI credentials configured by the user are stored encrypted on the server so they do not need to be re-entered on a new device.
+- Provide a tier and quota system that limits resource usage by storage capacity, per-file size and media retention period.
+- AI requests for platform-preset models are forwarded through the backend, users buy credits through online payment, and generation is metered and deducted server-side.
+- The full stack is deployed on a self-hosted server through Docker Compose.
+
+## Confirmed Key Decisions
+
+| Decision | Conclusion | Impact |
+| --- | --- | --- |
+| Third-party AI API keys | Stored server-side, AES-GCM encrypted, master key from environment variable | No re-entry across devices; the server takes on key custody responsibility and `SECURITY.md` must be updated accordingly |
+| Keep a login-free mode | No, login is mandatory site-wide | No dual-mode compatibility needed in the frontend, simpler code; Vercel static deployment is dropped |
+| Media file sync scope | Full upload, both original images and videos are synced | Best experience; server disk and bandwidth costs are self-borne and require quota enforcement as a backstop |
+| WebDAV sync | Removed entirely | Cloud sync becomes the only path; `webdav-sync.ts` plus config page UI, localized strings and config export fields are all deleted |
+| Registration policy | Fully open | Anyone can register, so rate limiting, email verification and free-tier quotas must work together as the backstop |
+| Email verification and password recovery | Both implemented | Requires SMTP integration plus an email token table and two landing pages |
+| Admin console | Lightweight version in phase 3 | Adds an `/admin` route in this project covering user list, credit adjustment, usage inspection and suspension, with the model catalog and credit packages added in phase 4 |
+| Tier quotas | Two tiers, free and paid | Free: 500 MB storage, 50 MB per file, 7-day media retention. Paid: 1 GB storage, 200 MB per file, 14-day media retention |
+| Monetization model | Credits only, no subscription VIP | Users buy credits online and any remaining balance counts as the paid tier; running out of credits falls back to free automatically, and the VIP concept is deferred |
+| AI request path | Platform-preset models are forwarded through the backend, user-configured channels stay direct from the browser | The platform key stays server-side and credits are deducted server-side; a user's own key costs no credits but is still bound by the storage quota and retention period |
+| Model catalog | Maintained in the admin console, with the frontend rendering parameter forms from it | The frontend no longer guesses capability from keywords or hardcodes resolutions and durations; user-defined channels and models are kept |
+| Media retention | All media is timed from its last touch and cleaned up after expiry | Active projects are never reclaimed while long-abandoned media frees disk on expiry; a warning goes out 2 days ahead alongside an export entry |
+| Payment providers | Alipay, WeChat Pay and Stripe | Requires merchant credentials and publicly reachable callback URLs; webhooks must verify signatures and be idempotent |
+
+### What Quotas Can and Cannot Enforce
+
+The storage quota is a **hard constraint**: media must pass through the backend to reach disk, the server validates before writing, and there is no way around it.
+
+Generation is a **hard constraint** as well. Credits are bought with real money, and failing to deduct them accurately means selling something whose books cannot be balanced. AI requests for platform-preset models therefore all move behind the Go backend: the platform's third-party key exists only on the server and never reaches the browser, the server knows exactly how many calls were made with which parameters, and deduction happens inline in the forwarding path. Building that path is what phase 4 is for.
+
+The boundary to draw is around channels the user configures themselves. Those requests use the user's own key, still go directly from the browser, cost no credits, and are not counted server-side. This is deliberate rather than a hole — the user is burning their own allowance and the platform has no grounds to charge for it. But the images and videos those requests produce still consume the storage quota and are still subject to media retention once uploaded, so the server-side cost exposure remains covered by hard constraints.
+
+Product copy can therefore describe credit consumption on platform models as definite, unavoidable metering. That is the precondition for charging at all.
+
+### Credits and Paid Status
+
+"Any remaining credit balance means a paid user" is the rule that most needs spelling out. It reduces paid status from "which plan was purchased and how many days remain" to "is the balance above zero": determining a tier is a single lookup of `credits.balance`, with no subscription state machine to maintain and none of the renewal, dunning or trial-conversion edge cases subscriptions bring.
+
+The cost is that status flips naturally with use. Topping up moves the user to the paid tier, and the moment credits run out the account falls back to free. The fallback itself deletes nothing, but storage in use has very likely already passed the free tier's 500 MB, at which point the account enters **read-only mode**: browsing, exporting and deleting still work, uploading new media does not. A **30-day grace period** starts at the same time with reminder emails during it, and the user can either top up to restore the paid tier or trim their own data below 500 MB. Accounts still over quota when the grace period ends are cleaned up starting from the oldest media until they fit.
+
+Monthly-subscription VIP tiers with exclusive perks are deliberately deferred. The credit model already covers every monetization case currently needed, whereas subscriptions add billing cycles, invoices and bulk renewal failures. Plan that separately once there is a concrete need.
+
+### Media Retention and Expiry Cleanup
+
+Cleanup covers **all media, including media a canvas currently references**. This differs from the common approach and deserves explaining up front: if only orphans were cleaned up, a user could occupy disk forever simply by keeping an image attached to some canvas, and retention would mean nothing.
+
+But "images inside my canvas get deleted" sounds like it destroys people's projects, so the timing rule has to compensate. A media file's **last touch time** is the maximum of `updated_at` across every canvas referencing it, `updated_at` across every asset referencing it, and `created_at` of every generation record referencing it. Touching any one of them restarts the clock, and only exceeding the tier's `retention_days` moves the file into cleanup. The result is that active projects are never reclaimed and only genuinely abandoned media — canvases never opened, assets never touched — ever expires.
+
+No `expires_at` column is added. Expiry is a derived value continuously refreshed by writes to several tables, so materializing it as a column means maintaining it on every canvas save, asset update and generation write: write amplification, and very easy to miss one path. It is computed on the fly when the cleanup job scans instead, and that job is **merged with the phase 3 orphan reclamation into a single scan** — both have to walk the jsonb columns of three business tables to resolve references, and one pass yields both "who is unreferenced" and "when was this last touched".
+
+Warning before expiry is mandatory: an email 2 days ahead plus an in-app notice, together with a one-click export entry so users can take out whatever they want to keep. Automatic deletion without warning is an incident, not a feature.
+
+### Cost Risk of Open Registration Combined with Full Media Sync
+
+These two decisions still create a cost exposure, but the quota change puts it in an entirely different bracket: with a 500 MB free tier, the theoretical peak for 100 registered users is 50 GB of disk rather than the earlier 500 GB. That number sits comfortably within what a single server can absorb, so open registration is no longer a bet placed on luck.
+
+A smaller magnitude does not mean the defenses can go. All of the following stay:
+
+- Rate-limit the registration endpoint by IP and by email domain to prevent scripted bulk signups.
+- **Disallow media uploads until email verification passes**, keeping unverified accounts at zero storage.
+- Check the storage quota and the per-file limit before writing a file rather than writing first and accounting afterwards.
+- Provide a cleanup policy for long-inactive accounts as a disk backstop.
+
+One defense is added on top: per-tier retention cleanup of media. It turns "sign up, fill 500 MB, never come back" from a permanent occupation into a time-limited one, so disk usage no longer accumulates monotonically with signups but falls back as inactive accounts expire.
+
+Server disk capacity should still be provisioned as a proportion of "expected signups multiplied by the free quota", with disk watermark alerting configured — the base number is simply an order of magnitude smaller.
+
+## Repository Layout: Stay in This Repository, Add a Top-Level `server/`
+
+**Conclusion: do not create a new repository. Add a `server/` directory in the current repository.**
+
+This repository is already a multi-package structure where `web/` (frontend), `canvas-agent/` (local Node service), `plugins/` (canvas plugins) and `docs/` (documentation site) are independent. Adding `server/` is fully consistent with the existing organization.
+
+Three reasons for the single-repository choice:
+
+1. **The frontend-backend contract is tightly coupled.** The field shapes of canvases, assets and generation records are carried jointly by frontend type definitions such as `CanvasProject` and `Asset` and by backend table schemas, so changing one field means touching both sides. A single repository lets one change update both sides at once, whereas two repositories require extra version coordination and contract synchronization at a cost far exceeding the benefit.
+2. **Deployment orchestration belongs together.** Docker Compose must orchestrate frontend, backend and database simultaneously, and `nginx.conf` must proxy `/api`. These configurations naturally belong to the same deployment description.
+3. **Mandatory login has already diverged from upstream.** Upstream `basketikun/infinite-canvas` is an MIT-licensed pure local tool, whereas this work is a private version with mandatory login and server-side credential custody that is not intended to be merged back. The argument that separate repositories ease upstream syncing therefore does not apply.
+
+Related precautions: never commit real keys or production configuration under `server/` — use environment variables and `.env` (already ignored in `.dockerignore`). Mark this repository as a private fork in the README and describe the differences from upstream.
+
+If the ability to merge upstream must be preserved, the alternative is a separate backend repository with frontend changes confined to a few files. However, mandatory login intrudes into routing, the request layer, the config page and the top navigation, making such confinement impractical. Not recommended.
+
+## Directory Structure
+
+```txt
+infinite-canvas/
+  web/                      # existing frontend, modified by this work
+  canvas-agent/             # existing local agent, unchanged
+  plugins/                  # existing canvas plugins, unchanged
+  docs/                     # documentation site
+  server/                   # [NEW] Go backend service
+    go.mod
+    go.sum
+    Dockerfile
+    .env.example
+    cmd/
+      server/
+        main.go             # entry point: wires config, database and routes
+    internal/
+      config/               # environment variable configuration
+      db/                   # GORM connection and AutoMigrate
+      model/                # data model definitions
+      crypto/               # AES-GCM credential encryption
+      auth/                 # password hashing and JWT issuing/verification
+      mail/                 # SMTP delivery and email templates
+      middleware/           # auth, rate limiting, logging
+      storage/              # object storage interface and local disk implementation
+      payment/              # payment provider adapters: order creation, signature verification, webhooks
+      proxy/                # AI request forwarding: OpenAI-compatible passthrough and SSE streaming
+      handler/              # HTTP handlers
+        auth.go
+        account.go
+        credential.go
+        canvas.go
+        asset.go
+        generation.go
+        media.go
+        plan.go
+        credit.go
+        order.go
+        payment.go
+        model.go
+        ai.go
+        admin.go
+  docker-compose.yml        # changed to app + api + db, three services
+  nginx.conf                # adds /api reverse proxy
+```
+
+`internal/storage` is an interface plus a local disk implementation, so switching to MinIO or S3 later only replaces the implementation without touching callers.
+
+`internal/payment` splits into Alipay, WeChat Pay and Stripe implementations behind one shared order-creation and webhook interface, with signature verification always delegated to each provider's official SDK rather than assembling signature strings by hand. `internal/proxy` handles only protocol passthrough and stream forwarding and parses no business semantics; deduction, metering and balance checks all live in `handler/ai.go` around the forwarding call. Keeping those responsibilities apart is what makes the forwarding layer replaceable.
+
+## Technology Choices
+
+| Purpose | Choice | Rationale |
+| --- | --- | --- |
+| HTTP framework | Gin | Mature ecosystem, plenty of documentation, concise routing and middleware |
+| ORM | GORM + AutoMigrate | The project is not yet released, so no migration scripts are needed and AutoMigrate is the least code |
+| Database | PostgreSQL | Canvases and assets are large JSON blobs that fit JSONB columns directly and can be indexed |
+| Authentication | golang-jwt/jwt v5 | Access token plus refresh token |
+| Password hashing | golang.org/x/crypto/bcrypt | Standard practice, no custom design needed |
+| Credential encryption | Standard library crypto/aes and cipher.GCM | No third-party crypto library required |
+| Object storage | Local disk volume | Simplest for private deployment, with an interface left for extension |
+| Payment providers | Each provider's official Go SDK | Order parameters and webhook signature verification come from the SDK; signature logic is never hand-written |
+| AI forwarding | Standard library net/http | The OpenAI-compatible protocol only needs verbatim passthrough, and SSE flushes chunk by chunk through `http.Flusher`, so no extra framework is needed |
+
+This follows the project convention that general-purpose capabilities always use mature, stable libraries rather than hand-written protocol, crypto or date implementations.
+
+## Data Model
+
+### Account
+
+**users** — primary user table
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `email` | varchar | Unique, login identifier |
+| `username` | varchar | Unique, login identifier |
+| `password_hash` | varchar | bcrypt hash |
+| `display_name` | varchar | Display name |
+| `avatar_url` | varchar | Avatar |
+| `role` | varchar | `user` / `admin`, the basis for admin console authorization |
+| `status` | varchar | `active` / `disabled`, used for suspension |
+| `email_verified_at` | timestamptz | Verification time; null means unverified |
+| `created_at` / `updated_at` | timestamptz | |
+
+Accounts with an unverified email can log in and browse but **cannot upload media files**. This is the key constraint controlling storage cost under open registration.
+
+**email_tokens** — shared table for email verification and password reset, distinguished by `purpose`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key |
+| `token_hash` | varchar | Hash only; the plaintext appears solely in the email link |
+| `purpose` | varchar | `verify_email` / `reset_password` |
+| `expires_at` | timestamptz | Suggested 24 hours for verification, 1 hour for password reset |
+| `used_at` | timestamptz | Consumption time, enforcing single use |
+| `created_at` | timestamptz | Used for send-rate limiting |
+
+**refresh_tokens** — refresh tokens supporting multi-device login and forced sign-out
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key |
+| `token_hash` | varchar | Hash only, never plaintext |
+| `expires_at` | timestamptz | Expiry |
+| `revoked_at` | timestamptz | Revocation time, nullable |
+| `user_agent` / `ip` | varchar | Device attribution |
+
+**user_credentials** — encrypted third-party credentials
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | uuid | Foreign key, unique |
+| `payload` | bytea | AES-GCM ciphertext; plaintext is the JSON of `AiConfig`, including each channel's `baseUrl` and `apiKey` |
+| `nonce` | bytea | GCM nonce, regenerated on every write |
+| `key_version` | int | Master key version for future rotation |
+
+### Business Data
+
+Canvases, assets and generation records each get their own table with one row per business object, rather than packing an entire domain into a single large JSON blob. That way the list view can paginate, search by title and let the database sort, and optimistic locking narrows down to a single row. Every business table carries `deleted_at` for soft deletion, which removes the need for a separate deletion-marker table.
+
+**canvases** — canvases
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key, indexed |
+| `title` | varchar | Canvas title, supports fuzzy search |
+| `data` | jsonb | Full canvas content: `nodes`, `connections`, `viewport`, `chatSessions`, `backgroundMode` and so on |
+| `revision` | bigint | Optimistic lock, incremented on every write |
+| `node_count` | int | Denormalized for the list view so `data` never has to be parsed |
+| `connection_count` | int | Same purpose; list cards display "N nodes · N connections" |
+| `cover_key` | varchar | `storage_key` of the cover image, nullable |
+| `created_at` / `updated_at` | timestamptz | |
+| `deleted_at` | timestamptz | Soft deletion, nullable |
+
+The index `(user_id, deleted_at, updated_at desc)` covers exactly the default list query: current user, not deleted, newest first. `node_count` and `connection_count` are deliberate denormalizations that let the list endpoint avoid touching `data`, a column that can run to several megabytes.
+
+`cover_key` deserves a separate note: **the list view has no cover image today**, its cards being a flat color block with a title and some statistics. This column reserves a future capability rather than carrying over an existing one. Where the cover comes from (a screenshot of the canvas at save time, or the first image node), when it is generated and how the card layout changes are all undefined. Create the column in phase 2 but leave it unimplemented, and schedule the feature separately once the resource model is proven.
+
+**assets** — user assets
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key, indexed |
+| `kind` | varchar | `text` / `image` / `video` |
+| `title` | varchar | Asset title |
+| `tags` | text[] | Tags, filterable through a GIN index |
+| `data` | jsonb | Fields specific to `kind` |
+| `storage_key` | varchar | `storage_key` of the primary media, nullable |
+| `bytes` | bigint | Size of the primary media |
+| `created_at` / `updated_at` / `deleted_at` | timestamptz | |
+
+`tags` uses a native array rather than JSONB so it can carry a GIN index, letting tag filtering hit the index instead of scanning the table.
+
+**generations** — generation records, replacing the former image-workbench and video-workbench domains
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key |
+| `kind` | varchar | `image` / `video` |
+| `status` | varchar | Generation status |
+| `prompt` | text | Prompt |
+| `model` | varchar | Model used |
+| `config` | jsonb | Generation parameters |
+| `result` | jsonb | Generation result, including the list of `storage_key`s |
+| `duration_ms` | int | Elapsed time |
+| `created_at` | timestamptz | Indexed, used for descending cursor pagination |
+| `deleted_at` | timestamptz | Soft deletion, nullable |
+
+The index `(user_id, kind, created_at desc)` serves cursor pagination of workbench history. Generation records are an append-only stream that grows linearly with usage, which makes this the one table that absolutely cannot be fetched in full.
+
+**media_files** — media file index
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key |
+| `storage_key` | varchar | Shaped like `image:xxx` / `video:xxx`, matching the frontend |
+| `object_path` | varchar | Actual path in object storage |
+| `mime_type` | varchar | |
+| `bytes` | bigint | File size |
+| `checksum` | varchar | sha256 |
+| `created_at` | timestamptz | |
+
+`(user_id, storage_key)` is unique. Business tables store only the `storage_key`; the binary content and its physical path are managed here, and storage usage is aggregated from this table.
+
+### Entitlements
+
+**plans** — tier definitions
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | varchar | `free` / `paid` |
+| `name` | varchar | Display name |
+| `storage_bytes` | bigint | Total storage quota |
+| `max_file_bytes` | bigint | Per-file limit |
+| `retention_days` | int | Media retention in days |
+
+Two default rows are seeded on initialization:
+
+| id | Name | Storage quota | Per-file limit | Media retention |
+| --- | --- | --- | --- | --- |
+| `free` | Free | 500 MB | 50 MB | 7 days |
+| `paid` | Paid | 1 GB | 200 MB | 14 days |
+
+This table no longer records daily generation limits — generation consumes credits, not a count quota. Nor does it represent "which plan the user bought": the relationship between a user and a tier is derived straight from the credit balance, where `credits.balance > 0` means `paid` and anything else means `free`. There is therefore no subscriptions table and no subscription relation to maintain.
+
+**credits** — credit balance
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | uuid | Primary key and foreign key, one row per user |
+| `balance` | bigint | Current balance, never negative |
+| `updated_at` | timestamptz | |
+
+**credit_transactions** — credit ledger
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key, indexed |
+| `type` | varchar | `purchase` / `consume` / `refund` / `grant` / `expire` |
+| `amount` | bigint | Positive to add, negative to deduct |
+| `balance_after` | bigint | Balance after this movement |
+| `ref_type` | varchar | `order` / `generation` / `admin` |
+| `ref_id` | varchar | Id of the related object |
+| `note` | varchar | Free-form note |
+| `created_at` | timestamptz | Indexed, used for cursor pagination |
+
+The ledger is a table of its own rather than just a balance column because a paid system has to be auditable: when a user asks "why did my credits go down", the product must be able to itemize the answer. `balance_after` is a deliberate denormalization so that diagnosing a discrepancy does not require replaying the whole ledger to find the entry that went wrong. Balance and ledger writes must happen in one transaction, otherwise "balance deducted but no ledger row" — or the reverse — will eventually occur, and that class of damage cannot be repaired automatically.
+
+**credit_packages** — top-up packages
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | varchar | Primary key |
+| `name` | varchar | Display name |
+| `credits` | bigint | Base credits |
+| `bonus_credits` | bigint | Bonus credits |
+| `price_cents` | bigint | Price in cents |
+| `currency` | varchar | Currency |
+| `enabled` | bool | Whether it is listed |
+| `sort` | int | Ordering |
+
+**orders** — payment orders
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `user_id` | uuid | Foreign key |
+| `provider` | varchar | `alipay` / `wechat` / `stripe` |
+| `provider_order_id` | varchar | Provider-side order number, unique |
+| `package_id` | varchar | Foreign key into credit_packages |
+| `amount_cents` | bigint | Amount actually paid |
+| `currency` | varchar | Currency |
+| `credits` | bigint | Credits granted by this order |
+| `status` | varchar | `pending` / `paid` / `failed` / `refunded` |
+| `paid_at` | timestamptz | Payment completion time, nullable |
+| `created_at` / `updated_at` | timestamptz | |
+
+`orders.credits` snapshots the package's `credits + bonus_credits` at order creation and the webhook uses that value directly instead of looking the package up again. Packages can be repriced or delisted at any time while a webhook may arrive minutes or hours later, and only a snapshot guarantees the user receives the amount they saw when they paid.
+
+The uniqueness of `provider_order_id` is the foundation of webhook idempotency: a repeated callback for the same payment is stopped by the unique index, making double-crediting impossible. Providers retry callbacks as a matter of course, so this is the normal path and not an exceptional one.
+
+**usage_records** — usage counters, unique by `(user_id, metric, period)`, where `metric` is `image_generate` / `video_generate` / `storage_bytes` and `period` is a date or `total`.
+
+### Model Catalog
+
+**model_catalog** — platform model catalog
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `name` | varchar | Model identifier actually sent upstream |
+| `display_name` | varchar | Display name |
+| `capability` | varchar | `image` / `video` / `text` / `audio` |
+| `provider` | varchar | Owning channel |
+| `constraints` | jsonb | Parameter constraints, shaped like `{ sizes: [], aspectRatios: [], durations: [], qualities: [], maxReferenceImages: n }` |
+| `credit_cost` | jsonb | Pricing rules keyed by parameters |
+| `enabled` | bool | Whether it is visible to users |
+| `sort` | int | Ordering |
+| `created_at` / `updated_at` | timestamptz | |
+
+This table exists to fix three defects in the current frontend: model capability is guessed from name keywords by `guessCapability` in `use-config-store`; resolution and maximum edge length are global hardcoded constants such as `QUALITY_BASE` and `IMAGE_MAX_EDGE` in `image.ts`, applied identically to every model; and the system has no idea which sizes, aspect ratios or durations a specific model actually supports, so users have to find out by trial — pick an unsupported combination and the only feedback is an upstream error.
+
+`constraints` is jsonb rather than a set of columns because different capabilities constrain different dimensions in the first place: image models care about sizes and aspect ratios, video models care about durations, speech models care about neither. Splitting them into columns produces a wide table that is mostly null, and these constraints are only ever read and rendered by frontend forms, never queried by field. `credit_cost` is the same: pricing is naturally bound to parameters — the same model costs differently at 1024×1024 and at 4K, video is priced by duration — so it can only be configured model by model.
+
+One point deserves emphasis: **the model catalog is a platform preset, not a mandatory allowlist.** Channels and models the user configures themselves are kept, the frontend merges both sources into one list, and the only difference is that custom models have no `constraints` to work from, so their parameter form falls back to today's generic shape and they consume no credits.
+
+## API Design
+
+All endpoints share the `/api` prefix and are proxied same-origin by nginx, avoiding CORS. Everything except registration, login and the payment webhook requires `Authorization: Bearer <accessToken>`; the webhook is called by the provider's servers, which have no user token, so signature verification takes the place of authentication there.
+
+### Authentication
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/api/auth/register` | Register, returns user info and both tokens |
+| POST | `/api/auth/login` | Log in with email or username |
+| POST | `/api/auth/refresh` | Exchange a refresh token for new tokens |
+| POST | `/api/auth/logout` | Revoke the current refresh token |
+| POST | `/api/auth/verify-email/send` | Resend the verification email, subject to send-rate limits |
+| POST | `/api/auth/verify-email` | Submit the token from the email to complete verification |
+| POST | `/api/auth/password/forgot` | Send a reset email; always returns success whether or not the address exists, to prevent account enumeration |
+| POST | `/api/auth/password/reset` | Reset the password with a token and revoke all refresh tokens for that user |
+
+### Account
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/me` | Returns user info, current tier, credit balance and usage |
+| PATCH | `/api/me` | Update display name and avatar |
+| POST | `/api/me/password` | Change password, verifying the old one and revoking tokens on other devices |
+
+### Credential Custody
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/credentials` | Returns the decrypted AI channel configuration |
+| PUT | `/api/credentials` | Encrypt and persist |
+
+### Canvases
+
+Listing and detail are separate: the list returns summaries without `data`, and paging, search and sorting all happen server-side. Detail is requested only when a canvas is actually opened.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/canvases?page=&size=&q=&sort=` | Paginated list returning summaries only (`id`, `title`, `nodeCount`, `connectionCount`, `coverKey`, `updatedAt`), without `data` |
+| POST | `/api/canvases` | Create, returns the full object |
+| GET | `/api/canvases/{id}` | Full data including `data` and `revision` |
+| PUT | `/api/canvases/{id}` | Full update; the body carries `revision` for optimistic locking, conflicts return 409 `REVISION_CONFLICT` |
+| PATCH | `/api/canvases/{id}` | Metadata-only update such as the title, without `data` |
+| DELETE | `/api/canvases/{id}` | Soft delete |
+
+`PUT` and `PATCH` are distinct so that renaming a canvas does not have to round-trip several megabytes of `data`. Frequent lightweight edits go through `PATCH`.
+
+### Assets
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/assets?page=&size=&kind=&q=&tag=` | Paginated list filterable by kind, keyword and tag |
+| POST | `/api/assets` | Create |
+| GET | `/api/assets/{id}` | Detail |
+| PATCH | `/api/assets/{id}` | Update title, tags and similar fields |
+| DELETE | `/api/assets/{id}` | Soft delete |
+
+### Generations
+
+History is append-only, so it uses cursor pagination rather than page numbers. The cursor is `created_at desc` plus `id`, which keeps paging stable and duplicate-free even when new records arrive mid-scroll.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/generations?kind=&status=&cursor=&size=` | Cursor pagination, returns `{ items, nextCursor }`; `status=pending` is unpaginated and returns everything at once |
+| POST | `/api/generations` | Record one generation |
+| GET | `/api/generations/{id}` | Detail |
+| PATCH | `/api/generations/{id}` | Accepts only `status`, `result` and `durationMs`, and only while the record is still `pending` |
+| DELETE | `/api/generations/{id}` | Soft delete |
+
+`PATCH` exists because of asynchronous video tasks: video generation first writes a `pending` record, and once polling returns a result that record has to become `success` or `failed` with the artifact written back. Keeping it deliberately narrow — three fields only, and only while `pending` — preserves the "history is append-only" premise instead of letting it degenerate into a general-purpose endpoint that can rewrite history at will. `status=pending` skips pagination because the records needing polling resumed after a page reload will not necessarily sit on the first page, and paginating would make that recovery fail silently.
+
+### Media Files
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| HEAD | `/api/media/{storageKey}` | Check existence, size and checksum |
+| GET | `/api/media/{storageKey}` | Download binary |
+| PUT | `/api/media/{storageKey}` | Upload, with quota and email-verification checks before writing |
+| DELETE | `/api/media/{storageKey}` | Delete |
+
+Media travels over dedicated binary endpoints and business objects reference only a `storageKey`. Once the frontend has a canvas or an asset it fetches files on demand rather than carrying them inside the JSON body.
+
+**`GET /api/media/{storageKey}` must be designed as an ordinary URL that can go straight into `<img src>`**, not something the frontend downloads as a Blob and converts to an ObjectURL. This is worth emphasizing because it deletes an entire existing mechanism: today `image-storage.ts` and `file-storage.ts` each maintain a module-level `storageKey → ObjectURL` map, opening a canvas resolves every image into an ObjectURL in bulk, and that map is never evicted, so memory grows steadily as the user moves between canvases. With direct URLs the browser HTTP cache takes over and both maps, the asynchronous bulk hydration and the leak that comes with them all disappear.
+
+There is a conflict to resolve here: phase 1 keeps the access token in memory only and scopes the refresh cookie to `Path=/api/auth`, so an `<img src>` request can reach neither the in-memory token nor that path-restricted cookie.
+
+The resolution is to **issue an additional read-only media cookie at login and refresh**, with `HttpOnly; Secure; SameSite=Lax; Path=/api/media`, rotated on the same cycle as the refresh token. Its authority is deliberately minimal: it can read only the owning user's media and cannot call any business endpoint, let alone read credentials. Even if stolen, the loss is far smaller than a leaked access token, which would expose every third-party API key the user owns.
+
+Uploads still travel as ordinary requests carrying an `Authorization` header; this cookie applies only to `GET` and `HEAD`. Do not turn it into a general session cookie for convenience, which would undo the phase 1 token design.
+
+### Entitlements
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/plans` | Tier list returning storage quota, per-file limit and retention period for both tiers |
+
+Tiers need no assignment endpoint — which tier a user belongs to is derived from the credit balance, and `/api/me` simply returns the current tier, storage usage, credit balance and the nearest media expiry time. Storage usage is aggregated from `media_files` and credit consumption is read from `credit_transactions`, so neither needs a separate usage-accounting endpoint.
+
+### Credits
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/credits` | Balance plus a summary of recent ledger entries |
+| GET | `/api/credits/transactions?cursor=` | Cursor-paginated ledger |
+
+The ledger is an append-only history stream just like generation records, so it uses cursor pagination rather than page numbers. Balance gets its own `/api/credits` instead of riding along on `/api/me` because it changes in real time during generation and the frontend needs to refresh it frequently on its own, whereas `/api/me` also carries profile and tier information that has no reason to be refetched alongside it.
+
+### Payments and Orders
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/credit-packages` | Top-up package list, listed packages only |
+| POST | `/api/orders` | Create an order with body `{ packageId, provider }`, returning the provider's payment parameters |
+| GET | `/api/orders?cursor=` | Cursor-paginated order list |
+| POST | `/api/orders/{id}/cancel` | Cancel a pending order |
+| POST | `/api/payments/webhook/{provider}` | Payment webhook, publicly reachable but must verify signatures and be idempotent |
+
+`POST /api/orders` only creates a local order and returns payment parameters; credits do not land at this step. They land only after a webhook confirms payment, and writing the order status, adding to the balance and appending the ledger row must all happen inside one transaction.
+
+The webhook is the only write endpoint in the entire backend without an `Authorization` header, so its two defenses have to be built into the implementation. **Signature verification** is delegated to each provider's official SDK and a failed signature is rejected outright — never waved through because "the order number looks like ours". **Idempotency** comes from the `orders.provider_order_id` unique index plus the order state machine, which permits the `pending → paid` transition exactly once and answers repeated callbacks with success while writing nothing.
+
+### Model Catalog
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/models` | Platform model catalog including `constraints` and pricing rules |
+
+The frontend fetches this once when a generation page initializes and then renders the parameter form from whichever model the user selects: sizes, aspect ratios and durations the model does not support are disabled outright instead of letting the user pick them and wait for an upstream error. The response carries each model's `credit_cost` so the frontend can show roughly what a run will cost before the user presses generate, which for a pay-per-use product is a requirement rather than a nicety.
+
+### AI Request Forwarding
+
+Added in phase 4 and requiring login throughout. Only platform-preset models take this path; user-configured channels still go directly from the browser.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/api/ai/images/generations` | Image generation |
+| POST | `/api/ai/videos/generations` | Video generation |
+| POST | `/api/ai/audio/speech` | Speech synthesis |
+| POST | `/api/ai/chat/completions` | Chat completion, SSE streaming |
+
+The paths deliberately mirror the shape of the OpenAI-compatible protocol, and request and response bodies pass through verbatim, so existing calls under `web/src/services/api/` only need their baseUrl swapped and their key removed — no protocol layer to rewrite. `/api/ai/chat/completions` must support SSE with the backend flushing chunk by chunk while forwarding, rather than waiting for the upstream to finish and emitting everything at once, otherwise assistant conversations in the canvas regress from streaming to a single block appearing at the end.
+
+The deduction order is: before forwarding, estimate the credits from the model's `credit_cost` and the current parameters and check the balance, rejecting immediately if it is insufficient; after a successful forward, deduct against the actual result and append a ledger row; on upstream failure or timeout, deduct nothing and refund anything already held. The consistency of this path is what phase 4 needs to test hardest.
+
+### Admin Console
+
+All of these require `role = admin`, verified by dedicated middleware. Hiding the entry point in the frontend is not sufficient.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/admin/users` | User list with pagination, keyword search and status filtering |
+| PATCH | `/api/admin/users/{id}` | Change status (suspend/restore) |
+| POST | `/api/admin/users/{id}/password` | Admin password reset for a user |
+| POST | `/api/admin/users/{id}/credits` | Admin adjustment of a user's credits |
+| GET | `/api/admin/users/{id}/usage` | Inspect a single user's storage footprint and generation usage |
+| GET/POST/PATCH/DELETE | `/api/admin/models` | Model catalog CRUD |
+| GET/POST/PATCH | `/api/admin/credit-packages` | List, create and update top-up packages |
+| GET | `/api/admin/orders` | Order list filterable by status and user |
+| GET | `/api/admin/stats` | Overview: user count, total storage, generations today |
+
+Tiers are no longer assigned by an administrator, so `PATCH /api/admin/users/{id}` only changes status. Granting someone paid entitlements means granting credits through `POST /api/admin/users/{id}/credits`, which must append a `type = grant` ledger row and is therefore a different class of operation from a status change — hence its own endpoint rather than another field on the PATCH.
+
+Top-up packages support list, create and update but not delete. Delisting is done through the `enabled` flag; physically deleting a package that existing orders point at would leave historical orders unable to say what the user actually bought.
+
+## Data Approach: A Server-Authoritative Resource Model
+
+The original plan was to reuse the domain manifest contract from the existing WebDAV sync: pack each of the four domains — canvas, assets, image-workbench, video-workbench — into a single JSON blob to upload and download, merge it client-side with `mergeById`, and bolt on a deletion-marker table to supply the missing delete semantics. Its entire appeal was effort: the only parts of `web/src/services/app-sync.ts` genuinely bound to WebDAV are two upload and download functions, so swapping the transport layer would have been enough to get it running.
+
+**That plan has been rejected.** It put "save some frontend work" ahead of "an architecture that holds up", and the saved work would come back quickly in more expensive forms:
+
+1. **A whole domain in one JSONB blob cannot be queried.** To show a canvas list the client must pull the entire domain, easily several megabytes, and paging, title search and sorting by update time can only happen in frontend memory.
+2. **Generation records are an append-only history stream.** Treating a log that is only ever appended to as something to "merge" is awkward to begin with, and once a user accumulates a few thousand entries, fetching all of them every time the workbench opens is simply unacceptable.
+3. **The revision lock is far too coarse.** With optimistic locking applied to an entire domain, two devices editing **different** canvases still collide, and no user can be expected to understand why editing canvas A reports a conflict with canvas B.
+4. **Deletion needs a separate mechanism.** The manifest model requires a dedicated tombstone table plus filtering on every merge, whereas a per-row `deleted_at` handles it once the data is resource-shaped.
+5. **The data is opaque to everything else.** An admin console wanting to know how many canvases a user has, or any future API client wanting to read a single record, would first have to pull the whole domain blob and parse it.
+
+The data layer therefore moves to a **server-authoritative resource-oriented REST model**: every canvas, asset and generation record is one row in the database, and the frontend no longer holds a full copy but requests what it needs on demand.
+
+**The server is the single source of truth.** The client no longer merges. Writes go straight to the server and reads take the server response as authoritative. In-memory frontend data is a view of server data, not a second copy that has to be reconciled with it.
+
+**On-demand loading, with list and detail separated.** List endpoints return summary fields only, never `data`; detail is fetched when a canvas is opened. Generation records use cursor pagination and only the current page is fetched. How much data a user has accumulated no longer determines how much is loaded on first paint.
+
+**Optimistic locking pushed down to the individual record.** `revision` lives on each canvas row, `PUT /api/canvases/{id}` must carry the `revision` the client read, and a mismatch returns 409 `REVISION_CONFLICT`. Two devices editing different canvases never interfere, only genuine concurrent edits to the same canvas conflict, and the conflict message can name exactly which canvas is affected.
+
+**Soft deletion instead of deletion markers.** Deleting writes `deleted_at`, and list queries filter it out by default. There is no tombstone table and no "deleted locally, resurrected from the remote" merge bug — in this model it cannot happen.
+
+The cost has to be stated plainly: **the frontend data layer changes far more than under the original plan.** Today's stores read an entire domain from IndexedDB into memory at startup; they must become "fetch the list page by page, fetch detail on demand, write back on a debounce after edits". The merge logic in `app-sync.ts` is not reused — it is deleted. That is a real increase in work, and what it buys is a data layer that can paginate, can be searched, and can be queried directly by the admin console and by any future client.
+
+## Frontend Change List
+
+### New Files
+
+| Path | Purpose |
+| --- | --- |
+| `web/src/services/api/client.ts` | Unified request client injecting the Bearer token, auto-refreshing on 401 and retrying, with unified error handling |
+| `web/src/services/api/auth.ts` | Register, login, refresh, logout |
+| `web/src/services/api/account.ts` | `me`, credential custody, tiers and usage |
+| `web/src/services/api/admin.ts` | Admin console endpoints, added in phase 3 |
+| `web/src/services/api/canvas.ts` | Canvas resource client: paginated summary list, detail, create, `revision`-guarded update, soft delete |
+| `web/src/services/api/assets.ts` | Asset resource client: paginated list filtered by kind, keyword and tag, plus create, update and delete |
+| `web/src/services/api/generations.ts` | Generation client: cursor-paginated history and new record writes |
+| `web/src/services/api/media.ts` | Media client: probe, upload, download and delete by `storageKey` |
+| `web/src/services/api/credits.ts` | Credit client: balance lookup and cursor-paginated ledger |
+| `web/src/services/api/orders.ts` | Payment client: top-up packages, order creation, order list and cancellation |
+| `web/src/services/api/models.ts` | Platform model catalog client: models, parameter constraints and pricing rules |
+| `web/src/stores/use-auth-store.ts` | Auth state, current user, tokens, entitlements |
+| `web/src/pages/login/index.tsx` | Combined login and registration page with tab switching |
+| `web/src/pages/verify-email/index.tsx` | Landing page for the verification link |
+| `web/src/pages/reset-password/index.tsx` | Landing page for the password reset link |
+| `web/src/pages/profile/index.tsx` | Profile center: details, password change, tier and usage |
+| `web/src/pages/billing/index.tsx` | Top-up and credit ledger, private components in the sibling `components/`, added in phase 3 |
+| `web/src/pages/admin/users/index.tsx` | Admin user list with private components in the sibling `components/`, added in phase 3 |
+| `web/src/components/layout/user-menu.tsx` | Top navigation user avatar dropdown |
+
+The admin and billing pages follow the existing `AGENTS.md` conventions: page-private components live in each page's own `components/` directory, theme and table colors are configured centrally in `web/src/lib/app-theme.ts`, and page-private components must not write their own light/dark branches.
+
+The project currently has **no** unified request layer: `web/src/services/api/request.ts` is only a set of query-parameter helpers with no callers, and AI requests call axios directly. The new backend should get its own client. AI request code stays as it is until phase 4, which switches only platform-preset model calls over to the unified client while user-configured channels keep the existing direct-to-provider style.
+
+The four resource clients only issue requests and convert types. They carry no merge logic and maintain no cache of their own: when to load is decided by the corresponding store, and when to write back is decided by the editing action.
+
+### Modified Files
+
+| Path | Change |
+| --- | --- |
+| `web/src/router.tsx` | Add `/login`, `/verify-email` and `/reset-password` (all outside `UserLayout`) plus `/profile`, `/billing` and `/admin`; wrap business routes in `RequireAuth` and admin routes in an additional `RequireAdmin` |
+| `web/src/stores/use-user-store.ts` | Delete, superseded by `use-auth-store.ts` |
+| `web/src/stores/canvas/use-canvas-store.ts` | Move from "load every canvas into memory at startup" to "fetch summaries page by page, fetch detail by id when opened"; write back through a debounced `PUT /api/canvases/{id}`, update the local `revision` on success, and on 409 surface the conflict and refetch |
+| `web/src/stores/use-asset-store.ts` | Asset listing moves to server-side pagination and filtering, with no full local copy; wholesale actions such as `replaceAssets` become per-page writes |
+| `web/src/services/image-storage.ts` | Image and video history no longer lands in IndexedDB; it is loaded on demand from `/api/generations` via cursor pagination and appended with one record when a generation finishes |
+| `web/src/stores/use-config-store.ts` | Remove the `webdav` field and `WebdavSyncConfig` type; credentials are fetched from the server after login and written back on change, with local storage as a cache only; the model list merges two sources, the platform catalog from `/api/models` carrying its own `capability` and `constraints` plus user-defined models, leaving `guessCapability` in use for custom models only |
+| `web/src/services/api/image.ts` / `video.ts` / `audio.ts` / `model-plugin.ts` | Platform-preset models call `/api/ai/*` and no longer carry a key; global hardcoded constraints such as `QUALITY_BASE` and `IMAGE_MAX_EDGE` are replaced by the selected model's `constraints`; user-configured channels keep going directly from the browser. Phase 4 change |
+| `web/src/services/config-file.ts` | Remove the `webdav` field from config export |
+| `web/src/components/layout/app-top-nav.tsx` | Add the user entry near `UserStatusActions` on the right |
+| `web/src/constant/runtime-config.ts` | Add `API_BASE_URL` |
+| `web/src/vite-env.d.ts` | Add the `VITE_API_BASE_URL` type declaration |
+| `web/docker-entrypoint.sh` | Inject `API_BASE_URL` into `window.__RUNTIME_CONFIG__`; note that URLs cannot reuse the existing alphanumeric sanitizer |
+| `web/src/pages/config/` | Remove the WebDAV block, replacing it with account status plus entitlement and usage display |
+| `web/src/i18n/locales/zh-CN.ts` | Add `auth.*`, `profile.*`, `billing.*` and `admin.*` strings, remove `config.webdav.*` |
+| `web/src/i18n/locales/en-US.ts` | Matching English strings; both files must stay symmetric |
+
+### Deleted Files
+
+| Path | Reason |
+| --- | --- |
+| `web/src/services/webdav-sync.ts` | WebDAV sync is removed entirely, superseded by server-side storage |
+| `web/src/services/app-sync.ts` | Domain packing, `mergeById`, asset hydration and garbage collection are all unnecessary under a server-authoritative model |
+| `vercel.json` / `web/vercel.json` | Static deployment is no longer viable with mandatory login |
+
+Deleting `app-sync.ts` follows directly from the resource model: merge semantics move up to the server, and the client no longer needs the "one local copy, one remote copy, compute a third" dance. The original plan treated this file as its single largest reusable asset; it is now a liability to clear away.
+
+Removing WebDAV has ripple effects beyond deleting the file: the `webdav` field in `use-config-store`, the export field in `config-file.ts`, the config page UI and the `config.webdav.*` strings in both locale files must all be cleaned up. Perform the removal only after the resource model has passed acceptance in phase 2, so there is never an interim state with neither WebDAV nor working cloud storage.
+
+## Deployment Orchestration
+
+`docker-compose.yml` changes from a single container to three services:
+
+```txt
+app   nginx plus the frontend static build, exposes 3000 publicly
+api   Go backend, exposes 8080 on the internal network only
+db    PostgreSQL, exposes 5432 on the internal network only
+```
+
+Volumes: `pgdata` persists the database and `media` persists user-uploaded images and videos.
+
+`nginx.conf` gains a reverse proxy so frontend and backend are same-origin and CORS is unnecessary:
+
+```txt
+location /api/ {
+    proxy_pass http://api:8080/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    client_max_body_size 200m;
+}
+```
+
+`client_max_body_size` must be raised to 200MB, the per-file limit of the paid tier, because the 1MB default would fail uploads outright. The stricter 50 MB limit of the free tier is enforced by the backend against the user's tier and is not distinguished at the nginx layer — a tier flips with the credit balance, and a gateway can neither see the user's identity nor track that in real time.
+
+Backend environment variables go into `server/.env.example`:
+
+| Variable | Notes |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET` | Access token signing secret |
+| `CREDENTIAL_MASTER_KEY` | AES-GCM master key for credentials, 32 bytes |
+| `MEDIA_ROOT` | On-disk path for media files, backed by the `media` volume |
+| `APP_BASE_URL` | Public site address, used to build verification and reset links in emails |
+| `SMTP_HOST` / `SMTP_PORT` | Mail server address and port |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | Mail service account |
+| `SMTP_FROM` | Sender address |
+| `REGISTRATION_ENABLED` | Master switch for registration, enabled by default, can be shut off in an emergency |
+| `PLATFORM_AI_BASE_URL` | Upstream address for platform-preset models, used from phase 4 |
+| `PLATFORM_AI_API_KEY` | The platform's own third-party key, server-side only and never delivered to a browser |
+| `ALIPAY_*` / `WECHATPAY_*` / `STRIPE_*` | Merchant ids, secrets and callback URLs per payment provider; unconfigured providers are automatically not listed |
+| `MEDIA_RETENTION_ENABLED` | Switch for the media retention cleanup job, allowing a scan-only run during validation |
+
+A misconfigured `APP_BASE_URL` makes every link in verification emails unusable, so it deserves careful review at deploy time. When the SMTP variables are all empty the backend should fail to start with a clear error rather than silently failing to send mail.
+
+Payment callback URLs must be publicly reachable and directly accessible by each provider's servers. A purely internal deployment cannot complete the payment loop, and the deployment documentation has to say so. The three providers are independent and configuring just one is enough to run; unconfigured providers become unselectable in `/api/credit-packages` and the order endpoint rather than failing only after the user commits to them.
+
+`render.yaml` is currently a single-image static deployment and no longer applies after this migration; it must be adjusted or removed.
+
+## Security Design
+
+- Passwords are stored as irreversible bcrypt hashes.
+- Refresh tokens are stored as hashes only, so a database leak does not yield usable tokens; changing the password revokes all other tokens for that user.
+- Third-party AI credentials are AES-GCM encrypted with a master key read from an environment variable, never stored in the database or committed to the repository. The schema reserves `key_version` for future rotation.
+- Upload endpoints must validate the `storage_key` format and confine it to the current user's namespace to prevent path traversal and cross-user reads.
+- Email tokens are stored as hashes with the plaintext appearing only in the email link; they must be single-use with a short expiry.
+- The password recovery endpoint always returns success regardless of whether the address exists, so response differences cannot be used to enumerate registered accounts.
+- Admin endpoints are guarded by dedicated `role = admin` middleware and never by frontend entry-point hiding alone. The first administrator is created through an environment variable or an initialization command; self-service privilege escalation is not offered.
+- The platform's own third-party key is read from an environment variable, used only inside `internal/proxy`, and never appears in a response body, an error message or a log line. Forwarded responses must also strip any authentication headers the upstream might echo back.
+- The payment webhook is the only public write endpoint. It must verify signatures before doing anything, and cap request body size and processing rate so it cannot become a way to overload the backend or forge orders.
+- AI forwarding endpoints are rate-limited per user. Any authenticated identity can drive the platform's key upstream; the balance check governs how much can be spent and the rate limit governs how fast, and neither alone is sufficient.
+- Holding users' third-party vendor keys server-side is a significant change in responsibility. `SECURITY.md` and `docs/content/docs/support/security.mdx` must document the storage method, encryption algorithm and risk boundary, and additionally cover custody of the platform key and the payment secrets.
+
+### Additional Attack Surface from Open Registration
+
+Public registration means anyone can obtain an authenticated identity, shifting the focus from "keep strangers out" to "limit how many resources one account can consume":
+
+- Rate-limit registration and mail-sending endpoints by both IP and email address to prevent bulk signups and mail bombing.
+- Block media uploads until email verification passes, so unverified accounts occupy no disk.
+- Check the storage quota, the per-file limit and the credit balance before the operation, rejecting outright when exceeded or insufficient.
+- Rate-limit the forwarding endpoints for platform models per user, so a freshly registered account cannot drive the platform key without limit merely by being logged in.
+- Use `REGISTRATION_ENABLED` as an emergency switch to close registration immediately under abuse.
+
+## Phased Implementation
+
+Each phase has its own development baseline covering file responsibilities, endpoint payloads, error codes and an acceptance checklist: [phase 1](/docs/progress/account-backend-phase1), [phase 2](/docs/progress/account-backend-phase2), [phase 3](/docs/progress/account-backend-phase3), [phase 4](/docs/progress/account-backend-phase4).
+
+### Phase 1: Account System and Email Pipeline
+
+On the backend, build the `server/` skeleton and implement the users, refresh_tokens and email_tokens tables, registration, login, logout, refresh, password change, `/api/me` and the auth middleware, then integrate SMTP for email verification and password recovery and add rate limiting to the registration and mail endpoints.
+
+On the frontend, add the unified client, `use-auth-store`, the login and registration page, the verification and password reset landing pages, the route guard, the top navigation user menu and localized strings.
+
+For deployment, complete the three-service orchestration, the `/api` reverse proxy and the raised `client_max_body_size`.
+
+Because registration is open, email verification cannot be deferred to a later phase — it is the precondition for keeping unverified accounts off the disk and must ship together with the account system.
+
+Acceptance: on a clean environment, bringing up the containers allows registration with a verification email received and the link completing verification; login, token refresh and logout work; password recovery delivers a reset email and the password change succeeds; visiting any business page while logged out redirects to the login page.
+
+### Phase 2: Credential Custody and the Data Resource Model
+
+Implement the credential encryption endpoints and wire them into the frontend config page. On the backend, implement the canvases, assets, generations and media_files tables with their resource endpoints, covering paginated lists, cursor pagination, per-record optimistic locking and soft deletion. On the frontend, add the four resource clients, convert the canvas, asset and generation-history stores from full in-memory loading to on-demand loading with debounced write-back, and delete `app-sync.ts`. Add the "unverified email cannot upload" constraint to the upload endpoint.
+
+Remove WebDAV entirely only after the resource model passes acceptance.
+
+This is the heaviest phase for the frontend. The difficulty is not the endpoints themselves but reworking when data is loaded, so the schedule needs slack for it.
+
+Acceptance: create a canvas and generate an image on device A, then log into the same account on device B and see the complete canvas along with the original image files; after deleting the canvas on device A, refreshing the list on device B no longer shows it; the canvas list paginates and can be searched by title, and its response body contains no `data`; when two devices edit the same canvas concurrently, the later save receives a 409 instead of silently overwriting; an account with an unverified email is rejected on upload.
+
+### Phase 3: Tiers, the Credit Ledger and the Admin Console
+
+Implement plans, usage_records and quota checks, seed the free and paid tiers, have `/api/me` return the current tier, storage usage and credit balance, display them in the frontend profile center, and block uploads that exceed the storage quota or the per-file limit.
+
+In the same phase, implement the ledger side of credits and payments: the credits, credit_transactions, credit_packages and orders tables, top-up packages, order creation, order listing and cancellation, and signature verification plus idempotent webhook handling for all three providers, with a new `/billing` page for top-up and ledger on the frontend.
+
+In the same phase, implement media retention cleanup: expiry computed on the fly from the last touch time, merged with orphan reclamation into a single scan, with a warning email, an in-app notice and a one-click export entry 2 days before expiry.
+
+In the same phase, implement the admin console: the `/admin` route with a `RequireAdmin` guard, user list, suspend and restore, credit adjustment, order lookup, top-up package configuration, usage inspection and overview statistics.
+
+It is worth being clear-eyed about the end state of this phase: credits are a balance that can be topped up and audited, but nothing consumes them yet. Do not open the top-up entry point to users before phase 4 ships, or the product is selling something it cannot yet redeem.
+
+Acceptance: uploads exceeding the storage quota or the per-file limit are rejected with a clear message; a user can complete a real payment and see the balance and ledger increase correctly, a repeated callback for the same payment does not credit twice, and a callback arriving after cancellation credits nothing; media past its retention period and untouched for a long time is cleaned up while media referenced by a recently edited canvas is untouched, with a warning email arriving 2 days before; an administrator can look up any user's storage footprint and credit balance and adjust credits manually, while non-administrators are rejected from both `/admin` and the admin endpoints.
+
+### Phase 4: Backend AI Forwarding and Credit Metering
+
+Add the model_catalog table and `/api/models`, moving model capability, parameter constraints and pricing rules out of frontend hardcoding into admin configuration, and add model catalog CRUD to the admin console. On the backend, add `internal/proxy` and the four `/api/ai/*` forwarding endpoints implementing OpenAI-compatible passthrough and SSE streaming, with the platform's third-party key living only on the server. On the frontend, switch every platform-preset model call in `image.ts`, `video.ts`, `audio.ts` and `model-plugin.ts` to the backend, render parameter forms from `constraints`, and leave user-configured channels going directly from the browser. Deduction happens inside the forwarding path: estimate and check before forwarding, deduct against the actual result on success, refund on failure.
+
+This phase and the phase 3 credit system are two sides of one thing. Phase 3 answers "how do credits get sold" and phase 4 answers "how do credits get consumed"; without the latter, the former is selling something that can be neither metered nor redeemed. That is why it must follow phase 3 closely rather than being deferred indefinitely.
+
+It is also the technical foundation of the whole monetization model. Only with the platform key on the server can deduction be accurate, and only with accurate deduction can credits be sold at all. The commercial rule that platform-preset models cost credits while user-configured channels do not also lands in this phase, decided by whether the selected model is a catalog record or the user's own channel configuration — never by model name.
+
+Acceptance: generating images, videos and speech with platform-preset models all succeed, with credits deducted according to the model's pricing rules and a ledger row left behind; assistant conversations in the canvas stream token by token rather than arriving as one block; an insufficient balance blocks the generation entry point and prompts a top-up; an upstream error or timeout deducts nothing and refunds anything already held with a refund ledger row; user-configured channels still go direct and consume no credits; the platform's third-party key never appears in the browser network panel; the parameter form offers only the options the model's `constraints` support and disables unsupported combinations.
+
+## Impact and Breaking Changes
+
+- **Login becomes mandatory site-wide**; nothing is usable while logged out.
+- **WebDAV sync is removed entirely**; workflows that relied on WebDAV for cross-device sync are no longer supported and move to server-side storage.
+- **The frontend data layer changes more than under the original plan.** Canvases, assets and generation records all become on-demand, stores no longer hold full datasets, and every component that iterated a complete in-memory list must be adjusted. The merge logic in `app-sync.ts` is dropped entirely rather than reused.
+- **Offline capability is gone completely.** The server is authoritative, so once the network drops, uncached canvases cannot be read and edits cannot be saved. Mandatory login already gave up offline use; the resource model simply carries that decision into the data layer.
+- **Vercel static deployment is dropped**; only self-hosted Docker is supported.
+- **A new SMTP dependency is introduced**; registration cannot complete without a working mail service.
+- **A new payment provider dependency is introduced**; Alipay, WeChat Pay or Stripe merchant credentials are required and the callback URL must be publicly reachable, so a purely internal deployment cannot complete the payment loop.
+- **The AI request path splits in two.** Platform-preset models go through the backend while user-configured channels stay direct from the browser, so the frontend must decide which path applies before starting a generation instead of always going direct.
+- **The platform absorbs third-party call costs.** Platform-preset models burn the platform's own key, so every generation a user runs costs real money. A misconfigured pricing rule or a hole in the deduction path costs the platform directly.
+- **Running out of credits downgrades the tier automatically.** A paid user who exhausts their credits falls back to free, enters read-only mode when storage exceeds 500 MB, and after a 30-day grace period has media cleaned up starting from the oldest. This is product behaviour rather than a fault and must be stated plainly in the UI and in emails.
+- **Media is no longer kept forever.** All media is timed against its tier's retention period and anything untouched for long enough is cleaned up. This runs against the intuition that uploading means permanent storage, and it is the single change users most need to be told about in advance.
+- **The project changes from a pure local tool to a multi-user service.** The rule in `AGENTS.md` stating that external service requests live in `web/src/services/api/`, go directly from the browser and must not assume a project backend has to be revised; after phase 4 even AI requests are no longer all direct.
+- The project is not yet released, so no legacy data migration is performed; existing local data is re-synced under the new structure after first login.
+- `canvas-agent` is unaffected and remains a local tool talking to `127.0.0.1:17371`, an independent path from the multi-user backend.
+
+## Risks to Watch During Implementation
+
+All plan-level decisions are settled. The following are the areas most likely to cause trouble during delivery.
+
+**Client-side garbage collection will delete files that are still in use, the one place in this plan that can directly lose user data.** The existing `cleanupImages` and `cleanupUnusedMedia` decide which media are unreferenced by scanning "all assets plus all canvases" and then delete the orphans. That logic holds only because the frontend has the complete dataset in hand — and on-demand loading is precisely what invalidates that premise. After the change the frontend holds only the canvas currently open, so any client-side GC will treat images referenced by other canvases as orphans and delete them.
+
+This splits into two halves whose urgency differs completely.
+
+**Removing the client-side GC must land alongside the on-demand loading work**, meaning in phase 2, with no delay whatsoever. Deleting too few files merely wastes disk; deleting the wrong files loses user data, and shipping the intermediate state starts causing incidents immediately.
+
+**Server-side orphan reclamation, by contrast, can wait for phase 3.** Until it exists, media referenced by a deleted canvas simply lingers on disk at the cost of space and nobody's data is at risk. That work has to scan the jsonb columns of three business tables to determine references, which is the same class of job as the phase 3 storage usage recomputation and the media retention expiry check — all three share a single scan, and building them together saves not just effort but the cost of walking large tables repeatedly.
+
+Incidentally, the current `cleanupUnusedMedia` also carries a pre-existing defect: it bypasses `deleteStoredMedia` and removes records directly, releasing neither the ObjectURL nor the cache map entry, while its image-side counterpart handles this correctly. The inconsistency disappears naturally during this refactor.
+
+**Webhook idempotency and ordering.** Providers retry callbacks, callbacks can arrive out of order, and one can even land after the user has already cancelled the order manually. Crediting must be governed by the `orders.provider_order_id` unique index plus the order state machine, permitting the `pending → paid` transition exactly once and answering repeated callbacks with success while writing nothing. The order status, the credit balance and the ledger row must be written in one transaction with a full rollback if any part fails — a half-succeeded callback is far harder to diagnose than one that fails outright, and the user experiences it directly as "I paid and got nothing". The case of a callback arriving before the order-creation response also needs handling: the order is invisible while its transaction is uncommitted, so there must be a retry or delayed-processing mechanism rather than discarding it as an invalid request.
+
+**Consistency between credit deduction and generation results.** This is the most failure-prone part of phase 4, and it hurts in both directions: deducting credits for a failed generation makes users believe the platform is cheating them, while a successful generation that goes undeducted costs the platform money. The reliable approach is to hold the estimated credits before forwarding with a ledger row, then settle the difference or refund the whole amount once the result is known, writing the refund as a `type = refund` ledger row rather than editing the balance directly — a balance can be reconciled later, a ledger cannot. Long-running cases such as video generation, where the result may arrive asynchronously, need particular care: when the request has gone out but the connection drops, whether credits are charged must be a decision written into the implementation rather than left to chance.
+
+**Priority conflicts between the model catalog and user-defined models.** A user can perfectly well configure a model in their own channel with the same name as one in the platform catalog. The system must then be able to say unambiguously whether this generation uses the platform key and costs credits or uses the user's key and costs nothing, and that decision can only come from which record the user selected, never from matching model names. The two kinds of model need a visible distinction in the selector, and the user should know before generating whether this run will spend credits. The other edge case is a model the platform has delisted while the user's generation history, or even a canvas node, still references it — reading that history must not error out or render blank just because the catalog lookup fails.
+
+**Runaway storage cost.** Open registration combined with full media upload remains the main cost exposure in this plan, though dropping the quota to 500 MB brings the magnitude under control. Quota checks must complete before a file is written rather than accounting after it lands; the "no upload before email verification" constraint must not be skipped; disk watermark alerting must be configured before phase 1 goes live.
+
+**Accidental deletion by retention cleanup.** Cleanup covers media a canvas currently references, which means a miscalculated last touch time deletes a user's images outright. Before it goes live, run an observation period that scans without deleting and have the "would be cleaned up" list reviewed by hand; confirm that warning emails and in-app notices actually get delivered; and prefer soft-deleting first with physical deletion delayed, leaving a window in which the operation can be undone.
+
+**Email deliverability.** Self-hosted SMTP is easily classified as spam, leaving users unable to complete registration because the verification email never arrives. Prefer an established mail provider, state clearly on the post-registration screen that the email can be resent, and provide a resend entry point.
+
+**Depth of the on-demand loading rework.** This is the most easily underestimated part of the plan. Existing code assumes the data is already in memory and iterates complete lists in many places; once loading becomes on-demand, loading states, empty states, pagination edges and rendering before detail arrives all have to be handled one by one. Get canvases working first to establish the pattern, then apply it to assets and generation records — do not rework all three in parallel.
+
+**Conflict experience under optimistic locking.** Per-record `revision` shrinks the conflict window to the minimum, but the same canvas edited on two devices at once still produces a 409. The frontend needs an explicit path for it — surface the conflict, fetch the latest version, let the user decide — instead of silently overwriting or discarding what the user just did.
+
+**Edge cases in debounced saving.** Canvas edits are written back on a debounce, so closing the page, switching canvases and network failures all need to account for unsaved content, otherwise users hit the "I changed it but it never saved" trap. Failed saves must produce visible feedback and a retry path.
+
+**Ripple effects of removing WebDAV.** It touches store fields, config export, config page UI and both locale files, and it is easy to miss one spot and end up with type errors or leftover UI. Do it only after the phase 2 resource model passes acceptance.
+
+**How the first administrator is created.** This must be spelled out in the deployment documentation, otherwise the console ships with nobody able to log into it.

@@ -1,0 +1,779 @@
+---
+title: "Phase 4 Implementation Checklist: AI Request Proxying and Credit Metering"
+description: Detailed development baseline for phase 4 of the account and backend plan, covering backend proxying for platform models, browser-direct calls kept for user channels, SSE pass-through, credit deduction consistency and platform key custody
+---
+
+# Phase 4 Implementation Checklist: AI Request Proxying and Credit Metering
+
+This document is the development baseline for phase 4 of the [Account System and Backend Service Plan](/docs/progress/account-backend-plan). It assumes [phase 3](/docs/progress/account-backend-phase3) has shipped and passed acceptance, with `model_catalog` and the credit ledger already available.
+
+## Scope
+
+### In Scope
+
+Backend proxy endpoints for the four AI capabilities (image, video, audio, text) **serving platform preset models only**, deduct-before-generate with automatic refunds priced by `model_catalog.credit_cost`, SSE streaming for text conversations, encrypted custody and failover for platform channel keys, parameter validation against `model_catalog.constraints`, server-side persistence of generated results, per-user concurrency limits, and a frontend split by model identifier between "platform models call the local `/api/ai/*`" and "user channels keep calling providers directly from the browser".
+
+### Out of Scope
+
+**Backend proxying for user-defined channels is out of scope.** Channels the user configures themselves keep the browser-direct behavior they have today, and the direct-to-provider implementations in `image.ts`, `video.ts` and `audio.ts` are preserved as-is; the reasoning is in "Why User Channels Do Not Go Through the Backend" below.
+
+Payments and credit top-ups. Credits are still granted only by hand through the phase 3 admin console; integrating a payment provider is not in the plan.
+
+**Server-side execution of user scripts** is also out of scope. The user scripts behind `model-plugin.ts` keep running in the browser and apply only to the user's own channels, and that file is not touched at all this phase; the reasoning is in "User Scripts Stay on User Channels Only" below.
+
+Distributed concurrency counting and task scheduling across multiple instances are out of scope too. Concurrency slots and video task polling both live in a single process this phase, following phase 1's conclusion of "in-process counters now, Redis when scaling horizontally".
+
+## Why This Phase Is Necessary
+
+Phase 3 introduced credit-based billing, but credits cannot be charged accurately today because generation never touches this project's server. Phase 3 documented this as a "soft constraint": the browser talks directly to the user's own third-party channel, so the server can only count what the frontend voluntarily reports after the fact, and a few lines of frontend code bypass it. A soft constraint is acceptable while counting merely enforces something polite like "50 images per day"; once credits become something people pay for, a soft constraint means selling a product that cannot be metered — paying users generate an unknown amount, and non-paying users cannot be stopped.
+
+**The only way to make credits a hard constraint is to keep the keys on the server.** As long as the browser holds a usable API key, any billing done on the frontend is a suggestion. This cannot be patched; it requires the architecture change that was deferred as the third option back when credential custody was chosen. This phase applies that conclusion to platform models only: the platform's keys never leave the server, so platform credits are a hard constraint; user channel keys are in the user's hands already, and since that path is never charged, it needs no hard constraint.
+
+**One thing this phase cannot deliver, stated up front: the plaintext credential delivery left by phase 2 does not go away.** `GET /api/credentials` returns **full plaintext** API keys because the frontend needs them to reach third-party channels, and since user channels keep calling providers directly, that reason still holds — so the endpoint keeps returning plaintext and the phase 2 promise that "phase 4 closes it" is not kept here. The direct consequence is that anyone holding a user's access token can still read every vendor key that user owns, which means the phase 1 defense of "access tokens live in memory only, refresh tokens ride an httpOnly cookie" has to be maintained indefinitely and must not be relaxed just because platform models are now proxied. Exactly one exposure does disappear this phase: the platform's own channel keys never enter a browser.
+
+There is one secondary benefit, and its boundary is worth stating precisely. **On the platform path, error handling and vendor differences both move to the server**: platform failures come back through the phase 1 `error.code` convention, so the frontend stops guessing at HTTP status codes and digging through `msg` / `message` / `error.message` / `detail`, and protocol adaptation for the likes of Gemini and Seedance is handled by server-side providers. But the Gemini branch in `image.ts`, the Seedance branch in `video.ts` and each file's copy of `readApiErrorMessage` and `readAxiosError` **cannot be deleted** — user channels still depend on them to reach upstream. What converges is the new platform path, not the existing code.
+
+## Core Business Rules
+
+### Two Paths: Platform Models and User Channels
+
+This rule is the foundation of the entire billing model and must be agreed on before implementation, otherwise the result is one of two failure modes: the platform pays the upstream bill without charging credits, or the user brings their own key and gets charged anyway.
+
+| Dimension | Platform preset model | User-defined channel |
+| --- | --- | --- |
+| Request path | Browser → this site's backend → upstream | Browser → upstream, never touching this site |
+| Model source | The phase 3 `model_catalog` table | The `channels[]` the user filled in on the config page |
+| Whose key | The platform's own channel key, held server-side | The user's key held in `user_credentials` |
+| Who pays upstream | The platform | The user |
+| Credits charged | Yes, per `model_catalog.credit_cost` | No |
+| Parameter validation | Strict allow-list from `model_catalog.constraints` | Today's frontend checks; the server is not involved |
+| Custom scripts | Not allowed | Allowed, and still executed in the browser |
+| Storage quota and retention | Enforced | Enforced identically |
+| Concurrency and rate limits | Enforced by the server on `/api/ai/*` | Generation never reaches this site; only media upload is limited, per phase 2 |
+
+**Credits correspond to real upstream cost paid by the platform.** When users spend their own key the platform has no cost, so there is nothing to charge for; power users willing to wire up their own channels get it free, and those users are the ones most likely to help find bugs. Storage quota and retention apply to both paths without exception, because generated output lands on the platform's disk either way and that cost is unrelated to whose key produced it — a user channel skips the backend for generation, but its output still arrives through phase 2's `PUT /api/media/{storageKey}`, and the quota bites at that step.
+
+**Which path to take is the user's choice, made in the UI.** The model picker lists both kinds side by side: selecting a platform model shows the estimated credit cost for this run, and selecting one of your own channel models shows "uses your own API key, costs no credits". There is no implicit switching and no clever "fall back to the user's channel when the balance runs out" — whether this run costs money should be clear before the generate button is pressed.
+
+### Why User Channels Do Not Go Through the Backend
+
+An earlier design routed both paths through `/api/ai/*`: the server would decide from the model identifier and, for user channels, take the user's custodied key and call the `baseUrl` the user entered. The appeal was a single frontend exit point with error handling and metering converging in one place. **That route was rejected**, because the attack surface and the payoff are wildly out of proportion.
+
+`baseUrl` is an arbitrary address the user types into the config page, so making the server call it hands every registered account an SSRF primitive: entering `http://127.0.0.1:8080/api/admin/users` means hitting your own internal endpoints with the server's identity, and entering a cloud provider's instance metadata address means harvesting machine credentials. Defending against it requires a full outbound validation stack — protocol allow-list, re-resolution on every redirect hop, rejection of loopback and private ranges, `net.Dialer.Control` against DNS rebinding — and a single missed branch in that stack is a real breach of the internal network. All of it buys nothing more than "both paths have code that looks the same".
+
+Keeping the browser-direct path has none of that problem. A browser cannot reach the server's internal network, so whatever the user puts in `baseUrl` only affects the user. More practically, this path's code has been working in the project for a long time: `requestGeneration`, `requestEdit`, `requestVideoGeneration` and `requestAudioGeneration`, along with all their vendor branches, do not need a single line changed, which cuts the size of this phase considerably. **The user's channel costs the user money and carries the user's risk; the platform has no reason to stand in the middle and relay it.**
+
+### The Split Happens on the Frontend; the Backend Only Validates Defensively
+
+**The split point is on the frontend.** The frontend decides which path to take from the selected model identifier: `encodeChannelModel` in `use-config-store.ts` encodes user channel models as `channelId::modelName` with `CHANNEL_MODEL_SEPARATOR` set to `::`, and `decodeChannelModel` splits it back apart, while catalog models are **bare model names** with no prefix. The rule is therefore one sentence: an identifier containing `::` is a user channel model and goes through the existing browser-direct code, while a bare model name is a catalog model and goes to `/api/ai/*`.
+
+**The backend still validates the model identifier, but in the opposite direction from that split.** When `/api/ai/*` receives an identifier containing `::` it always returns 400 `MODEL_NOT_SUPPORTED`, because the platform does not relay for user channels — this is not routing logic, it is rejecting an input that had no business arriving at this endpoint. Three more cases return the same 400 `MODEL_NOT_SUPPORTED`: the model is not in `model_catalog`, `enabled` is false, or its capability does not match the endpoint (a video model posted to `/api/ai/images/generations`, for example).
+
+Do not skip that backend check on the grounds that "the frontend already split the traffic". The endpoint is public and the frontend's decision is only a convention; anyone can take their own access token and post `chan_1::whatever` straight to `/api/ai/images/generations`. If the backend does not recognize the prefix and instead looks the whole string up as a bare model name, the best outcome is that nothing matches and the worst is that it collides with a same-named platform model and burns a generation on the platform's key.
+
+**There is no `source` field in the response.** The earlier design needed one because both paths shared an endpoint and the frontend had to know whether credits were spent. Now anything reaching `/api/ai/*` is necessarily the platform path and is necessarily charged, so a field that is permanently `platform` only gives the frontend a branch it can never enter. The question does not arise for user channels either — that path produces no ledger entries at all.
+
+## Shared Conventions
+
+### New Error Codes
+
+The phase 1 response format still applies: failures wrap an `error` and the frontend matches localized copy by `code` first. New or first-used codes this phase:
+
+| HTTP | code | Trigger |
+| --- | --- | --- |
+| 400 | `MODEL_NOT_SUPPORTED` | The model is missing from `model_catalog`, disabled, mismatched with the endpoint's capability, or a `::` user channel identifier |
+| 400 | `PARAM_NOT_SUPPORTED` | A parameter falls outside the model's `constraints`; `error` carries `param` and `allowed` |
+| 402 | `INSUFFICIENT_CREDITS` | Not enough credits; `error` carries `required` and `balance` |
+| 429 | `CONCURRENCY_LIMITED` | Too many in-flight generations for one user; carries `Retry-After` |
+| 502 | `UPSTREAM_ERROR` | Upstream returned non-2xx or an unparsable response; `error` carries `upstreamStatus` |
+| 504 | `UPSTREAM_TIMEOUT` | Upstream timed out; `error` carries `phase` for connect, first-byte or overall |
+
+Reused from phases 1 and 3: 401 `UNAUTHORIZED` and `TOKEN_EXPIRED`, 403 `EMAIL_NOT_VERIFIED`, 429 `RATE_LIMITED`, 507 `STORAGE_QUOTA_EXCEEDED`, 500 `INTERNAL_ERROR`.
+
+Keep `PARAM_NOT_SUPPORTED` and `VALIDATION_FAILED` clearly separated: wrong types, missing required fields and out-of-range numbers — anything invalid by any measure — use `VALIDATION_FAILED`; a value that is perfectly valid but unsupported by this particular model uses `PARAM_NOT_SUPPORTED`. The first is a frontend bug, the second is a user choice, and the messages they deserve are nothing alike.
+
+`EMAIL_NOT_VERIFIED` and `STORAGE_QUOTA_EXCEEDED` must both be decided **before credits are deducted**. Generated output always has to land in media storage, and discovering it cannot be stored only after generation finishes leaves the user with no result and one spent credit charge — no refund flow makes that a good experience.
+
+### Common Request and Response Shape
+
+All five endpoints require authentication, all live under `/api/ai`, all sit behind the phase 1 `RequireAuth` middleware, and all **serve catalog models only**.
+
+Every request body carries `model`; the rest is capability-specific. An optional `idempotencyKey` (generated with `nanoid` on the frontend) prevents duplicate charges from retries and double clicks, covered under "Concurrency and Duplicate Submissions".
+
+Every response carries two things: `credits` for the amount spent and the resulting balance, and output always expressed as a `storageKey`. **Upstream response bodies are never passed through.** Platform upstreams are just as varied as any other: `parseImagePayload` currently has to accept `data`, `images` and `results` as field names, `resolveImageDataUrl` has to handle both `b64_json` and `url`, and `unwrapEnvelope` has to peel a `{code, data, msg}` envelope — on the platform path that compatibility surface belongs in one place on the server, with the frontend seeing exactly one shape from `/api/ai/*`.
+
+## Endpoint Definitions
+
+### POST `/api/ai/images/generations`
+
+Synchronous; returns when generation completes. Text-to-image and image editing share this endpoint and are distinguished by whether `references` is empty, matching how `requestGeneration` and `requestEdit` divide the work today.
+
+Request:
+
+```json
+{
+  "model": "gpt-image-2",
+  "prompt": "a cat sitting on a windowsill",
+  "n": 1,
+  "size": "1024x1024",
+  "quality": "high",
+  "background": "transparent",
+  "references": ["image:Ab3xY"],
+  "mask": "image:Zk8mQ",
+  "idempotencyKey": "V1StGXR8"
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `model` | Yes | A bare catalog model name; a `::` user channel identifier is always rejected |
+| `prompt` | Yes | **The system prompt is already merged by the frontend** via the existing `withSystemPrompt`; the server does not merge it again |
+| `n` | No | Defaults to 1, capped by the lower of `constraints` and 15, matching the current frontend clamp |
+| `size` | No | Pixel dimensions like `1024x1024`, or a ratio like `16:9` |
+| `quality` | No | Values come from `constraints.quality` |
+| `background` | No | Only `transparent` is meaningful, matching the current `normalizeBackground` semantics |
+| `references` | No | Array of `storageKey` values for already-uploaded media; non-empty means image editing |
+| `mask` | No | Mask `storageKey`; returns `PARAM_NOT_SUPPORTED` when the model does not support masks |
+
+**Reference images are passed as `storageKey`, not base64.** The current code turns them into data URLs with `imageToDataUrl` and embeds them in the body, which inflates the payload by a third or more and forces the server to decode, size-check and defend against memory amplification. After phase 2 those images already live in media storage, so passing the key and letting the server read it is far cheaper — and it validates ownership for free, since someone else's `storageKey` is simply treated as nonexistent, consistent with phase 2's "cross-user access returns 404".
+
+The cost is that an image freshly pasted onto a canvas and not yet saved must be sent to `PUT /api/media/{storageKey}` before generation starts. That is the same ordering rule phase 2 already established for "upload media before writing the record", and the frontend already has that path.
+
+Success returns 200:
+
+```json
+{
+  "model": "gpt-image-2",
+  "credits": { "cost": 8, "balance": 132 },
+  "images": [
+    { "storageKey": "image:Ab3xY", "width": 1024, "height": 1024, "bytes": 812345, "mimeType": "image/png" }
+  ],
+  "durationMs": 8421
+}
+```
+
+Errors: `VALIDATION_FAILED`, `MODEL_NOT_SUPPORTED`, `PARAM_NOT_SUPPORTED`, `INSUFFICIENT_CREDITS`, `EMAIL_NOT_VERIFIED`, `STORAGE_QUOTA_EXCEEDED`, `CONCURRENCY_LIMITED`, `UPSTREAM_ERROR`, `UPSTREAM_TIMEOUT`.
+
+### POST `/api/ai/videos/generations`
+
+**Asynchronous; it creates a task and does not wait for generation.** Today `requestVideoGeneration` creates the task and then polls locally up to 120 times at 2.5 or 5 second intervals, which can run for ten minutes. Holding an HTTP connection open that long is not realistic: nginx read timeouts fire, mobile networks drop, and the OS may reclaim a backgrounded tab. So the backend only creates the task and writes a row to `ai_tasks`, and the frontend polls the query endpoint.
+
+Request:
+
+```json
+{
+  "model": "grok-imagine-video",
+  "prompt": "slow dolly in",
+  "seconds": 6,
+  "ratio": "16:9",
+  "resolution": "720p",
+  "generateAudio": true,
+  "watermark": false,
+  "references": ["image:Ab3xY"],
+  "videoReferences": ["video:Qm4tR"],
+  "audioReferences": ["audio:Nz9pL"],
+  "idempotencyKey": "V1StGXR8"
+}
+```
+
+`ratio` and `resolution` are semantic fields, so the frontend no longer converts between `size` (`1280x720`) and `ratio` (`16:9`) on its own. It currently needs four functions for that — `normalizeVideoSize`, `normalizeVideoResolution`, `normalizeSeedanceRatio` and `normalizeSeedanceResolution` — the last two of which fuzzily pick the closest ratio. That kind of vendor adaptation moves into the server-side providers.
+
+`videoReferences` and `audioReferences` are supported by only some models; unsupported combinations return `PARAM_NOT_SUPPORTED` rather than throwing today's `videoReferencesUnsupported` message.
+
+Success returns 202:
+
+```json
+{
+  "taskId": "3f2a...",
+  "status": "pending",
+  "credits": { "cost": 40, "balance": 92 },
+  "pollAfterMs": 5000
+}
+```
+
+Credits are deducted at task creation and refunded if the task ultimately fails. `pollAfterMs` comes from the server so the frontend stops hard-coding the magic numbers 2500 and 5000 — a sensible polling interval varies a lot by vendor, and that knowledge belongs with the provider.
+
+Errors: same set as the image endpoint.
+
+### GET `/api/ai/videos/tasks/{id}`
+
+Queries video task state. Tasks belong to the current user, and querying someone else's returns 404 rather than 403.
+
+```json
+{
+  "taskId": "3f2a...",
+  "status": "succeeded",
+  "video": { "storageKey": "video:Qm4tR", "bytes": 4821334, "mimeType": "video/mp4", "durationMs": 6000 },
+  "credits": { "cost": 40, "refunded": 0 },
+  "pollAfterMs": 5000
+}
+```
+
+`status` is one of `pending`, `succeeded` or `failed`. Failures omit `video` and return an `error` object shaped like the `error` in any other failure response, with the refunded amount in `credits.refunded`.
+
+**Upstream polling runs in a server-side background goroutine rather than being proxied on demand when the frontend asks.** This choice matters: if the server only queries upstream when asked, the task stalls whenever the user closes the page even though credits were already spent. Active polling guarantees the task finishes and the result is persisted regardless, so the user sees it next time they open the page. The cost is handling process restarts, which `ai_tasks` covers by storing `provider` and `upstream_task_id` — on startup, scan for non-terminal tasks and resume polling. Background polling also needs a global concurrency ceiling so a burst of tasks does not all fly at once.
+
+Terminal tasks can be cleaned up after 24 hours, during which the frontend can retrieve the result at any time.
+
+### POST `/api/ai/audio/speech`
+
+Synchronous.
+
+Request `{ "model": "...", "input": "text to read", "voice": "alloy", "format": "mp3", "speed": 1, "instructions": "..." }`, mapping one-to-one onto what `requestAudioGeneration` currently posts to `/audio/speech`, except that `response_format` is renamed to `format` and `input` is unchanged.
+
+Success returns 200:
+
+```json
+{
+  "model": "gpt-4o-mini-tts",
+  "credits": { "cost": 2, "balance": 130 },
+  "audio": { "storageKey": "audio:Nz9pL", "bytes": 184320, "mimeType": "audio/mpeg" },
+  "durationMs": 1820
+}
+```
+
+The frontend currently receives a Blob (`responseType: "blob"`) and stores it through `storeGeneratedAudio` calling `uploadMediaFile`. That step moves to the server and the frontend receives a `storageKey`, which also removes the need for `assertAudioBlob` and its "the response looks like JSON so it is actually an error" fallback.
+
+### POST `/api/ai/chat/completions`
+
+Text conversation, SSE by default.
+
+Request:
+
+```json
+{
+  "model": "gpt-5.5",
+  "messages": [{ "role": "user", "content": "..." }],
+  "reasoningEffort": "auto",
+  "tools": [ ... ],
+  "toolChoice": "auto",
+  "stream": true
+}
+```
+
+`messages` keeps the existing `AiTextMessage` shape, where `content` is either a string or an array mixing `{type:"text"}` and `{type:"image_url"}` entries. `tools` and `toolChoice` must be preserved because the canvas Agent depends on them.
+
+**The response is a single normalized event stream, not a pass-through of the upstream SSE.** This is the most important design decision in this endpoint. Passing through would force the frontend to keep both parsers: `consumeResponseStreamBlock` understands the OpenAI Responses API with `response.output_text.delta` and `response.completed`, while `consumeGeminiStreamBlock` understands Gemini's `candidates[].content.parts[]`, and the two disagree on where errors appear, how tool calls are shaped and how completion is signaled. The whole point of this phase is to keep vendor differences on the server, and pass-through leaks them straight through.
+
+Exactly four event types:
+
+```txt
+event: delta
+data: {"text":"incremental text"}
+
+event: tool_call
+data: {"id":"call_1","name":"search","arguments":"{\"q\":\"...\"}"}
+
+event: error
+data: {"code":"UPSTREAM_ERROR","message":"upstream returned 500"}
+
+event: done
+data: {"credits":{"cost":1,"balance":131},"finishReason":"stop"}
+```
+
+`delta` carries only the increment, unlike today's `onDelta(state.text)` which passes the accumulated text. Accumulating is one string concatenation on the frontend, whereas resending the whole answer in every event makes transfer volume grow with the square of the response length.
+
+**Errors come in two forms and the frontend must handle both.** Errors before the stream opens (not authenticated, out of credits, invalid parameters, concurrency limit) use a normal HTTP status with the phase 1 `error` wrapper, and the response is not `text/event-stream` at all. Errors after the stream opens can only be an `event: error` followed by closing the connection, because the status code is already 200 and cannot be changed.
+
+With `stream: false` the endpoint returns a single JSON body `{ "credits": ..., "content": "...", "toolCalls": [...], "finishReason": "stop" }` for callers that do not need incremental rendering, such as intermediate tool-call rounds in the Agent.
+
+## Parameter Validation
+
+Validation must happen **before** deduction and before calling upstream. The order is fixed: authenticate, validate the model identifier, pre-check email verification and storage quota, validate parameters, take a concurrency slot, deduct credits, call upstream. Any failing step returns immediately without advancing. The order is not arbitrary: putting the cheapest and most certain checks first is what guarantees an obviously invalid request costs neither upstream quota nor user credits.
+
+Validation runs against `model_catalog.constraints`, defined in phase 3 and only consumed here. Its shape is roughly:
+
+```json
+{
+  "size": ["1024x1024", "1536x1024", "1024x1536"],
+  "quality": ["low", "medium", "high"],
+  "n": { "max": 4 },
+  "duration": [4, 6, 8],
+  "resolution": ["480p", "720p", "1080p"],
+  "ratio": ["16:9", "9:16", "1:1"],
+  "features": ["mask", "referenceImage"]
+}
+```
+
+Array-valued entries are exact allow-list matches and object-valued entries are range checks. A miss returns 400 `PARAM_NOT_SUPPORTED` with `param` and `allowed` in `error`, so the frontend can render `allowed` as choices instead of leaving the user to guess what went wrong.
+
+**The server never "auto-corrects".** The frontend has accumulated a pile of fuzzy mappings: `normalizeVideoResolution` maps `high` to `720p`, `normalizeSeedanceRatio` picks the nearest ratio when there is no exact match, `closestGeminiAspectRatio` picks the nearest of the 14 ratios Gemini supports, and `resolveSize` back-computes pixel dimensions from a quality tier and a ratio before snapping them to a multiple of 16. Those mappings exist because the frontend's fixed option lists never lined up with what vendors actually accept, so guessing was the only option. The platform path inverts that premise: options are driven by `constraints`, the frontend can only produce legal values, and the server should reject anything else outright. Continuing to guess only hides frontend bugs, and the user ends up with a size they never picked. Note that this says "the server does not guess", not "delete these functions" — they still have work to do on the user channel path.
+
+What must be distinguished is **vendor format rewriting**: the same "16:9 at 720p" is `size=1280x720` on an OpenAI-compatible endpoint and `ratio=16:9` plus `resolution=720p` on Ark. That rewriting is legitimate provider-adapter work, entirely different from correcting user input, and belongs under `internal/provider/` rather than in the validation layer.
+
+**The server needs no relaxed validation mode for user channels**, because those requests never arrive here. On that path the browser assembles parameters with the logic it already has and sends them straight upstream; anything invalid comes back as the provider's own error. The user brought their own key, so the wasted call is on them, and we have neither the need nor the ability to maintain a parameter table for every third-party channel in existence. This is also why "the server never auto-corrects" applies to the platform path only: the frontend's pile of fuzzy mappings is not deleted, it keeps serving user channels and simply stops touching platform requests.
+
+## Streaming Pass-Through
+
+### How to Write It in Gin
+
+Set the response headers up front. `X-Accel-Buffering: no` is for nginx and disables buffering for this response at the application layer, which is one more layer of safety than relying on the nginx config alone:
+
+```go
+c.Header("Content-Type", "text/event-stream")
+c.Header("Cache-Control", "no-cache")
+c.Header("Connection", "keep-alive")
+c.Header("X-Accel-Buffering", "no")
+flusher, ok := c.Writer.(http.Flusher)
+if !ok {
+    // No Flush support means a buffering Writer is wrapped around us; fail with INTERNAL_ERROR
+}
+```
+
+Then call `flusher.Flush()` immediately after writing each event. **Forgetting the flush is the most common bug here**: Go's response writer buffers, and without an explicit flush it waits until a few kilobytes accumulate, which looks exactly like no streaming at all — nothing happens, then everything arrives at once. Short answers hide it completely; only long ones expose it.
+
+Reading from upstream must be incremental as well. **Do not use `io.ReadAll`**; read line by line. If you use `bufio.Scanner`, call `scanner.Buffer` to raise the limit: the default maximum line length is 64KB, which multimodal responses carrying images and long tool-call arguments exceed easily, and past that the Scanner stops silently, which surfaces as answers that mysteriously truncate. Using `bufio.Reader.ReadString('\n')` is safer since it has no line-length ceiling.
+
+Send heartbeats when upstream goes quiet. Every 15 seconds, write the SSE comment line `: ping` so intermediate proxies and load balancers do not drop the connection on idle timeout. Comment lines are ignored by the frontend event parser.
+
+### Cancelling Upstream When the Client Disconnects
+
+Use `c.Request.Context()` as the context for the upstream request via `http.NewRequestWithContext`. Gin cancels that context when the client disconnects, which closes the upstream connection, and upstream will usually stop generating and stop consuming quota. Do not use the deprecated `CloseNotify`.
+
+The same context must thread through everything that follows: result downloads, media writes and database operations. Cancelling only the upstream request while letting the rest of the pipeline run leaves zombie work behind for a user who is already gone.
+
+The frontend's "stop generating" button uses an `AbortController`, and every existing request already accepts `options.signal`. Aborting closes the browser connection, which tears down this whole chain, so no separate cancellation endpoint is needed.
+
+### The Reverse Proxy Must Not Buffer
+
+nginx enables `proxy_buffering` by default, collecting the upstream response before forwarding it, which strips SSE of any streaming behavior. This is the classic "works locally, not streaming in production" trap for this phase, because local development usually hits the backend port directly and never goes through nginx.
+
+The configuration is under "Deployment Changes" below. Acceptance testing must run behind nginx, not against port 8080.
+
+## Credit and Generation Consistency
+
+### Deduct First, Generate Second, Refund on Failure
+
+The order is **deduct first, generate second**, not the other way around. Generating first means a user who disconnects between completion and deduction gets a free result; deducting first fails in the direction of "charged but nothing produced", which a refund can compensate. Of the two, the second is clearly preferable.
+
+Deduction happens in one database transaction: check the balance, decrement it, and write a consumption ledger entry. The upstream request starts only after that transaction commits. An insufficient balance returns 402 `INSUFFICIENT_CREDITS` with `required` and `balance` so the frontend can say exactly how short the user is.
+
+A refund writes a `type=refund` ledger entry (the phase 3 credit ledger, referred to below as `credit_ledger`; the actual table name follows phase 3) for the same amount as the consumption entry it reverses, and **records `ref_id` pointing at that consumption entry**, with a unique index on `(ref_id, type)`. That unique index is what makes refunds idempotent: when retries, concurrency or a process restart run the refund path twice, the second attempt fails on the unique constraint and the user does not get paid back twice.
+
+The refund itself can fail too (a database hiccup, a killed process). When it does, set `ai_requests.refund_pending` and log at error level, and give the admin console's user detail page a "retry pending refunds" action. Do not introduce a scheduler or a message queue for this; it happens rarely enough that a manual trigger is sufficient.
+
+### What Counts as Failure in a Stream
+
+This is the rule that most needs pinning down in advance, because it directly determines whether users feel they were charged unfairly.
+
+**The test is whether upstream started producing output.**
+
+| Scenario | Verdict | Refunded |
+| --- | --- | --- |
+| Connection failure, auth failure, upstream 4xx/5xx | Failure | Full refund |
+| Timeout before the first delta | Failure | Full refund |
+| Upstream disconnects after some deltas | Success | No refund |
+| User hits "stop" after some deltas | Success | No refund |
+| Client network drops after some deltas | Success | No refund |
+| Non-streaming: upstream responded but no output could be parsed | Failure | Full refund |
+| Non-streaming: result download or persistence failed | Failure | Full refund |
+
+"Output started means success" rests on two arguments. **Upstream bills by token, so output already produced is cost already incurred**, and refunding it means the platform absorbs it. More importantly, "upstream disconnected" and "the user's network hiccuped" often look identical from the server, and any criterion that cannot be reliably distinguished eventually becomes an exploit.
+
+One-shot endpoints like image and audio have no such ambiguity: no output means failure and a full refund. Video tasks refund in full when the terminal state is `failed`, `cancelled` or `expired`; a user cancelling while the task is still `pending` gets a refund, while cancelling after generation has started does not, for the same reason as above.
+
+This rule needs to appear in the product copy too — do not leave users to infer it from their billing history.
+
+### Concurrency and Duplicate Submissions
+
+The frontend may send the same generation request twice because of a double click, a network retry, or a repeated effect in React strict mode. The server deduplicates on `idempotencyKey` with a unique index on `(user_id, idempotency_key)` in `ai_requests`: an insert conflict means this is a duplicate, so return the previous result, or a "still running" response if the first one has not finished, rather than charging again.
+
+The frontend must reuse the same key for one user action, including on retry, instead of generating a new one. `nanoid` is fine and already a dependency.
+
+Requests without an `idempotencyKey` are processed normally; it is not mandatory. Each round of the Agent's tool-call loop is a genuinely different request anyway, and forcing a key would mean threading one more parameter through that call chain.
+
+## Timeouts and Retries
+
+### Per-Capability Timeouts
+
+Image and video generation differ by an order of magnitude in duration, so a single timeout value is necessarily too loose on one end and too tight on the other. Split them:
+
+| Capability | Connect | First byte | Overall |
+| --- | --- | --- | --- |
+| Text-to-image | 10s | 60s | 180s |
+| Image editing | 10s | 60s | 240s |
+| Speech synthesis | 10s | 30s | 120s |
+| Text streaming | 10s | 30s (first delta) | 600s, plus a 60s idle cutoff |
+| Video task creation | 10s | 30s | 60s |
+| Video task polling | 10s | 20s | 30s per call, 20 minutes per task |
+
+Video can use such short HTTP timeouts precisely because it became an asynchronous task: creation only needs the upstream task id, and the real waiting happens in background polling without occupying any HTTP connection.
+
+Text streaming needs both an idle timeout and an overall timeout. With only an overall timeout, a stuck upstream holds a concurrency slot for ten minutes; with only an idle timeout, an upstream that trickles output forever can hang around indefinitely.
+
+All of these values must be overridable by environment variable, since upstream quality varies enormously between deployments.
+
+### Retry Rules for Upstream 5xx
+
+**Retry only when nothing has been produced yet, and at most once.** Once a delta has been written to the client or partial output has been received, retrying means the user sees duplicated content, which is worse than failing outright.
+
+| Upstream status | Handling |
+| --- | --- |
+| Connection or DNS failure | Retry once, then fail over to the backup channel |
+| 502, 503, 504 | Retry once, then fail over to the backup channel |
+| 429 | No retry; return 502 `UPSTREAM_ERROR` with 429 in `error.upstreamStatus` |
+| 400, 422 | No retry; a parameter problem fails the same way twice |
+| 401, 403 | No retry; the key is wrong, and log at error level for operations |
+| 500 | Retry once |
+
+An upstream 429 is deliberately not mapped to this site's 429 `RATE_LIMITED` because the two mean opposite things: our rate limit says "you are sending too fast", while an upstream limit says "the platform's quota is exhausted". Conflating them makes users think it is their fault.
+
+**Neither retries nor failover charge again.** Deduction happens before the upstream call, one business request is charged exactly once, and internal retries are an implementation detail. Enforce that structurally: deduction lives in `service/credit.go` and the retry loop lives in `service/upstream.go`, and because they do not nest, "deduct inside the retry loop" cannot be written by accident.
+
+Video task polling failures are treated differently: one failed query is not a failed task, and only five consecutive failures mark it failed and trigger the refund. Refunding and discarding the result because upstream hiccuped once is much worse than waiting a bit longer.
+
+## Platform Channels and Key Management
+
+### Table Structure and Encryption
+
+Platform channels get their own table and **reuse phase 2's AES-256-GCM and `CREDENTIAL_MASTER_KEY`** rather than introducing a second key. A second key is one more thing to configure, one more thing to leak and one more thing to forget when moving machines.
+
+```go
+type PlatformChannel struct {
+    ID         uuid.UUID `gorm:"type:uuid;primaryKey"`
+    Name       string    `gorm:"type:varchar(80);not null"`
+    BaseURL    string    `gorm:"type:varchar(300);not null"`
+    APIFormat  string    `gorm:"type:varchar(16);not null"` // openai | gemini | ark
+    Nonce      []byte    `gorm:"not null"`
+    Payload    []byte    `gorm:"not null"` // AES-256-GCM encrypted API key
+    KeyVersion int       `gorm:"not null;default:1"`
+    Priority   int       `gorm:"not null;default:0"`
+    Enabled    bool      `gorm:"not null;default:true"`
+    CreatedAt  time.Time
+    UpdatedAt  time.Time
+}
+```
+
+`APIFormat` uses exactly the same values as the frontend `ApiCallFormat` (`openai`, `gemini`, `ark`), because the server-side providers are the frontend's three existing adapters moved over, and there is no reason to rename them.
+
+`model_catalog` needs a field pointing a model at its channels. If phase 3 did not add one, add an ordered `channel_ids` here, where array order is failover order. Do not create a separate binding table: the relationship is simple enough for an array, and an extra table only adds a join to every catalog lookup.
+
+Platform keys are decrypted only at the moment an upstream request is made; the plaintext never enters a cache, a log or any response. Phase 1's `middleware/logger.go` already redacts password and token fields, so add `Authorization`, `x-goog-api-key` and `apiKey` to its redaction list.
+
+### Multiple Upstreams and Failover
+
+Take the first `enabled` channel in `channel_ids` order. On a connection failure or 5xx with no output produced yet, move to the next one, trying at most two. When all fail, return 502 `UPSTREAM_ERROR`.
+
+No health checks and no automatic ejection. Health checking requires background probes, a state machine and a recovery policy, while the number of upstreams here is in the single digits and "try in order, switch on failure" covers nearly everything. If a channel is ever down long enough that every request pays for one failure first, add a simple failure-count circuit breaker then.
+
+Management lives under the phase 3 admin console, with CRUD at `/api/admin/channels`. **The key field is write-only**: responses return `hasKey: true` plus the last four characters and never the plaintext. An administrator who wants to change a key simply enters a new one; nobody needs to read back what is currently configured.
+
+## Persisting Generated Results
+
+Upstream returns output in one of three forms: base64 (`b64_json`), a URL, or a raw binary stream (audio). **The server always persists it into phase 2's media storage and returns only a `storageKey`.**
+
+Third-party URLs must not be handed to the frontend, for three reasons. **They are typically signed URLs that expire within tens of minutes to a few hours**, so a result placed on a canvas is a broken image the next day, and canvases are meant to last. **They make the browser talk to an external origin**, bypassing the same-origin and media-cookie permission model designed in phase 2 (the user channel path does talk to external origins too, but that is the result of the user's own configuration, which is a different thing from the platform handing every user an external URL). **Output that is never stored is never accounted for**, so phase 3's storage quota is bypassed outright.
+
+The flow is: decode base64 or download the URL, then go through phase 2's `Storage.Put` to write the file, insert into `media_files`, update the storage usage counter, and return the `storageKey`. These steps are the same code path as `PUT /api/media/{storageKey}`; do not write a second copy.
+
+Downloading external URLs requires outbound protection, which is a new attack surface this phase: allow only http and https, re-validate on every redirect hop, reject any resolved IP in loopback, private or link-local ranges, and validate the actual IP at connection time (via `net.Dialer.Control`) to defeat DNS rebinding. Downloads also need a byte ceiling (the plan's `max_file_bytes`) and a timeout (60 seconds for images, 300 for video). These URLs come from upstreams the platform configured itself, but their contents are produced by the upstream and remain external input — a compromised or misbehaving upstream returning an internal address is entirely possible.
+
+**This is the only outbound attack surface in this phase, and that is one of the reasons for keeping user channels browser-direct.** Under the rejected route, where the server calls the `baseUrl` a user typed in, there would be a second target address under the user's complete control, and the strength of the defense would rest entirely on whether that validation stack missed a branch. With direct connections that surface simply does not exist: the only external requests the server initiates are to the platform's own configured upstreams and to result URLs those upstreams return. The validation logic lives in one place, `service/upstream.go`.
+
+Failing to persist counts as a failed generation and refunds in full. From the user's perspective, being charged without receiving output is the same regardless of which step broke.
+
+## Rate Limiting and Concurrency Control
+
+Credits are not a rate limiter. A user with a healthy balance can fire dozens of generations at once, saturate the upstream concurrency allowance, and leave everyone with 502s. So beyond credits there are two more gates: concurrency and frequency. Both gates apply to `/api/ai/*` only; user channel generations never reach this site and this site cannot govern them, which is a matter between the user and their own upstream.
+
+| Dimension | Threshold | On exceed |
+| --- | --- | --- |
+| In-flight image requests per user | 3 | 429 `CONCURRENCY_LIMITED` with `Retry-After: 5` |
+| In-flight text streams per user | 2 | Same |
+| In-flight audio requests per user | 2 | Same |
+| `pending` video tasks per user | 3 | Same |
+| Generation requests per user | 30 per minute | 429 `RATE_LIMITED` |
+| Global in-flight upstream requests | Configured per deployment | 429 `RATE_LIMITED`, ask the user to retry later |
+
+Video tasks are counted separately because they hold no HTTP connection; sharing a counter would let "three videos rendering in the background" block "sending one text message".
+
+Slots are taken when the handler starts and released with `defer`. **Streaming needs particular care**: the connection can drop at any moment, so release must live in a `defer` rather than on the normal return path, otherwise a user who opens and closes a few streams exhausts their own slots and sees "concurrency limit reached" while generating nothing. The acceptance checklist has an item specifically for this.
+
+Counters live in process memory, consistent with phase 1's rate limiting. When the global ceiling is hit, return 429 immediately rather than queueing — queueing leaves the request hanging, and "spinning for a long time and then failing" is worse than being told to try again.
+
+## User Scripts Stay on User Channels Only
+
+`model-plugin.ts` currently lets a user attach a JavaScript snippet to any model to customize how it is called. `runModelPlugin` compiles it into an async function with `new Function` and injects `prompt`, `images`, `model`, `baseUrl`, `apiKey`, `http`, `request`, `poll` and friends before running it. In the browser this is reasonable: it is the user's own code, using the user's own key, and anything that goes wrong affects the user's own tab.
+
+**Platform models do not allow custom scripts.** The reason is not "running scripts on the server is dangerous" — user channels never touch the server, their scripts have always run in the browser, and that does not change this phase. The real reason is ownership: how a platform model is called is something the platform should be getting right, with values constrained by `constraints`, protocol adaptation handled by a server-side provider, and failures diagnosed by us. Letting a script intervene pushes "how should this model be called" back onto the user while the call spends the platform's key and the user's credits, and neither side can then explain what went wrong.
+
+**User channels keep scripts, keep running them in the browser, and `model-plugin.ts` is not touched at all this phase.** The condition is still "the model identifier contains `::` and that channel model has a `script`", which the existing `resolveModelScript` already answers; `createPluginHttp` and `createPluginRequest` keep talking directly to the `baseUrl` the user entered, and `apiKey` keeps coming from `config`. This is also one of the reasons `buildApiUrl` and `resolveModelRequestConfig` in `use-config-store.ts` have to stay.
+
+Running a script requires a plaintext `apiKey`, and the whole chain lives in the browser, so `GET /api/credentials` keeps returning plaintext rather than switching to masked values. "Why This Phase Is Necessary" already flagged the consequence: the phase 2 exposure where an access token unlocks every vendor key does not go away this phase, and the only mitigation is the token storage policy set in phase 1, not a narrower delivery scope introduced here.
+
+The config page must state plainly on the script editor that scripts apply only to custom channels and are ignored for catalog models. Platform models should not offer a script entry point at all, rather than letting a user write code and only then discover it does nothing.
+
+## New Backend Files
+
+| Path | Responsibility |
+| --- | --- |
+| `internal/handler/ai.go` | Entry point for all five endpoints: model identifier checks, validation, quota and email pre-checks, deduction, provider invocation, result persistence |
+| `internal/handler/ai_stream.go` | SSE headers, event writing, heartbeats, disconnect handling |
+| `internal/handler/admin_channel.go` | Platform channel management, key write-only |
+| `internal/provider/provider.go` | The `Provider` interface and registry, selected by `APIFormat` |
+| `internal/provider/openai.go` | OpenAI-compatible images, speech, video and Responses streaming |
+| `internal/provider/gemini.go` | Gemini adaptation, absorbing today's `toGeminiBody`, `toGeminiContents` and `parseGeminiToolResponse` conversions |
+| `internal/provider/ark.go` | Ark and Seedance adaptation, including `/contents/generations/tasks` creation and polling |
+| `internal/service/credit.go` | Deduction, refunds and idempotency, shared by all five endpoints |
+| `internal/service/aitask.go` | Video task creation, background polling and recovery after restart |
+| `internal/service/upstream.go` | Channel selection, failover, timeout configuration, result download and outbound address validation |
+| `internal/model/model.go` | Adds `PlatformChannel`, `AIRequest` and `AITask` |
+
+Streaming gets its own file because its lifecycle differs completely from the other four endpoints: headers must be written up front, errors cannot use `c.JSON`, every event needs a flush, and disconnects arrive through the context. Mixing it into `ai.go` lets the two modes contaminate each other.
+
+The `Provider` interface stays minimal, describing capabilities and knowing nothing about HTTP:
+
+```go
+type Provider interface {
+    Images(ctx context.Context, req ImageRequest) (ImageResult, error)
+    Speech(ctx context.Context, req SpeechRequest) (SpeechResult, error)
+    CreateVideo(ctx context.Context, req VideoRequest) (VideoTask, error)
+    PollVideo(ctx context.Context, task VideoTask) (VideoState, error)
+    ChatStream(ctx context.Context, req ChatRequest, sink StreamSink) error
+}
+
+type StreamSink interface {
+    Delta(text string) error
+    ToolCall(call ToolCall) error
+    Done(finishReason string)
+}
+```
+
+Unsupported capabilities return `ErrCapabilityUnsupported`, which the handler maps to 400 `MODEL_NOT_SUPPORTED`. A provider only parses each vendor's SSE into those three callbacks and the handler only turns callbacks into HTTP events, so adding a vendor touches no HTTP code.
+
+Two new tables:
+
+```go
+type AIRequest struct {
+    ID             uuid.UUID  `gorm:"type:uuid;primaryKey"`
+    UserID         uuid.UUID  `gorm:"type:uuid;not null"`
+    IdempotencyKey string     `gorm:"type:varchar(40)"`
+    Capability     string     `gorm:"type:varchar(16);not null"` // image | video | audio | text
+    Model          string     `gorm:"type:varchar(120);not null"`
+    ChannelID      *uuid.UUID `gorm:"type:uuid"` // the PlatformChannel actually used
+    CreditCost     int        `gorm:"not null;default:0"`
+    Status         string     `gorm:"type:varchar(16);not null"` // running | succeeded | failed | refunded
+    RefundPending  bool       `gorm:"not null;default:false"`
+    UpstreamStatus int
+    DurationMs     int
+    CreatedAt      time.Time
+    UpdatedAt      time.Time
+}
+
+type AITask struct {
+    ID             uuid.UUID `gorm:"type:uuid;primaryKey"`
+    UserID         uuid.UUID `gorm:"type:uuid;not null"`
+    RequestID      uuid.UUID `gorm:"type:uuid;not null"`
+    Provider       string    `gorm:"type:varchar(16);not null"`
+    UpstreamTaskID string    `gorm:"type:varchar(200);not null"`
+    Status         string    `gorm:"type:varchar(16);not null"` // pending | succeeded | failed
+    StorageKey     string    `gorm:"type:varchar(80)"`
+    Error          string    `gorm:"type:text"`
+    PollFailures   int       `gorm:"not null;default:0"`
+    CreatedAt      time.Time
+    UpdatedAt      time.Time
+}
+```
+
+Indexes: a unique index on `ai_requests(user_id, idempotency_key)` (allowing an empty key, using a partial index to skip blanks), plus `(user_id, created_at desc)` for admin console queries; on `ai_tasks`, `(status, updated_at)` for the startup recovery scan and `(user_id, id)` for ownership checks.
+
+## Frontend Changes
+
+The core frontend action this phase is **adding one split decision at each generation entry point**, not moving the whole chain to the backend. There is exactly one criterion: an identifier containing `::` uses the existing browser-direct code, and a bare model name uses the new `ai.ts`. Every section below therefore distinguishes "the new platform branch" from "the user channel branch, preserved as-is", and anything not explicitly marked for deletion stays.
+
+### New `web/src/services/api/ai.ts`
+
+Exports five functions matching the five endpoints: `generateImages`, `createVideoTask`, `getVideoTask`, `generateSpeech` and `streamChat`, **called only from the platform branch**. The first four go through phase 1's `web/src/services/api/client.ts` and inherit token injection, silent refresh and typed exceptions from `error.code`.
+
+`streamChat` needs to read SSE, so if `client.ts` only wraps JSON responses, use `fetch` directly here — but **reuse `client.ts`'s token retrieval and refresh-retry logic** by extracting that part into an exported function and calling it. Never reimplement "single-flight refresh with request queueing" inside `ai.ts`; phase 1 already called that out as the easiest place to introduce a bug, and writing it twice means two bugs.
+
+### Image Path `web/src/services/api/image.ts`
+
+`requestGeneration`, `requestEdit` and `requestImageQuestion` all stay with unchanged signatures and **split at the top of the function body**: a bare model name calls `generateImages` or `streamChat` from `ai.ts`, and a `::` identifier falls into the implementation already in this file. Both branches settle on a `storageKey`-based return shape, with the user channel branch adding one `uploadMediaFile` call (`web/src/services/file-storage.ts`) after it gets a data URL — a step the call sites already performed, just moved one layer earlier, so both branches hand back the same shape and the six call sites do not each need two versions.
+
+Nothing in this file is deleted. The whole direct-to-provider protocol layer stays: `aiApiUrl`, `aiHeaders`, `geminiBaseUrl`, `geminiApiUrl`, `geminiHeaders`, `geminiModelName`, `toGeminiBody`, `toGeminiContents`, `toGeminiParts`, `toGeminiImagePart`, `toGeminiToolOptions`, `requestGeminiImages`, `requestGeminiImagesOnce`, `parseGeminiImagePayload`, `parseGeminiToolResponse`, `validateGeminiPayload`, `consumeGeminiStreamText`, `consumeGeminiStreamBlock`, `requestGeminiStreamingResponse`, `resolveGeminiImageConfig`, `closestGeminiAspectRatio`, `resolveGeminiImageSize`, `supportsGeminiImageSize`, `requestStreamingResponse`, `consumeResponseStreamText`, `consumeResponseStreamBlock`, `parseToolResponse`, `toResponseInput`, `toResponseContent`, `toResponseTool`, `validateResponsePayload`, `parseImagePayload`, `resolveImageDataUrl`, `readFetchError`, `readAxiosError`, `readStatusError` and `readApiErrorMessage`, along with the `GEMINI_SUPPORTED_RATIOS`, `GEMINI_IMAGE_SIZE_BY_QUALITY` and `defaultGeminiConfig` constants. They are the only call path user channels have; removing one breaks a piece of it.
+
+The size-derivation group — `resolveSize`, `resolveRequestSize`, `validateImageSize`, `parseImageRatio`, `parseImageDimensions`, `normalizeQuality`, `normalizeBackground` and the `QUALITY_BASE`, `IMAGE_SIZE_STEP`, `IMAGE_MIN_PIXELS`, `IMAGE_MAX_PIXELS`, `IMAGE_MAX_EDGE` and `IMAGE_MAX_RATIO` constants — also stays, still serving user channels. The server implements an equivalent size resolution for platform models, and the two are independent by design: the platform side follows `constraints` while the user channel side keeps today's behavior.
+
+`fetchImageModels` and `fetchChannelModels` stay. The config page's "fetch this channel's model list" feature only makes sense for the user's own channels and continues to run from the browser.
+
+`withSystemPrompt` and `withSystemMessage` stay as well: the system prompt is still merged into the prompt on the frontend for both branches and the server is unaware of it. Merging on both sides would insert it twice.
+
+### Video Path `web/src/services/api/video.ts`
+
+`requestVideoGeneration` splits at its entry. Platform models take "call `createVideoTask` for a `taskId`, then poll `getVideoTask` at the interval in `pollAfterMs`", with the polling loop, terminal-state decisions and overall time limit all driven by server-side task state. User channels keep using `createOpenAIVideoTask` / `pollOpenAIVideoTask` and `createSeedanceTask` / `pollSeedanceTask`, including today's local polling of up to 120 attempts at 2.5 or 5 second intervals.
+
+Nothing is deleted here either: `seedanceApiUrl`, `buildSeedanceContent`, `resolveSeedanceImageUrl`, `resolveSeedanceVideoUrl`, `resolveSeedanceAudioUrl`, `assertSeedanceVideoReferences`, `assertSeedanceAudioReferences`, `unwrapEnvelope`, `unwrapVideoResponse`, `unwrapSeedanceTask`, `videoResultUrl`, `videoResultFromUrl`, `assertVideoBlob`, `assertVideoConfig`, `normalizeVideoSeconds`, `normalizeVideoSize`, `normalizeVideoResolution`, `aiApiUrl` and `aiHeaders` all stay, as do this file's copies of `readApiErrorMessage`, `readAxiosError` and `statusMessage`.
+
+`VideoGenerationTask.provider` is currently `"openai" | "seedance" | "plugin"`; add `"backend"` for the platform path, making it four values. The module-level `pluginVideoResults` map stays.
+
+`VideoGenerationResult` is currently `{ blob?, url?, mimeType? }` and gains an optional `storageKey`: the platform path returns a `storageKey` directly, while the user channel path still returns a `blob` or `url` for `storeGeneratedVideo` to persist. `storeGeneratedVideo` stays; the platform path simply never calls it.
+
+Phase 2's leftover `resumePendingLogs` problem is resolved on the platform path only: the authoritative state of a platform task lives on the server, so after a page reload the frontend queries by `taskId` and picks up where it left off. A user channel task's state still lives only in that tab and is lost when the page closes, which is an inherent cost of direct connections; this phase does not address it and should not build local persistence just for it.
+
+`web/src/lib/seedance-video.ts` stays intact. `normalizeSeedanceRatio`, `normalizeSeedanceResolution`, `normalizeSeedanceDuration` and `isSeedanceVideoConfig` keep building user channel requests, and `seedanceRatioOptions`, `seedanceResolutionOptions`, `seedanceDurationOptions`, `seedancePixelLabel`, `SEEDANCE_REFERENCE_LIMITS`, `seedanceVideoReferenceError` and `buildSeedancePromptText` keep serving the UI. The server-side Ark provider implements its own equivalent conversion.
+
+### Audio Path `web/src/services/api/audio.ts`
+
+`requestAudioGeneration` splits at its entry: platform models call `generateSpeech` and get a `storageKey` directly, while user channels use the existing implementation to get a Blob and persist it through `storeGeneratedAudio`. `aiApiUrl`, `aiHeaders`, `assertAudioConfig`, `assertAudioBlob`, this file's copies of `readApiErrorMessage` / `readAxiosError` / `statusMessage`, and `storeGeneratedAudio` itself all stay.
+
+`normalizeAudioFormatValue`, `normalizeAudioSpeedValue`, `normalizeAudioVoiceValue` and `audioMimeType` in `web/src/lib/audio-generation.ts` keep constraining UI values on the frontend; on the platform path the server validates again against `constraints`, and the two do not conflict.
+
+### Custom Scripts `web/src/services/api/model-plugin.ts` (Unchanged)
+
+Not a single line of this file changes. `runModelPlugin`, `createPluginHttp`, `createPluginRequest`, `createPoll`, `getPluginVariables`, `getPluginTemplates` and `normalizePluginImages` all stay exactly as they are, `apiKey` keeps reading resident plaintext from `config`, and `createPluginHttp` keeps talking directly to the `baseUrl` the user entered.
+
+It is listed explicitly because the rejected route would have required two changes here: short-circuiting the script decision for platform models, and fetching `apiKey` from the backend right before execution. Neither is needed now — the split happens at the generation entry point, so a platform model never reaches the script branch, and the UI offers no script entry point for platform models in the first place.
+
+### Config Store and Channel Resolution `web/src/stores/use-config-store.ts`
+
+`buildApiUrl`, `resolveModelChannel`, `resolveModelRequestConfig` and `resolveModelScript` all stay, and their call surface does not narrow either — every user channel generation still runs through them. One clarification on location: `aiHeaders` is not in this store at all, it is a private copy in each of `image.ts`, `video.ts` and `audio.ts`, three nearly identical implementations that are likewise preserved.
+
+**`isAiConfigReady` must change semantics, and missing this is what leaves new users unable to click anything.** It currently evaluates `Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim())`; a platform model has no corresponding user channel, so `baseUrl` and `apiKey` are both empty, it is judged not ready, and `openConfigDialog` blocks the generation entry point. Change it to: always ready when the model identifier has no `::`, existing logic when it does.
+
+`AiConfig.apiKey` and `channels[].apiKey` **keep holding plaintext**, because user channels need it to reach upstream, and `GET /api/credentials` keeps returning plaintext with no masking work this phase. The structure of `normalizeChannels`, `createModelChannel` and `normalizeChannelModels` is unchanged.
+
+The candidate sources behind `config.models` and `selectableModelsByCapability` expand from "user channels only" to "platform catalog plus user channels". Catalog entries have no `::` prefix, which distinguishes them from channel entries without any extra marker field. `modelOptionLabel` should add a source badge and the credit cost to platform entries.
+
+**One trap to watch: given a bare model name, `findChannelModel` degrades into "find a same-named model in any channel".** If the user also configured a `gpt-image-2` in their own channel, the catalog's `gpt-image-2` matches that user channel, and `modelCapabilityOf`, `resolveModelChannel` and `resolveModelScript` all point at the wrong thing, which surfaces as "picked a platform model but went out directly with the user's key". The fix is to put the split decision ahead of these functions: once an entry is confirmed to be from the catalog, do not enter `findChannelModel` at all and read the catalog instead.
+
+The built-in `default` channel in `defaultConfig.channels` — preloaded with `gpt-image-2`, `grok-imagine-video`, `gpt-5.5` and `gpt-4o-mini-tts` but no key — should be removed. Its purpose in the direct-connection era was to give new users somewhere to paste a key; the platform catalog is the default source now, and leaving it only shows new users a fake channel that can never work.
+
+### Model Picker and Parameter Panels
+
+`options` in `web/src/components/model-picker.tsx` comes from `selectableModelsByCapability(config, capability)` today and should merge in the platform catalog fetched from `/api/models`, **listing both kinds side by side** so the user can switch between them in the same dropdown. Platform entries show the estimated credit cost for this run and user channel entries show "uses your own API key, costs no credits", making "does this one cost money" clear before the generate button is pressed. The three empty-state messages in `emptyModelLabel` need rewriting — "add a channel first" is wrong when the platform catalog is not empty.
+
+Size, ratio and duration options are all hard-coded constants today, spread across four files: `qualityOptions` and `aspectOptions` in `web/src/components/image-settings-panel.tsx` (exported as `imageQualityOptions` and `imageAspectOptions`), `resolutionOptions`, `sizeOptions` and `secondOptions` in `web/src/components/video-settings-panel.tsx` (exported as `videoResolutionOptions`, `videoSizeOptions` and `videoSecondOptions`), `speedOptions` in `web/src/components/audio-settings-panel.tsx`, and `sizeOptions` in `web/src/components/canvas/canvas-size-picker.tsx`.
+
+One rule covers all of them: **when a platform model is selected, render options from that model's `constraints`; when a user channel model is selected, keep the existing hard-coded list and the global constraints that go with it** (`QUALITY_BASE`, `IMAGE_MAX_EDGE` and that group). This is not laziness — the platform genuinely does not know what a user channel model can do. Which sizes it accepts, whether it takes reference images, whether it can produce transparent backgrounds: all of that lives in the channel config the user filled in and in third-party documentation, leaving us nothing to validate against, so the current "offer a generic set of options and let upstream complain" approach has to stand.
+
+When switching models, any current value not present in the new model's `constraints` must fall back to that model's first legal value. Leaving a value that is guaranteed to be rejected with a 400 means the user only finds out after hitting generate, which is a poor experience. Switching from a platform model to a user channel model needs no reset, since that path validates nothing.
+
+On the canvas side, `canvas-image-settings-popover.tsx`, `canvas-video-settings-popover.tsx`, `canvas-audio-settings-popover.tsx`, `canvas-image-toolbar-settings-modal.tsx`, `canvas-config-node-panel.tsx` and `canvas-node-prompt-panel.tsx` reuse the same exported constants, so changing the source covers them — but each still needs checking for a locally maintained copy.
+
+### Call Sites and Error Handling
+
+Six call sites change: `web/src/pages/image/index.tsx`, `web/src/pages/video/index.tsx`, `web/src/pages/canvas/project.tsx`, `web/src/pages/canvas/hooks/use-plugin-host.tsx`, `web/src/components/canvas/canvas-node-generation.ts` and `web/src/lib/agent/agent-site-tools.ts`. The changes concentrate on return shapes (the platform path yields a `storageKey` while the user channel path still yields a Blob or data URL, smoothed over inside `image.ts` / `video.ts` / `audio.ts`) and on error handling.
+
+**Both error-handling styles have to survive; you cannot keep only one.** The platform path looks up localized copy by `error.code` per the phase 1 convention, while user channel errors still come from third parties and still depend on the guesswork in `readApiErrorMessage`, so the `apiErrors.*` entries that exist purely to guess at HTTP status codes (`authenticationFailed`, `badGateway`, `serviceBusy`, `httpFailed`, `rateLimited`, `notFound`, `htmlError`) **cannot retire**. They are ugly, but as long as one path is a browser talking to a third party, they are the fallback.
+
+After a successful generation on the platform path, invalidate the react-query entry for `/api/me` so the credit balance refreshes, the same way phase 3 handles quota; the user channel path charges nothing and needs no refresh. A 402 `INSUFFICIENT_CREDITS` should say exactly how many credits are missing and link to where more can be obtained.
+
+### Localization
+
+Add `ai.credits.*` (balance, cost, insufficient-credit messaging) and `ai.errors.*` (one entry per new error code) to both `zh-CN.ts` and `en-US.ts`, plus the model picker's labels for the two kinds of model. `apiErrors.*` stays as it is; user channels still need it. The key structures of the two files must stay symmetric.
+
+## Deployment Changes
+
+### nginx
+
+Give `/api/ai/` its own location, placed before phase 1's `location /api/`:
+
+```txt
+location /api/ai/ {
+    proxy_pass http://api:8080/ai/;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    chunked_transfer_encoding on;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 20m;
+}
+```
+
+Three details are easy to get wrong. The trailing path on `proxy_pass` must follow the same rewriting rule as phase 1's `proxy_pass http://api:8080/;` under `location /api/` (both strip the `/api` prefix); getting it wrong 404s everything. `proxy_http_version 1.1` plus clearing the `Connection` header is a prerequisite for chunked transfer, since the default HTTP/1.0 does not support chunking and SSE gets buffered whole. `client_max_body_size` can be far smaller than the 200m phase 1 needed for media upload, because reference images are now passed as `storageKey` rather than base64.
+
+### Aligning the Timeout Chain
+
+The three layers of timeout must decrease from outside in, otherwise the shortest one fires while the inner layers keep running: nginx `proxy_read_timeout` ≥ the backend's overall timeout ≥ the upstream request timeout. If nginx is shortest, the user sees a 504 while the backend is still generating and credits are already spent, and neither refunding nor not refunding is correct.
+
+There is one more trap on the Go side: `http.Server.WriteTimeout` is an absolute deadline measured from the start of the response, which for a stream means "cut it off after this long". Either set it to 0 or raise it above the longest streaming timeout, and let each handler's context enforce the real deadline. Keep `ReadHeaderTimeout` for slowloris protection.
+
+### Environment Variables
+
+| Variable | Purpose |
+| --- | --- |
+| `AI_IMAGE_TIMEOUT` | Overall image request timeout, default 180 seconds |
+| `AI_AUDIO_TIMEOUT` | Overall speech request timeout, default 120 seconds |
+| `AI_STREAM_TIMEOUT` | Overall text streaming timeout, default 600 seconds |
+| `AI_STREAM_IDLE_TIMEOUT` | Text streaming idle timeout, default 60 seconds |
+| `AI_VIDEO_TASK_TIMEOUT` | Maximum video task lifetime, default 20 minutes |
+| `AI_MAX_CONCURRENCY_PER_USER` | Per-user concurrency ceiling |
+| `AI_GLOBAL_CONCURRENCY` | Global concurrency ceiling |
+| `AI_ALLOW_PRIVATE_UPSTREAM` | Whether upstream addresses may resolve to private networks, default false, local debugging only |
+
+`CREDENTIAL_MASTER_KEY` is reused from phase 2 and no new key is introduced. The media volume was created in phase 1, so no new volume is needed.
+
+## Acceptance Checklist
+
+Splitting and billing rules:
+
+- Generating an image with a catalog model reduces the credit balance by `credit_cost` and writes one consumption entry to the ledger.
+- Generating an image with a user channel model (identifier containing `::`) leaves the balance unchanged and writes no ledger entry.
+- Using one account to generate once with a platform model and once with your own channel charges the first and not the second, and both produce a result.
+- A user channel generation appears in the browser network panel as a request straight to the third-party domain, with no request to this site's `/api/ai/*`.
+- A platform model generation appears in the browser network panel as a request to this site's `/api/ai/*` only, with no third-party domain.
+- Manually posting a `::` identifier to `/api/ai/images/generations` returns 400 `MODEL_NOT_SUPPORTED`, with no deduction and no upstream call.
+- A bare model name that is not in the catalog returns 400 `MODEL_NOT_SUPPORTED`.
+- No platform channel key can be found in localStorage, sessionStorage or memory.
+
+Credit consistency:
+
+- Insufficient credits returns 402 `INSUFFICIENT_CREDITS` with `required` and `balance`, and **no upstream request is made at all**.
+- Breaking the platform channel key returns 502 for the next generation, with credits fully refunded and a `type=refund` ledger entry written.
+- Sending the same `idempotencyKey` twice charges once, and the second call returns the same result.
+- Closing the browser tab midway through a stream does not refund, and server logs show the upstream request being cancelled.
+- An upstream 500 before the first delta refunds in full.
+- A failed video task refunds, and the same task can never be refunded twice.
+- Interrupting the refund path and retrying it does not produce a double refund.
+
+Streaming:
+
+- Text answers appear incrementally instead of all at once when generation completes.
+- **This must be tested behind nginx rather than against port 8080**, since a missing `proxy_buffering off` only fails there.
+- A connection survives more than 60 seconds of upstream silence without being dropped by intermediaries, proving heartbeats work.
+- Clicking "stop" closes the server's upstream connection within a second.
+- Very long answers are not truncated midway, proving the line buffer ceiling was raised.
+
+Parameters and catalog:
+
+- Sending a size outside `constraints.size` for a platform model returns 400 `PARAM_NOT_SUPPORTED` listing allowed values, with no deduction and no upstream call.
+- Switching between platform models updates the size, ratio and duration options, and an illegal previous selection resets to a legal value.
+- Switching to a user channel model restores the existing hard-coded option lists, with values unrestricted by `constraints`.
+- Posting a video model to `/api/ai/images/generations` returns `MODEL_NOT_SUPPORTED`.
+
+Result persistence:
+
+- Generated images come back as `storageKey` and render directly from `<img src="/api/media/...">`, with no third-party URL anywhere in the response.
+- Video models that only return a URL also land as a `storageKey`, and the canvas still plays the video after the third-party URL expires.
+- Exceeding the storage quota returns 507 `STORAGE_QUOTA_EXCEEDED` and refunds the credits.
+- An unverified email address gets 403 `EMAIL_NOT_VERIFIED` before any deduction happens.
+
+Security:
+
+- A platform upstream returning a result URL that points at an internal address is refused for download.
+- A result URL that starts at a public address and then 302s to an internal one is refused on that hop as well.
+- Attaching a script to a platform model does not execute it; the request still uses the server's default call.
+- No API key appears anywhere in backend logs, with `Authorization` and `x-goog-api-key` both redacted.
+- The admin channel endpoints never return key plaintext, only `hasKey` and the last four characters.
+
+Concurrency and limits:
+
+- Exceeding the per-user concurrency ceiling returns 429 `CONCURRENCY_LIMITED` with `Retry-After`.
+- **After opening and closing 20 streams in a row, new requests still work**, proving slots are released on disconnect and never leak.
+- Video task concurrency is counted independently of image and text.
+
+Frontend:
+
+- A freshly registered account with no channels configured can generate with platform models immediately, without the entry point being blocked by "no API key configured".
+- The model picker lists platform models and user channel models side by side, the former showing an estimated credit cost and the latter showing "costs no credits".
+- A user channel configured with a model whose name matches a catalog model keeps the two options distinct, and picking the platform entry still goes to `/api/ai/*`.
+- A user channel model with a script attached still executes correctly, with no regression in `model-plugin.ts` behavior.
+- `bun run typecheck` passes, the existing direct-to-provider implementations under `web/src/services/api/` are fully preserved, and user channel generation is unaffected.
+- The two locale files stay structurally symmetric, the new `ai.*` copy is complete, and no `apiErrors.*` entry was deleted by mistake.
