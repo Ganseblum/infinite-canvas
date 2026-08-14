@@ -1,11 +1,13 @@
 ---
 title: Account System and Backend Service Plan
-description: Plan for adding a Go backend service providing authentication, cloud data sync and user entitlements, deployed privately with Docker
+description: Plan for adding a Go backend providing authentication, cloud data and S3-compatible media storage, credit-based billing and content moderation, while keeping an anonymous local-only mode
 ---
 
 # Account System and Backend Service Plan
 
-This document plans the migration of Infinite Canvas from a pure frontend local application to a multi-user client-server system: a new Go backend service providing registration and login, cloud data synchronization and user entitlements, deployed on a self-hosted server with Docker.
+This document plans a multi-user system layered onto Infinite Canvas: a new Go backend service providing registration and login, cloud data synchronization, media object storage and user entitlements, deployed on a self-hosted server with Docker.
+
+**The login-free mode is kept.** Anonymous users keep their data in the browser, signed-in users get cloud storage, and both paths are dispatched by one shared data layer in the frontend so pages never fork on it.
 
 This document describes the plan only and contains no implementation code.
 
@@ -24,30 +26,35 @@ Authentication **does not exist at all**. `web/src/stores/use-user-store.ts` is 
 
 ## Goals
 
-- Users must register and log in before using any functionality including canvas, generation and assets.
-- User canvases, assets, image logs and video logs are persisted server-side and restored automatically after logging in on another device, including the original image and video files.
+- Offer registration and login. Signing in unlocks cloud storage, platform-preset models and credit billing; staying signed out still allows full canvas use with data kept on the local machine.
+- Canvases, assets, image logs and video logs of signed-in users are persisted server-side and restored automatically after logging in on another device, including the original image and video files.
 - Third-party AI credentials configured by the user are stored encrypted on the server so they do not need to be re-entered on a new device.
 - Provide a tier and quota system that limits resource usage by storage capacity, per-file size and media retention period.
 - AI requests for platform-preset models are forwarded through the backend, users buy credits through online payment, and generation is metered and deducted server-side.
-- The full stack is deployed on a self-hosted server through Docker Compose.
+- Inputs and artifacts on the platform path pass content moderation, meeting the compliance requirements of operating in mainland China.
+- The full stack is deployed on a self-hosted server through Docker Compose, with media on S3-compatible object storage.
 
 ## Confirmed Key Decisions
 
 | Decision | Conclusion | Impact |
 | --- | --- | --- |
 | Third-party AI API keys | Stored server-side, AES-GCM encrypted, master key from environment variable | No re-entry across devices; the server takes on key custody responsibility and `SECURITY.md` must be updated accordingly |
-| Keep a login-free mode | No, login is mandatory site-wide | No dual-mode compatibility needed in the frontend, simpler code; Vercel static deployment is dropped |
-| Media file sync scope | Full upload, both original images and videos are synced | Best experience; server disk and bandwidth costs are self-borne and require quota enforcement as a backstop |
+| Keep a login-free mode | Yes; anonymous users keep their data in browser IndexedDB | The frontend gains a `web/src/services/data/` layer that dispatches on auth state, with `local/` and `remote/` sharing identical names and signatures so pages never fork; anonymous users can only use their own baseUrl and model, cannot use platform-preset models, and are subject to no platform quota; Vercel static deployment still works for the anonymous mode |
+| Target region and compliance | Mainland China first | Moderation uses Alibaba Cloud Content Moderation Enhanced, payment covers Alipay and WeChat Pay only with CNY as the sole currency; algorithm filing and large-model service filing are prerequisites that must be completed before opening registration, with the exact process confirmed by legal |
+| Media file sync scope | Full upload for signed-in users, both original images and videos; anonymous users upload nothing | Best experience; object storage capacity and egress costs are self-borne and require quota enforcement as a backstop |
+| Object storage | S3-compatible, with `STORAGE_DRIVER` switching between `local` and `s3` | Cloudflare R2 first in the cloud (free egress), falling back to Alibaba Cloud OSS + CDN if measured mainland China speed proves unacceptable; reads go through a 302 to a presigned URL while writes stay proxied by the backend; the local disk driver is kept for development and private deployment |
 | WebDAV sync | Removed entirely | Cloud sync becomes the only path; `webdav-sync.ts` plus config page UI, localized strings and config export fields are all deleted |
-| Registration policy | Fully open | Anyone can register, so rate limiting, email verification and free-tier quotas must work together as the backstop |
+| Registration policy | Fully open | Anyone can register, so rate limiting, email verification, free-tier quotas and the free generation allowance must work together as the backstop |
 | Email verification and password recovery | Both implemented | Requires SMTP integration plus an email token table and two landing pages |
-| Admin console | Lightweight version in phase 3 | Adds an `/admin` route in this project covering user list, credit adjustment, usage inspection and suspension, with the model catalog and credit packages added in phase 4 |
-| Tier quotas | Two tiers, free and paid | Free: 500 MB storage, 50 MB per file, 7-day media retention. Paid: 1 GB storage, 200 MB per file, 14-day media retention |
-| Monetization model | Credits only, no subscription VIP | Users buy credits online and any remaining balance counts as the paid tier; running out of credits falls back to free automatically, and the VIP concept is deferred |
-| AI request path | Platform-preset models are forwarded through the backend, user-configured channels stay direct from the browser | The platform key stays server-side and credits are deducted server-side; a user's own key costs no credits but is still bound by the storage quota and retention period |
+| Admin console | Lightweight version in phase 3 | Adds an `/admin` route in this project covering user list, credit adjustment, usage inspection and suspension, with the model catalog and credit packages added in phase 4 and moderation records plus manual review in phase 5 |
+| Tier quotas | Three tiers: free, paid and sunset | Free: 50 MB storage, 20 MB per file, 7-day retention. Paid: 1 GB, 200 MB, 15 days. Sunset: 200 MB, 200 MB, 7 days, appearing only during the 60-day grace period after a downgrade and never purchasable |
+| Monetization model | Credits only, dual-bucket ledger plus a paid entitlement window | Credits split into a `purchased` and a `granted` bucket, and paid status is `purchased_micros > 0 OR paid_until > now()`; a top-up pushes `paid_until` forward by `entitlement_days`, while grants and check-ins land in `granted` only and never confer paid status; still no subscriptions table |
+| Free generation allowance | The free tier gets a one-time 3 images and 1 video as two independent counters | Covers only a locked cheapest parameter combination, and parameters outside it silently switch to the credit path instead of erroring; model scope is limited by `model_catalog.free_trial_eligible`; no daily reset |
+| AI request path | Platform-preset models are forwarded through the backend, user-configured channels stay direct from the browser | The platform key stays server-side and credits are deducted server-side; a user's own key costs no credits, though its artifacts remain bound by the storage quota and retention period |
 | Model catalog | Maintained in the admin console, with the frontend rendering parameter forms from it | The frontend no longer guesses capability from keywords or hardcodes resolutions and durations; user-defined channels and models are kept |
-| Media retention | All media is timed from its last touch and cleaned up after expiry | Active projects are never reclaimed while long-abandoned media frees disk on expiry; a warning goes out 2 days ahead alongside an export entry |
-| Payment providers | Alipay, WeChat Pay and Stripe | Requires merchant credentials and publicly reachable callback URLs; webhooks must verify signatures and be idempotent |
+| Media retention | All media is timed from its last touch and cleaned up after expiry | Active projects are never reclaimed while long-abandoned media frees storage on expiry; a warning goes out 2 days ahead alongside an export entry |
+| Content moderation | A separate phase 5 built on Alibaba Cloud Content Moderation Enhanced | It cannot cover the whole product: platform-preset models are auditable end to end, user-configured channels can only be intercepted as artifacts hit storage, and the anonymous mode is entirely out of reach; a rejected generation still costs credits, and false positives are compensated manually |
+| Payment providers | Alipay and WeChat Pay, CNY only | No Stripe in v1 and no refunds; requires merchant credentials and publicly reachable callback URLs, and webhooks must verify signatures and be idempotent |
 
 ### What Quotas Can and Cannot Enforce
 
@@ -57,21 +64,43 @@ Generation is a **hard constraint** as well. Credits are bought with real money,
 
 The boundary to draw is around channels the user configures themselves. Those requests use the user's own key, still go directly from the browser, cost no credits, and are not counted server-side. This is deliberate rather than a hole — the user is burning their own allowance and the platform has no grounds to charge for it. But the images and videos those requests produce still consume the storage quota and are still subject to media retention once uploaded, so the server-side cost exposure remains covered by hard constraints.
 
+One more boundary sits outside the signed-in state entirely: **the anonymous mode is subject to no platform quota at all.** Its data lives in browser IndexedDB, never passes through the backend and occupies not one byte of the server, so there is no storage quota, no per-file limit and no retention cleanup. The only ceiling is whatever storage the browser grants the site — an allowance the browser sizes from free disk space and the user can wipe with one click, which is neither under our control nor something we should promise. Anonymous users also cannot use platform-preset models: they are visible in the selector, but clicking one only leads to a signup prompt, because that path spends the platform's key and the user's credits and both require a meterable identity.
+
 Product copy can therefore describe credit consumption on platform models as definite, unavoidable metering. That is the precondition for charging at all.
 
 ### Credits and Paid Status
 
-"Any remaining credit balance means a paid user" is the rule that most needs spelling out. It reduces paid status from "which plan was purchased and how many days remain" to "is the balance above zero": determining a tier is a single lookup of `credits.balance`, with no subscription state machine to maintain and none of the renewal, dunning or trial-conversion edge cases subscriptions bring.
+Fix the unit first: **1 credit = 1 micro-yuan = 0.000001 CNY, and top-ups convert 1:1**, so paying 10 CNY yields 10,000,000 credits. Every amount and every credit figure is an `int64` and floating point is not allowed anywhere in the math — 0.1 + 0.2 does not equal 0.3 in floating point, and in a billing system every rounding error eventually becomes an entry the books cannot explain. Micro-yuan rather than cents, because a single generation may well cost a fraction of a cent, and a cent-based ledger forces the crude "anything less than a cent rounds up to a cent" pricing. The interface always shows money in yuan; "credits" is an internal accounting unit and users should never have to learn the conversion.
 
-The cost is that status flips naturally with use. Topping up moves the user to the paid tier, and the moment credits run out the account falls back to free. The fallback itself deletes nothing, but storage in use has very likely already passed the free tier's 500 MB, at which point the account enters **read-only mode**: browsing, exporting and deleting still work, uploading new media does not. A **30-day grace period** starts at the same time with reminder emails during it, and the user can either top up to restore the paid tier or trim their own data below 500 MB. Accounts still over quota when the grace period ends are cleaned up starting from the oldest media until they fit.
+**The ledger has two buckets.** `purchased` holds only credits the user paid for; `granted` holds gifts — check-ins, the bonus portion of a top-up package, and administrative compensation. Deduction always draws from `granted` first and `purchased` second, so users spend the free part before the part they paid for.
 
-Monthly-subscription VIP tiers with exclusive perks are deliberately deferred. The credit model already covers every monetization case currently needed, whereas subscriptions add billing cycles, invoices and bulk renewal failures. Plan that separately once there is a concrete need.
+The split exists to answer a question a single bucket cannot: **has this user ever actually paid?** "Any balance above zero means paid" breaks the instant grants exist — hand a new user a small trial allowance and they immediately become a "paid user" entitled to 1 GB of storage and 15-day retention while the platform has collected nothing. Paid status is therefore redefined as **`purchased_micros > 0 OR paid_until > now()`**, and no amount of granted credit confers it.
+
+`paid_until` handles the other half: whether a user who did pay drops back to free the moment their credits run out. With only `purchased_micros > 0`, the tier flips at the instant of exhaustion, so topping up in the morning and running out by the afternoon triggers a downgrade and cleanup — which reads as bad faith. Every top-up therefore pushes `paid_until` forward from the current moment by `entitlement_days` (30 by default, overridable per package), and the paid tier holds for that window regardless of whether the balance hits zero.
+
+**This is still not a subscription.** `paid_until` is only an expiry timestamp, and its passing triggers nothing: no scheduled job, no auto-renewal, no billing cycles or dunning, no failed-charge retries, and no `subscriptions` table. Tier resolution is one comparison computed on the spot, and an expired user simply lands on the free tier at their next request. What makes subscriptions expensive was never the table; it is the state machine around it, and none of that is introduced here.
+
+The consequences of a tier flip match the original plan, with one buffer added. A downgrade deletes nothing, but storage in use has very likely already passed the new tier's ceiling, at which point the account enters **read-only mode**: browsing, exporting and deleting still work, uploading new media does not. Users who have paid before land first on the **`sunset` tier** (200 MB storage, 200 MB per file, 7-day retention) with a 60-day grace period, and only then fall to the free tier's 50 MB. This tier is forced by dropping the free quota from 500 MB to 50 MB: paid users routinely accumulate a few hundred megabytes, so dropping them straight to 50 MB turns "running out of credits deletes most of my work" from an edge case into the guaranteed path of every churned subscriber — that is not quota design, that is converting churned users into complaints at scale. Reminder emails go out during the grace period, the user can top up to restore or trim their own data, and accounts still over quota after 60 days are cleaned up starting from the oldest media until they fit.
+
+**v1 does not support refunds**, and this belongs in the terms of service: credits are non-refundable once purchased, and the `refunded` value of `orders.status` is reserved but never used. The reason is that consumed credits have already incurred real upstream cost, and refunding a partially consumed balance requires a whole apparatus of pro-rata settlement, clawing back grants and rolling back paid status — complexity and reconciliation risk that the current scale does not justify. Note this differs from the full refund on a failed generation: that is a reversal inside one transaction, written as a `type = refund` ledger row, and involves no real money.
+
+### Free Generation Allowance
+
+The free tier gets two **independent** one-time counters: 3 images **and** 1 video, neither drawing from the other. Once spent they are gone, and **there is no daily reset**.
+
+Skipping the daily reset is a calculation, not caution. Under open registration a daily reset makes a single account's annualized exposure 365 times that of a one-time allowance while the cost of registering approaches zero — effectively building a reliable pipe for "a new inbox buys another round forever". A one-time allowance is bounded by "signups × once", an order of magnitude smaller, and abuse costs a one-off rather than a continuous bleed. Two counters instead of one generic count, because upstream costs for images and video differ by one to two orders of magnitude: a shared counter would either let one video swallow everything or squeeze the image allowance down to no experiential value.
+
+The allowance only covers a **locked, cheapest parameter combination**: images are limited to `n = 1` plus the model's smallest size and default quality; video is limited to 480p, the smallest positive value in the model's `constraints.duration`, no audio track and no reference images. When parameters fall outside that combination the request **does not error, it simply switches to the credit path** — the point of a trial is to let people see the result, not to hand them a feature they must first study the rules to use, and an error reading "the free allowance does not support this size" only loses the new user on their very first generation. All the frontend has to do is show in advance whether this run uses the allowance or credits, with the server as the authority on that judgment.
+
+A `model_catalog.free_trial_eligible` column is also required to bound the model scope. Locking parameters caps only part of the per-run cost; the spread between models is larger, and without this column new users are free to spend their trial on the most expensive model in the catalog — which is precisely what everyone would choose. It defaults to false, so newly listed models do not enter the trial scope automatically; otherwise every listing of a pricier model silently widens the exposure.
+
+The paid side remains purely credit-based and the two systems never mix: there is no "convert runs into credits" middle ground, and no single generation is ever half allowance and half balance. The order of evaluation is model `free_trial_eligible` and parameters inside the locked combination first, remaining counter second; only when both hold does the run use the allowance, and otherwise it always uses credits.
 
 ### Media Retention and Expiry Cleanup
 
-Cleanup covers **all media, including media a canvas currently references**. This differs from the common approach and deserves explaining up front: if only orphans were cleaned up, a user could occupy disk forever simply by keeping an image attached to some canvas, and retention would mean nothing.
+Cleanup covers **all media, including media a canvas currently references**. This differs from the common approach and deserves explaining up front: if only orphans were cleaned up, a user could occupy storage forever simply by keeping an image attached to some canvas, and retention would mean nothing.
 
-But "images inside my canvas get deleted" sounds like it destroys people's projects, so the timing rule has to compensate. A media file's **last touch time** is the maximum of `updated_at` across every canvas referencing it, `updated_at` across every asset referencing it, and `created_at` of every generation record referencing it. Touching any one of them restarts the clock, and only exceeding the tier's `retention_days` moves the file into cleanup. The result is that active projects are never reclaimed and only genuinely abandoned media — canvases never opened, assets never touched — ever expires.
+But "images inside my canvas get deleted" sounds like it destroys people's projects, so the timing rule has to compensate. A media file's **last touch time** is the maximum of `updated_at` across every canvas referencing it, `updated_at` across every asset referencing it, and `created_at` of every generation record referencing it. Touching any one of them restarts the clock, and only exceeding the tier's `retention_days` (7 days on free and sunset, 15 days on paid) moves the file into cleanup. The result is that active projects are never reclaimed and only genuinely abandoned media — canvases never opened, assets never touched — ever expires.
 
 No `expires_at` column is added. Expiry is a derived value continuously refreshed by writes to several tables, so materializing it as a column means maintaining it on every canvas save, asset update and generation write: write amplification, and very easy to miss one path. It is computed on the fly when the cleanup job scans instead, and that job is **merged with the phase 3 orphan reclamation into a single scan** — both have to walk the jsonb columns of three business tables to resolve references, and one pass yields both "who is unreferenced" and "when was this last touched".
 
@@ -79,18 +108,21 @@ Warning before expiry is mandatory: an email 2 days ahead plus an in-app notice,
 
 ### Cost Risk of Open Registration Combined with Full Media Sync
 
-These two decisions still create a cost exposure, but the quota change puts it in an entirely different bracket: with a 500 MB free tier, the theoretical peak for 100 registered users is 50 GB of disk rather than the earlier 500 GB. That number sits comfortably within what a single server can absorb, so open registration is no longer a bet placed on luck.
+These two decisions still create a cost exposure, but the quota change puts it in an entirely different bracket: with a 50 MB free tier, the theoretical peak for 100 registered users is 5 GB rather than the earlier 500 GB. That number is effectively free on any object storage provider, so **capacity is no longer something to worry about in advance**.
+
+The cost focus therefore moves from disk to **egress**. Canvas applications have high read amplification: opening one canvas pulls dozens of images, and every switch between canvases, every device syncing, every shared link someone else opens is another egress. Capacity is paid once, traffic accumulates per request, and a few hundred gigabytes of monthly egress on metered object storage can exceed the storage bill by an order of magnitude. That is exactly why Cloudflare R2 is the first choice in the cloud — its egress is free, which zeroes out the dominant cost line. R2's real-world speed in mainland China has to be measured, and if it proves unacceptable the fallback is Alibaba Cloud OSS + CDN, where traffic becomes the largest cost line again and traffic alerting plus a budget ceiling become mandatory.
 
 A smaller magnitude does not mean the defenses can go. All of the following stay:
 
 - Rate-limit the registration endpoint by IP and by email domain to prevent scripted bulk signups.
 - **Disallow media uploads until email verification passes**, keeping unverified accounts at zero storage.
 - Check the storage quota and the per-file limit before writing a file rather than writing first and accounting afterwards.
-- Provide a cleanup policy for long-inactive accounts as a disk backstop.
+- Provide a cleanup policy for long-inactive accounts as a backstop.
+- Clean up media per tier on expiry, turning "sign up, fill the quota, never come back" from a permanent occupation into a time-limited one, so usage no longer accumulates monotonically with signups but falls back as inactive accounts expire.
 
-One defense is added on top: per-tier retention cleanup of media. It turns "sign up, fill 500 MB, never come back" from a permanent occupation into a time-limited one, so disk usage no longer accumulates monotonically with signups but falls back as inactive accounts expire.
+One exposure is added on top, pointing the opposite way: **the free generation allowance is real money spent upstream.** Storage merely occupies space; a free generation is something the platform has already paid an upstream vendor for. Three images plus one video multiplied by the signup count is the ceiling on that spend, so it has to be considered together with registration rate limiting and email verification — containing signups is what contains this bill. `FREE_TRIAL_ENABLED` is the emergency valve under abuse, and like `REGISTRATION_ENABLED` it must be wired up in advance.
 
-Server disk capacity should still be provisioned as a proportion of "expected signups multiplied by the free quota", with disk watermark alerting configured — the base number is simply an order of magnitude smaller.
+Storage capacity should still be provisioned as a proportion of "expected signups multiplied by the free quota" with watermark alerting configured, just with a base an order of magnitude smaller; the alerts that actually matter now are egress volume and daily free-allowance consumption.
 
 ## Repository Layout: Stay in This Repository, Add a Top-Level `server/`
 
@@ -102,11 +134,11 @@ Three reasons for the single-repository choice:
 
 1. **The frontend-backend contract is tightly coupled.** The field shapes of canvases, assets and generation records are carried jointly by frontend type definitions such as `CanvasProject` and `Asset` and by backend table schemas, so changing one field means touching both sides. A single repository lets one change update both sides at once, whereas two repositories require extra version coordination and contract synchronization at a cost far exceeding the benefit.
 2. **Deployment orchestration belongs together.** Docker Compose must orchestrate frontend, backend and database simultaneously, and `nginx.conf` must proxy `/api`. These configurations naturally belong to the same deployment description.
-3. **Mandatory login has already diverged from upstream.** Upstream `basketikun/infinite-canvas` is an MIT-licensed pure local tool, whereas this work is a private version with mandatory login and server-side credential custody that is not intended to be merged back. The argument that separate repositories ease upstream syncing therefore does not apply.
+3. **Server-side credential custody and billing have already diverged from upstream.** Upstream `basketikun/infinite-canvas` is an MIT-licensed pure local tool, whereas this work keeps the anonymous local mode while adding accounts, server-side credential custody, object storage and credit billing, and is not intended to be merged back. The argument that separate repositories ease upstream syncing therefore does not apply.
 
 Related precautions: never commit real keys or production configuration under `server/` — use environment variables and `.env` (already ignored in `.dockerignore`). Mark this repository as a private fork in the README and describe the differences from upstream.
 
-If the ability to merge upstream must be preserved, the alternative is a separate backend repository with frontend changes confined to a few files. However, mandatory login intrudes into routing, the request layer, the config page and the top navigation, making such confinement impractical. Not recommended.
+If the ability to merge upstream must be preserved, the alternative is a separate backend repository with frontend changes confined to a few files. However, the auth state and the data dispatch layer intrude into routing, the request layer, the config page and the top navigation, making such confinement impractical. Not recommended.
 
 ## Directory Structure
 
@@ -132,9 +164,10 @@ infinite-canvas/
       auth/                 # password hashing and JWT issuing/verification
       mail/                 # SMTP delivery and email templates
       middleware/           # auth, rate limiting, logging
-      storage/              # object storage interface and local disk implementation
+      storage/              # object storage interface with local disk and S3 implementations
       payment/              # payment provider adapters: order creation, signature verification, webhooks
       provider/             # AI upstream adapters: the OpenAI, Gemini and Ark protocols plus SSE streaming
+      moderation/           # content moderation adapter, added in phase 5
       service/              # business services: quota, credits, cleanup, channel selection and failover
       handler/              # HTTP handlers
         auth.go
@@ -150,14 +183,15 @@ infinite-canvas/
         payment.go
         model.go
         ai.go
+        moderation.go
         admin.go
   docker-compose.yml        # changed to app + api + db, three services
   nginx.conf                # adds /api reverse proxy
 ```
 
-`internal/storage` is an interface plus a local disk implementation, so switching to MinIO or S3 later only replaces the implementation without touching callers.
+`internal/storage` is one interface with two implementations: `local` writes to a disk volume and `s3` speaks the S3-compatible protocol, selected by `STORAGE_DRIVER`, with callers seeing only the interface. Presigned URL generation for the read path lives in this layer too — the local driver returns the backend's own direct-read address while the S3 driver returns a presigned URL aligned to the hour, so nothing above needs to know which one is mounted.
 
-`internal/payment` splits into Alipay, WeChat Pay and Stripe implementations behind one shared order-creation and webhook interface, with signature verification always delegated to each provider's official SDK rather than assembling signature strings by hand. `internal/provider` splits by upstream protocol into OpenAI, Gemini and Ark implementations that only translate a unified request into each vendor's call and parse the response back into one shape, never touching business semantics; channel selection, failover and timeout configuration live in `internal/service/upstream.go`; deduction, metering and balance checks live in `handler/ai.go` around the forwarding call. Keeping the three apart is what lets a vendor swap leave the billing code untouched.
+`internal/payment` splits into Alipay and WeChat Pay implementations behind one shared order-creation and webhook interface, with signature verification always delegated to each provider's official SDK rather than assembling signature strings by hand. `internal/provider` splits by upstream protocol into OpenAI, Gemini and Ark implementations that only translate a unified request into each vendor's call and parse the response back into one shape, never touching business semantics; channel selection, failover and timeout configuration live in `internal/service/upstream.go`; deduction, metering and balance checks live in `handler/ai.go` around the forwarding call. Keeping the three apart is what lets a vendor swap leave the billing code untouched.
 
 ## Technology Choices
 
@@ -169,7 +203,8 @@ infinite-canvas/
 | Authentication | golang-jwt/jwt v5 | Access token plus refresh token |
 | Password hashing | golang.org/x/crypto/bcrypt | Standard practice, no custom design needed |
 | Credential encryption | Standard library crypto/aes and cipher.GCM | No third-party crypto library required |
-| Object storage | Local disk volume | Simplest for private deployment, with an interface left for extension |
+| Object storage | S3-compatible (Cloudflare R2 in the cloud, Alibaba Cloud OSS as fallback), local disk driver retained | The dominant cost of a canvas application is egress rather than capacity, and R2's free egress zeroes that line out; `aws-sdk-go-v2` covers every S3-compatible service with one implementation, and private deployments can still switch back to a disk volume |
+| Content moderation | Alibaba Cloud Content Moderation Enhanced | Operating in mainland China calls for a service usable as compliance evidence rather than a self-built model; text and images go through the same vendor, integrated in phase 5 |
 | Payment providers | Each provider's official Go SDK | Order parameters and webhook signature verification come from the SDK; signature logic is never hand-written |
 | AI forwarding | Standard library net/http | Upstream calls and chunk-by-chunk SSE flushing need nothing beyond `http.Flusher`, and per-vendor protocol differences live in the adapters under `internal/provider`, so no extra framework is needed |
 
@@ -280,6 +315,7 @@ The index `(user_id, deleted_at, updated_at desc)` covers exactly the default li
 | `config` | jsonb | Generation parameters |
 | `result` | jsonb | Generation result, including the list of `storage_key`s |
 | `duration_ms` | int | Elapsed time |
+| `moderation_status` | varchar | `skipped` / `pending` / `passed` / `rejected`; always `skipped` before phase 5 |
 | `created_at` | timestamptz | Indexed, used for descending cursor pagination |
 | `deleted_at` | timestamptz | Soft deletion, nullable |
 
@@ -296,9 +332,12 @@ The index `(user_id, kind, created_at desc)` serves cursor pagination of workben
 | `mime_type` | varchar | |
 | `bytes` | bigint | File size |
 | `checksum` | varchar | sha256 |
+| `moderation_status` | varchar | `skipped` / `pending` / `passed` / `rejected`; always `skipped` before phase 5 |
 | `created_at` | timestamptz | |
 
 `(user_id, storage_key)` is unique. Business tables store only the `storage_key`; the binary content and its physical path are managed here, and storage usage is aggregated from this table.
+
+Both `moderation_status` columns are **added in phase 2, not deferred to phase 5**. The moderation logic is certainly phase 5 work, but an extra column at table-creation time costs essentially nothing, whereas adding one to a table already holding real data means reasoning about backfill, concurrent writes and default semantics — an order of magnitude more expensive. Every write before phase 5 stores `skipped`, meaning "this record predates the moderation path" rather than "this passed moderation"; that distinction matters when tracing incidents later, so `passed` must never be used as the placeholder.
 
 ### Entitlements
 
@@ -306,28 +345,45 @@ The index `(user_id, kind, created_at desc)` serves cursor pagination of workben
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | varchar | `free` / `paid` |
+| `id` | varchar | `free` / `paid` / `sunset` |
 | `name` | varchar | Display name |
 | `storage_bytes` | bigint | Total storage quota |
 | `max_file_bytes` | bigint | Per-file limit |
 | `retention_days` | int | Media retention in days |
+| `free_image_trials` | int | One-time free image generations |
+| `free_video_trials` | int | One-time free video generations |
 
-Two default rows are seeded on initialization:
+Three default rows are seeded on initialization:
 
-| id | Name | Storage quota | Per-file limit | Media retention |
-| --- | --- | --- | --- | --- |
-| `free` | Free | 500 MB | 50 MB | 7 days |
-| `paid` | Paid | 1 GB | 200 MB | 14 days |
+| id | Name | Storage quota | Per-file limit | Media retention | Free images | Free videos |
+| --- | --- | --- | --- | --- | --- | --- |
+| `free` | Free | 50 MB | 20 MB | 7 days | 3 | 1 |
+| `paid` | Paid | 1 GB | 200 MB | 15 days | 0 | 0 |
+| `sunset` | Sunset | 200 MB | 200 MB | 7 days | 0 | 0 |
 
-This table no longer records daily generation limits — generation consumes credits, not a count quota. Nor does it represent "which plan the user bought": the relationship between a user and a tier is derived straight from the credit balance, where `credits.balance > 0` means `paid` and anything else means `free`. There is therefore no subscriptions table and no subscription relation to maintain.
+The allowance lands as two columns, `free_image_trials` and `free_video_trials`, rather than a `trial_units` jsonb or one generic count: they are two unrelated counters to begin with, structured fields can participate directly in SQL checks, and this avoids reserving an extension point for a hypothetical third capability nobody needs yet. These columns define only the **ceiling**; how much a user has spent lives in `usage_records` keyed by `(user_id, metric)`, so adjusting an allowance means editing one tier row and touching no user data.
 
-**credits** — credit balance
+`sunset` is not a tier sold to anyone. It appears only on the downgrade path, so it is excluded from the public `/api/plans` list and cannot be purchased. Making it a tier row instead of a hardcoded set of downgrade parameters keeps "how much can be stored during the sunset period, and for how long" as configurable, inspectable and admin-editable as the other two.
+
+This table no longer records daily generation limits — generation consumes credits, and the free allowance is a one-time trial rather than a recurring quota. Nor does it represent "which plan the user bought"; the user-tier relationship is derived from paid status on the spot:
+
+- `purchased_micros > 0 OR paid_until > now()` → `paid`
+- otherwise, `paid_until` is non-null and `paid_until + 60 days > now()` → `sunset`
+- otherwise → `free`
+
+The sunset tier therefore needs no new column and no "downgraded at" field: `paid_until` already records exactly when the paid entitlement ended, and the grace period counts 60 days from there. It also means a downgrade is not an event that has to be triggered — no scheduled job, no state transition, just the same expression yielding a different answer at a different moment. There is still no subscriptions table and no subscription relation to maintain.
+
+**credits** — credit balance, two buckets
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `user_id` | uuid | Primary key and foreign key, one row per user |
-| `balance` | bigint | Current balance, never negative |
+| `purchased_micros` | bigint | Balance bought with money, never negative |
+| `granted_micros` | bigint | Balance received as a grant, never negative |
+| `paid_until` | timestamptz | Expiry of the paid entitlement, nullable |
 | `updated_at` | timestamptz | |
+
+**No separate `balance` total column**: it equals the sum of the two buckets, and storing it again only creates a second "truth" that can disagree with them, while adding two numbers at display time costs nothing. Deduction always draws `granted` first and `purchased` second, and when it spans both buckets the two updates must happen in the same transaction.
 
 **credit_transactions** — credit ledger
 
@@ -336,14 +392,19 @@ This table no longer records daily generation limits — generation consumes cre
 | `id` | uuid | Primary key |
 | `user_id` | uuid | Foreign key, indexed |
 | `type` | varchar | `purchase` / `consume` / `refund` / `grant` / `expire` |
-| `amount` | bigint | Positive to add, negative to deduct |
-| `balance_after` | bigint | Balance after this movement |
-| `ref_type` | varchar | `order` / `generation` / `admin` |
+| `bucket` | varchar | `purchased` / `granted`, the bucket this entry moves |
+| `amount_micros` | bigint | Positive to add, negative to deduct, in micro-yuan |
+| `balance_after_micros` | bigint | Balance of **that bucket** after this movement |
+| `ref_type` | varchar | `order` / `generation` / `admin` / `checkin` |
 | `ref_id` | varchar | Id of the related object |
 | `note` | varchar | Free-form note |
 | `created_at` | timestamptz | Indexed, used for cursor pagination |
 
-The ledger is a table of its own rather than just a balance column because a paid system has to be auditable: when a user asks "why did my credits go down", the product must be able to itemize the answer. `balance_after` is a deliberate denormalization so that diagnosing a discrepancy does not require replaying the whole ledger to find the entry that went wrong. Balance and ledger writes must happen in one transaction, otherwise "balance deducted but no ledger row" — or the reverse — will eventually occur, and that class of damage cannot be repaired automatically.
+The ledger is a table of its own rather than just a balance column because a paid system has to be auditable: when a user asks "why did my credits go down", the product must be able to itemize the answer. `balance_after_micros` is a deliberate denormalization so that diagnosing a discrepancy does not require replaying the whole ledger to find the entry that went wrong. Balance and ledger writes must happen in one transaction, otherwise "balance deducted but no ledger row" — or the reverse — will eventually occur, and that class of damage cannot be repaired automatically.
+
+`bucket` is what makes the reconciliation identity hold per bucket: `credits.purchased_micros` equals the sum of `amount_micros` over all `bucket = purchased` rows, and the same for `granted`. Without it, a deduction spanning both buckets could only be recorded as one combined amount, leaving no way to reconstruct which bucket the money came from, and the two buckets would degenerate into a split that exists in the balance but cannot be explained in the ledger. **A cross-bucket deduction is therefore written as two rows**, in the same transaction and sharing one `ref_id`.
+
+`ref_type` reserves the `checkin` value now. Check-ins do not ship in this round, but their destination must be the `granted` bucket, and pinning that down structurally beforehand avoids the tempting shortcut of dropping them into `purchased` later — which would turn every user who checks in into a paying customer.
 
 **credit_packages** — top-up packages
 
@@ -351,12 +412,14 @@ The ledger is a table of its own rather than just a balance column because a pai
 | --- | --- | --- |
 | `id` | varchar | Primary key |
 | `name` | varchar | Display name |
-| `credits` | bigint | Base credits |
-| `bonus_credits` | bigint | Bonus credits |
-| `price_cents` | bigint | Price in cents |
-| `currency` | varchar | Currency |
+| `price_micros` | bigint | Price in micro-yuan; credits landing in `purchased` equal it 1:1 |
+| `bonus_micros` | bigint | Bonus credits, landing in the `granted` bucket |
+| `entitlement_days` | int | Days of paid entitlement this package grants; falls back to `ENTITLEMENT_DAYS` when null |
+| `currency` | varchar | Currency, currently `CNY` only |
 | `enabled` | bool | Whether it is listed |
 | `sort` | int | Ordering |
+
+The old `credits` column is gone: top-ups convert 1:1, so credits landing in `purchased` always equal `price_micros`, and storing it twice only creates a chance for two numbers to disagree. `price_cents` also becomes `price_micros` so the whole schema shares one unit; conversion to cents happens when submitting to the payment provider, which is why the admin form must validate that a price is a whole multiple of 10,000 micro-yuan (a whole cent) and leave no room for an uncollectable price. `entitlement_days` sits on the package rather than relying solely on a global constant so larger packages can grant a longer window — that is a promotional lever, and hardcoding it globally throws it away.
 
 **orders** — payment orders
 
@@ -364,21 +427,23 @@ The ledger is a table of its own rather than just a balance column because a pai
 | --- | --- | --- |
 | `id` | uuid | Primary key |
 | `user_id` | uuid | Foreign key |
-| `provider` | varchar | `alipay` / `wechat` / `stripe` |
+| `provider` | varchar | `alipay` / `wechat` |
 | `provider_order_id` | varchar | Provider-side order number, unique |
 | `package_id` | varchar | Foreign key into credit_packages |
-| `amount_cents` | bigint | Amount actually paid |
-| `currency` | varchar | Currency |
-| `credits` | bigint | Credits granted by this order |
-| `status` | varchar | `pending` / `paid` / `failed` / `refunded` |
+| `amount_cents` | bigint | Amount actually paid, in cents, used for provider reconciliation |
+| `currency` | varchar | Currency, currently `CNY` only |
+| `purchased_micros` | bigint | Snapshot of credits this order adds to the `purchased` bucket |
+| `granted_micros` | bigint | Snapshot of bonus credits this order adds to the `granted` bucket |
+| `entitlement_days` | int | Snapshot of the paid entitlement days this order grants |
+| `status` | varchar | `pending` / `paid` / `failed` / `refunded` (value reserved, unused in v1) |
 | `paid_at` | timestamptz | Payment completion time, nullable |
 | `created_at` / `updated_at` | timestamptz | |
 
-`orders.credits` snapshots the package's `credits + bonus_credits` at order creation and the webhook uses that value directly instead of looking the package up again. Packages can be repriced or delisted at any time while a webhook may arrive minutes or hours later, and only a snapshot guarantees the user receives the amount they saw when they paid.
+The single former `credits` field now splits into three snapshots. Splitting is necessary rather than cosmetic: at settlement these three values go into two different buckets and one expiry timestamp, and a single combined number cannot be decomposed back. All three can also be changed in the admin console after the user places an order — repricing, adjusting the bonus ratio, shortening a promotional window — and only a snapshot at order creation guarantees the user receives what they were shown. The webhook uses these three values directly and never re-reads credit_packages, since packages can be repriced or delisted at any time while a callback may arrive minutes or hours later. `amount_cents` stays in cents because it exists for provider and finance reconciliation and takes no part in internal accounting.
 
 The uniqueness of `provider_order_id` is the foundation of webhook idempotency: a repeated callback for the same payment is stopped by the unique index, making double-crediting impossible. Providers retry callbacks as a matter of course, so this is the normal path and not an exceptional one.
 
-**usage_records** — usage counters, unique by `(user_id, metric, period)`. It serves **`storage_bytes` and nothing else**, with `period` only ever `total`: storage has to be validated before every upload and `SUM(bytes)` degrades as the file count grows, which does not belong on the upload hot path, so a counter is the necessary compromise. Generation counts stay out of this table — display figures such as "images generated today" are counted straight from `generations`, and billing is settled from the credit ledger.
+**usage_records** — usage counters, unique by `(user_id, metric, period)`, with `period` only ever `total`. It serves three metrics: `storage_bytes`, `free_image_trials` and `free_video_trials`. Storage has to be validated before every upload and `SUM(bytes)` degrades as the file count grows, which does not belong on the upload hot path, so a counter is the necessary compromise; the two allowances are the same case — the check runs before every generation, and because they are one-time, a counter is both more direct and less exposed to later data changes than recomputing from `generations` (deleting a generation record must not refund a free trial, but a recomputation would). Other generation counts still stay out of this table: display figures such as "images generated today" are counted straight from `generations`, and billing is settled from the credit ledger.
 
 ### Model Catalog
 
@@ -392,7 +457,8 @@ The uniqueness of `provider_order_id` is the foundation of webhook idempotency: 
 | `capability` | varchar | `image` / `video` / `text` / `audio` |
 | `provider` | varchar | Owning channel |
 | `constraints` | jsonb | Parameter constraints, shaped like `{ sizes: [], aspectRatios: [], durations: [], qualities: [], maxReferenceImages: n }` |
-| `credit_cost` | jsonb | Pricing rules keyed by parameters |
+| `credit_cost` | jsonb | Pricing rules keyed by parameters, in micro-yuan |
+| `free_trial_eligible` | bool | Whether the free generation allowance may use it, false by default |
 | `enabled` | bool | Whether it is visible to users |
 | `sort` | int | Ordering |
 | `created_at` / `updated_at` | timestamptz | |
@@ -400,6 +466,8 @@ The uniqueness of `provider_order_id` is the foundation of webhook idempotency: 
 This table exists to fix three defects in the current frontend: model capability is guessed from name keywords by `guessCapability` in `use-config-store`; resolution and maximum edge length are global hardcoded constants such as `QUALITY_BASE` and `IMAGE_MAX_EDGE` in `image.ts`, applied identically to every model; and the system has no idea which sizes, aspect ratios or durations a specific model actually supports, so users have to find out by trial — pick an unsupported combination and the only feedback is an upstream error.
 
 `constraints` is jsonb rather than a set of columns because different capabilities constrain different dimensions in the first place: image models care about sizes and aspect ratios, video models care about durations, speech models care about neither. Splitting them into columns produces a wide table that is mostly null, and these constraints are only ever read and rendered by frontend forms, never queried by field. `credit_cost` is the same: pricing is naturally bound to parameters — the same model costs differently at 1024×1024 and at 4K, video is priced by duration — so it can only be configured model by model.
+
+`free_trial_eligible`, conversely, has to be a queryable boolean column rather than a key inside `constraints`: the allowance check sits on the generation hot path and needs it in SQL and index conditions, and the admin console needs to list "which models are currently in the trial scope" at a glance. Defaulting to false is deliberate — newly listed models do not enter the trial scope automatically, otherwise every listing of a pricier model silently widens the free exposure.
 
 One point deserves emphasis: **the model catalog is a platform preset, not a mandatory allowlist.** Channels and models the user configures themselves are kept, the frontend merges both sources into one list, and the only difference is that custom models have no `constraints` to work from, so their parameter form falls back to today's generic shape and they consume no credits.
 
@@ -424,7 +492,7 @@ All endpoints share the `/api` prefix and are proxied same-origin by nginx, avoi
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/api/me` | Returns user info, current tier, credit balance and usage |
+| GET | `/api/me` | Returns user info, current tier, both bucket balances, `paidUntil`, remaining free allowance and usage |
 | PATCH | `/api/me` | Update display name and avatar |
 | POST | `/api/me/password` | Change password, verifying the old one and revoking tokens on other devices |
 
@@ -479,8 +547,8 @@ History is append-only, so it uses cursor pagination rather than page numbers. T
 | Method | Path | Notes |
 | --- | --- | --- |
 | HEAD | `/api/media/{storageKey}` | Check existence, size and checksum |
-| GET | `/api/media/{storageKey}` | Download binary |
-| PUT | `/api/media/{storageKey}` | Upload, with quota and email-verification checks before writing |
+| GET | `/api/media/{storageKey}` | 302 redirect to a presigned URL; streams the binary directly under the local disk driver |
+| PUT | `/api/media/{storageKey}` | Upload, proxied and streamed to object storage by the backend, with quota and email-verification checks before writing |
 | DELETE | `/api/media/{storageKey}` | Delete |
 
 Media travels over dedicated binary endpoints and business objects reference only a `storageKey`. Once the frontend has a canvas or an asset it fetches files on demand rather than carrying them inside the JSON body.
@@ -493,24 +561,36 @@ The resolution is to **issue an additional read-only media cookie at login and r
 
 Uploads still travel as ordinary requests carrying an `Authorization` header; this cookie applies only to `GET` and `HEAD`. Do not turn it into a general session cookie for convenience, which would undo the phase 1 token design.
 
+#### Read path: a 302 to a presigned URL
+
+`GET /api/media/{storageKey}` is implemented as **verify identity and ownership, then 302 to a presigned URL on the object store**, so the binary never passes through the backend and one round of egress bandwidth plus one memory copy disappear. The two presigning parameters have to be designed as a pair: **the issue time is aligned to the hour and the lifetime equals 2 × the alignment window** (1-hour alignment and a 2-hour lifetime by default). Alignment is what makes every request within the same hour receive **the identical URL**, giving browsers and CDNs a shared cache key to hit — without it every request signs a fresh URL, cache hit rate drops to zero and the redirect buys nothing. The lifetime is twice the alignment window so that every URL still has a full window of headroom when the next alignment point arrives, avoiding "a URL signed one second before the hour expires one second later".
+
+**The `Cache-Control` of the 302 response itself can only be `private, max-age={presign seconds remaining - 60}`.** This is the most dangerous spot on the whole read path, worth hardcoding with a test to match. Following the intuition that "media is immutable content" and attaching `immutable` or a one-year `max-age` to this redirect makes the browser cache the redirect together with the signature inside it; two hours later the signature expires, the request never returns to the server to be re-signed, and the result is every image on the site breaking at once, immune to refreshes, fixable only by clearing the cache. The one-year `immutable` policy belongs on **the object's own metadata** — that caching policy applies to the object the presigned URL points at, not to the redirect pointing at it. The 60 seconds subtracted are the safety margin for clock skew and in-flight requests.
+
+The presigned URL itself carries no cookie and cannot carry one to the object storage domain, which is exactly what we want: the media cookie's authority ends at "exchange this for one redirect", the actual read authority rests with that short-lived URL, and both windows are narrow.
+
+**Writes keep going through the backend as a proxied stream; v1 does not do presigned direct upload.** Direct upload would save one hop, but the quota check and the sha256 both have to happen on the write path: uploading directly and reconciling through a callback afterwards leaves a window where the file is already in the bucket but not yet accounted for, and that window is the easiest possible way to blow past a quota. Revisit it when proxying actually becomes the bottleneck; v1 does not trade away a hard constraint for a performance gain that does not exist yet.
+
+The local disk driver does not redirect and streams the binary from the backend, so development environments and private deployments can exercise the whole path without any S3 service at all.
+
 ### Entitlements
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/api/plans` | Tier list returning storage quota, per-file limit and retention period for both tiers |
+| GET | `/api/plans` | Tier list returning storage quota, per-file limit, retention period and free allowance for the purchasable tiers |
 
-`/api/plans` is implemented in phase 3, requires login like everything else, and returns every field of both tiers: `id`, `name`, `storageBytes`, `maxFileBytes` and `retentionDays`. It does not duplicate `/api/me`, which reports only the current tier, whereas the top-up page has to spell out what the paid tier adds and needs both tiers side by side to do that.
+`/api/plans` is implemented in phase 3, requires login like everything else, and returns every field of the `free` and `paid` tiers: `id`, `name`, `storageBytes`, `maxFileBytes`, `retentionDays`, `freeImageTrials` and `freeVideoTrials`. It does not duplicate `/api/me`, which reports only the current tier, whereas the top-up page has to spell out what the paid tier adds and needs both tiers side by side to do that. `sunset` is excluded from the response: it cannot be purchased and appears only on a downgrade, so putting it in a comparison table would only suggest there are three plans to choose from.
 
-Tiers need no assignment endpoint — which tier a user belongs to is derived from the credit balance, and `/api/me` simply returns the current tier, storage usage, credit balance and the nearest media expiry time. Storage usage is read from the `storage_bytes` counter in `usage_records` rather than computed per request as `SUM(media_files.bytes)`, and credit consumption is read from `credit_transactions`, so neither needs a separate usage-accounting endpoint.
+Tiers need no assignment endpoint — which tier a user belongs to is derived from paid status on the spot, and `/api/me` returns the current tier, storage usage, both bucket balances, `paidUntil`, the remaining count on both free allowances and the nearest media expiry time. The generation entry point has to show in advance whether a run uses the allowance or credits, so those remaining counts must ride along with `/api/me`. Storage usage is read from the `storage_bytes` counter in `usage_records` rather than computed per request as `SUM(media_files.bytes)`, and credit consumption is read from `credit_transactions`, so neither needs a separate usage-accounting endpoint.
 
 ### Credits
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/api/credits` | Balance plus a summary of recent ledger entries |
-| GET | `/api/credits/transactions?cursor=` | Cursor-paginated ledger |
+| GET | `/api/credits` | Both bucket balances, `paidUntil` and a summary of recent ledger entries |
+| GET | `/api/credits/transactions?cursor=&bucket=` | Cursor-paginated ledger, filterable by bucket |
 
-The ledger is an append-only history stream just like generation records, so it uses cursor pagination rather than page numbers. Balance gets its own `/api/credits` instead of riding along on `/api/me` because it changes in real time during generation and the frontend needs to refresh it frequently on its own, whereas `/api/me` also carries profile and tier information that has no reason to be refetched alongside it.
+The ledger is an append-only history stream just like generation records, so it uses cursor pagination rather than page numbers. Balance gets its own `/api/credits` instead of riding along on `/api/me` because it changes in real time during generation and the frontend needs to refresh it frequently on its own, whereas `/api/me` also carries profile and tier information that has no reason to be refetched alongside it. Balances are returned per bucket rather than as one total because users need to know which part they bought and which part was given: only the former relates to paid status, and that is precisely the answer to "I still have credits, so why was I downgraded".
 
 ### Payments and Orders
 
@@ -522,7 +602,9 @@ The ledger is an append-only history stream just like generation records, so it 
 | POST | `/api/orders/{id}/cancel` | Cancel a pending order |
 | POST | `/api/payments/webhook/{provider}` | Payment webhook, publicly reachable but must verify signatures and be idempotent |
 
-`POST /api/orders` only creates a local order and returns payment parameters; credits do not land at this step. They land only after a webhook confirms payment, and writing the order status, adding to the balance and appending the ledger row must all happen inside one transaction.
+`POST /api/orders` only creates a local order and returns payment parameters; credits do not land at this step. They land only after a webhook confirms payment, and writing the order status, crediting both buckets, pushing `paid_until` and appending the ledger rows must all happen inside one transaction. Settlement writes two ledger rows: `purchased_micros` into the `purchased` bucket and `granted_micros` into the `granted` bucket, both carrying the same `ref_id` pointing at the order. `paid_until` becomes `max(current value, now()) + entitlement_days` — extending from the current value is what keeps a user still inside their entitlement window from *shortening* their expiry by topping up again.
+
+There are only two providers, Alipay and WeChat Pay, and only one currency, CNY; v1 integrates neither Stripe nor any foreign currency. Orders are non-refundable, and the `refunded` status is reserved but written by no code path.
 
 The webhook is the only write endpoint in the entire backend without an `Authorization` header, so its two defenses have to be built into the implementation. **Signature verification** is delegated to each provider's official SDK and a failed signature is rejected outright — never waved through because "the order number looks like ours". **Idempotency** comes from the `orders.provider_order_id` unique index plus the order state machine, which permits the `pending → paid` transition exactly once and answers repeated callbacks with success while writing nothing.
 
