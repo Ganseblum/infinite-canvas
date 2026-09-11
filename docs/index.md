@@ -33,11 +33,6 @@
 ## Project Progress
 
 - [Changelog](/docs/progress/changelog)
-- [Account System and Backend Service Plan](/docs/progress/account-backend-plan)
-- [Phase 1 Implementation Checklist](/docs/progress/account-backend-phase1)
-- [Phase 2 Implementation Checklist](/docs/progress/account-backend-phase2)
-- [Phase 3 Implementation Checklist](/docs/progress/account-backend-phase3)
-- [Phase 4 Implementation Checklist](/docs/progress/account-backend-phase4)
 - [Pending Tests](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
 

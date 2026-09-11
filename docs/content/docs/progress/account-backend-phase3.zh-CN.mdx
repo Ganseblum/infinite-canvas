@@ -1,23 +1,71 @@
 ---
-title: 第三期实施清单：点数计费与管理后台
-description: 账号体系与后端服务规划第三期的详细开发底稿，涵盖点数账本、充值支付、档位配额、模型目录与管理后台
+title: 第三期执行计划：点数计费与管理后台
+description: 账号体系与后端服务规划第三期的中文执行计划，涵盖双桶点数账本、充值支付、档位配额、模型目录、清理任务与管理后台
 ---
 
-# 第三期实施清单：点数计费与管理后台
+# 第三期执行计划：点数计费与管理后台
 
-本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第三期的开发底稿。前置条件是[第一期](/zh-CN/docs/progress/account-backend-phase1)与[第二期](/zh-CN/docs/progress/account-backend-phase2)已交付并通过验收。
+本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第三期的中文执行计划。前置条件是[第一期](/zh-CN/docs/progress/account-backend-phase1)与[第二期](/zh-CN/docs/progress/account-backend-phase2)已交付并通过验收。
 
 ## 范围界定
 
 ### 本期要做
 
-点数账本（余额、流水、退还机制与对账不变量）、充值档位与支付订单、支付回调、档位定义与存储配额校验、`usage_records` 存储计量、平台模型目录、媒体保留期清理与孤儿文件回收、`/api/me` 返回点数与档位、前端个人中心与充值页、`/admin` 管理后台。
+双桶点数账本（`purchased` 与 `granted`）、流水、原桶退还和逐桶对账不变量，充值档位与支付订单、支付回调、`paid_until` 付费权益、三档配额与存储校验、`usage_records` 存储及一次性试用计数、平台模型目录、参数价格矩阵与限时折扣活动、媒体保留期清理与孤儿文件回收、个人中心、充值页与 `/admin` 管理后台。
 
 ### 本期不做
 
-**实际的扣点动作。** 扣点发生在第四期的 AI 请求转发接口里，本期只把账本、余额、流水、退还机制建好，并暴露一个供第四期调用的内部方法。本期部署上线后点数不会自己减少，唯一的余额变化来源是充值与管理员手工增减。
+**实际的生成扣点与免费试用消耗。** 两者发生在第四期的 AI 请求转发接口里。本期只把账本、余额、流水、免费试用计数和原桶退还机制建好，并暴露供第四期调用的内部方法。本期部署上线后不会自行出现 `consume` 流水，余额变化只来自充值、第一期已批准赠送的入账和管理员手工调整。
 
 订阅制、自动续费、发票、退款自助申请。原方案里的两档订阅套餐已经整体作废，`subscriptions` 表在本期删除。
+
+## 阶段目标与完成定义
+
+本期目标是建立“任何权益变化都有来源、任何余额都能重算、任何支付都只到账一次”的财务与配额基础。完成不等于充值页能显示数字，而是双桶账本、订单状态机、档位派生、存储计数和清理任务都能在并发与故障下保持不变量。
+
+| 目标 | 完成定义 | 主要证据 |
+| --- | --- | --- |
+| 双桶账本可对账 | `purchased`、`granted` 分别等于对应流水之和，跨桶消费和原桶退还可解释 | SQL 对账与并发测试 |
+| 付费身份不被赠送污染 | 只有购买余额或有效 `paid_until` 产生付费档，赠送余额再多也不产生付费身份 | 档位矩阵测试 |
+| 支付只到账一次 | 验签、金额校验、订单跃迁、两桶入账和权益延期在同一事务 | 重复、乱序和故障注入测试 |
+| 配额为硬约束 | 上传前按派生档位检查单文件、总量和只读态，计数可重算 | 并发上传与重算测试 |
+| 清理可预演可恢复 | 先扫描后执行，按用户隔离，预警后软删除并延迟物理删除 | dry-run 清单与恢复演练 |
+| 管理操作可审计 | 点数调整必须指定桶和说明，封禁、清理、模型和档位操作可追踪 | 后台权限与审计记录 |
+
+## 实施任务与顺序
+
+| 顺序 | 任务 | 主要文件 | 具体改动 | 任务完成检查 |
+| --- | --- | --- | --- | --- |
+| 1 | 建双桶账本 | credit model/repository/service | `credits` 双桶与 `paid_until`，流水增加 `bucket` 和 `refund_of_transaction_id`，所有余额变化收口到 service | 逐桶对账、并发扣减和重复退还测试通过 |
+| 2 | 建档位解析与用量 | plan/entitlement/usage service、media handler | 统一派生 `paid`/`sunset`/`free`，存储计数、试用计数、上传前预占 | 档位时间矩阵和并发上传测试通过 |
+| 3 | 接第一期赠送 | free-grant service、credit service | 将已批准且非零金额的活动赠送幂等记入 `granted` 桶；免费生成资格继续由领取记录与试用计数共同决定 | 重放同一活动不重复入账、不改变付费身份 |
+| 4 | 建支付闭环 | payment provider、order service、webhook handler | 档位快照、官方 SDK 验签、状态机、双桶到账、`paid_until` 延期 | 沙箱支付、重复回调、金额不符和事务回滚通过 |
+| 5 | 建清理任务 | media retention/reclaim service、管理触发接口、定时任务 | 一次扫描算孤儿、到期和日落超额，先 dry-run、预警、软删除、延迟物理删除 | 单用户演练无误删，共享媒体保留 |
+| 6 | 建模型和运营后台 | model catalog、promotion service、admin API、`web/src/pages/admin/` | 模型约束、基础价格、限时折扣、用户、点数、订单、用量和清理管理 | 非管理员全拒绝，价格和折扣变更均有记录 |
+| 7 | 接个人中心和充值页 | account/credits/orders API、profile/billing 页面 | 展示三档、双桶、权益期、用量、订单和流水；支付轮询有清理 | 浅深主题、刷新恢复、轮询退出均正常 |
+| 8 | 全量对账与上线门禁 | 对账命令、监控和验收记录 | 扫描全用户逐桶差异、订单异常、用量差异和待清理清单 | 零未解释差异后才允许与 Phase 4 联合上线 |
+
+## 阶段检查与纠偏
+
+| 偏离信号 | 说明 | 立即纠偏 |
+| --- | --- | --- |
+| 代码仍读取或写入 `credits.balance` | 单桶旧设计残留 | 暂停支付联调，统一改为双桶并补逐桶对账测试 |
+| `granted` 余额让用户进入 `paid` | 赠送污染付费身份 | 档位解析收口到一个 service，禁止页面和 SQL 自行判断 |
+| 使用 PostgreSQL 部分索引语法 | MySQL 8.0 无法创建 | 改为可空 `refund_of_transaction_id` 唯一索引，普通流水保持 NULL |
+| 回调 handler 直接改余额 | 绕过账本和事务 | 只允许 order service 调 credit service，回调层只验签和解析 |
+| 清理任务直接物理删除 | 一次误判就不可恢复 | 先 dry-run 和软删除，观察期后异步物理删除 |
+| 前端按本地目录规则计算最终价格 | Phase 4 会产生展示与实扣漂移 | 本期只展示估算，最终报价统一预留 `/api/ai/quote` |
+| Phase 4 未完成就公开充值 | 用户购买的点数没有消费闭环 | 隐藏入口并关闭下单开关，等 Phase 4 同批发布 |
+
+出现账本差异时立即关闭下单、管理员点数调整和平台模型开关；保留查询、导出和用户自配渠道。用流水重算定位首条差异，禁止直接把余额手工改成“看起来正确”。修复后要重放导致差异的并发或回调场景，并对全用户重新对账。
+
+## 阶段门禁
+
+- 自动化：双桶账本、档位矩阵、支付状态机、配额并发、清理 dry-run 和管理权限测试通过。
+- 财务：逐用户逐桶对账为零差异；订单金额和到账快照一致；重复回调不新增任何余额或流水。
+- 数据：`usage_records.storage_bytes` 与媒体有效记录求和一致，试用计数只能增加且删除历史不返还。
+- 安全：支付必须用官方 SDK 验签，密钥不入库、不进日志；管理接口全部由后端鉴权。
+- 发布：本期可以先部署内部验证，但充值入口必须和 Phase 4 消费链路同时开放。
 
 ## 先说清楚：存储与生成次数都是硬约束
 
@@ -37,46 +85,37 @@ description: 账号体系与后端服务规划第三期的详细开发底稿，�
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `id` | varchar 主键 | `free` 或 `paid` |
+| `id` | varchar 主键 | `free`、`paid` 或 `sunset` |
 | `name` | varchar | 展示名 |
 | `storage_bytes` | bigint | 存储总量上限 |
 | `max_file_bytes` | bigint | 单文件大小上限，第二期已在用 |
 | `retention_days` | int | 媒体保留天数，见下面的保留期一节 |
 
-两档的取值：
+三档的取值：
 
 | 档位 | storage_bytes | max_file_bytes | retention_days |
 | --- | --- | --- | --- |
-| `free` | 500 MB（524288000） | 50 MB（52428800） | 7 |
-| `paid` | 1 GB（1073741824） | 200 MB（209715200） | 14 |
+| `free` | 50 MB（52428800） | 20 MB（20971520） | 7 |
+| `paid` | 1 GB（1073741824） | 200 MB（209715200） | 15 |
+| `sunset` | 200 MB（209715200） | 200 MB（209715200） | 7 |
 
-第一期的 `SeedPlans` 写入的是 `free` 与 `pro` 两档并带 `daily_images`、`daily_videos` 字段，本期改写成 `free` 与 `paid` 并删掉这两列。项目尚未上线，直接改模型与 seed 即可，不写迁移脚本，不做旧字段兼容。
+第一期的 `SeedPlans` 写入的是旧版档位字段，本期统一为 `free`、`paid` 与 `sunset` 三档定义，并删除 `daily_images`、`daily_videos` 等旧字段。项目尚未上线，直接改模型与 seed 即可，不写迁移脚本，不做旧字段兼容。
 
 `daily_images` 与 `daily_videos` 之所以删掉，是因为「每天多少张」这种一刀切的计数根本描述不了真实成本：同样是一次图片生成，不同模型、不同尺寸、不同质量之间的成本能差几十倍，视频更是按秒计价。这些差异用点数表达是自然的，用张数表达只能取一个所有人都不满意的折中值。
 
-`subscriptions` 表整个删除。订阅表存在的意义是记录「谁在什么时间段内享有什么套餐」，而点数制下不存在时间段——付费身份是余额的函数，随时可以算出来，不需要一张表去维护它的生命周期，也不需要处理到期、续费、宽限这一整套状态机。
+`subscriptions` 表整个删除。`paid_until` 只是充值附带的固定权益截止时间，不产生自动续费、账期、扣款失败重试或订阅状态机。
 
-### 付费身份由剩余点数决定
+### 付费身份与降档路径
 
-判定规则只有一条：**`credits.balance > 0` 就是付费用户，走 `paid` 档；余额为 0 就回落 `free` 档。**
+档位只通过一个服务端解析器现算，所有接口、清理任务和管理列表都复用它：
 
-不需要 `is_vip` 字段，不需要有效期，也不需要定时任务去改谁的状态。查一次余额就得到当前档位，任何时刻都是准的，不存在「状态没跑到位」的窗口。代价是每次取档位都要读一次 `credits` 表，但那是主键查询，可以忽略。
+- `purchased_micros > 0 OR paid_until > now()`：`paid`。
+- 否则 `paid_until` 非空且 `paid_until + 60 天 > now()`：`sunset`。
+- 其余：`free`。
 
-用户视角上这意味着**充值同时买到了点数和更宽的存储**，点数用完存储也会回到免费档。这个耦合关系必须在充值页明确写出来，否则用户会以为存储上限是一次性永久获得的，等到降档清理时才发现不是。
+`granted_micros` 不参与付费身份。这样新用户拿到赠送点数后仍是免费档；用户花完购买点数但仍在权益期内继续保持付费档；权益结束后先进入 60 天日落期，再落免费档。
 
-### 点数耗尽后的降档与宽限期
-
-余额归零时档位立刻回落 `free`。如果该用户此时的 `storage_bytes` 已经超过 `free` 档上限，账号进入**只读模式**，同时起算 **30 天宽限期**并发一封邮件说明后果。
-
-只读的准确含义要写清楚，它比字面意思窄：**只读只作用于媒体上传**。用户仍然可以浏览全部内容、编辑画布结构、重命名、删除数据、导出 zip，只是不能再往服务端写入新的媒体文件。这样设计是因为限制的目标是磁盘占用，而画布结构、素材元数据、生成记录这些 jsonb 的体量以 KB 计，拦它们既省不下空间又会让账号变成一块砖。删除必须放行则是显然的——不让用户删东西，他就没有自救的手段。
-
-从未充值过的新用户不会被误判成只读：他们余额确实是 0，但用量远在 `free` 上限之内，触发条件的第二个分句不成立。**只读态是「余额为 0」与「用量超出 `free` 上限」同时成立的派生结果，不是余额为 0 本身的效果。**
-
-宽限期的起算时刻**不需要新增列**，从流水里现算：取该用户最近一条 `balance_after = 0` 的 `credit_transactions.created_at`。余额一旦回正就会产生更新的正余额流水，所以最新的那条归零记录必然就是当前这一轮的归零时刻。没有任何流水的用户（从未充值）自然也就没有归零时刻，不进入这套流程。
-
-宽限期满后从**最旧的媒体开始清理，删到 `storage_bytes` 落回 `free` 档上限以内为止**，不是删光。「最旧」按下面保留期一节定义的最后触达时间排序，而不是上传时间，避免删掉用户上周还在编辑的项目里的图。
-
-任何一笔充值都会立刻解除只读、恢复 `paid` 档并让宽限期计时归零，因为归零时刻是从流水现算的，充值写入的正余额流水天然覆盖了它。
+只读只作用于媒体上传：当实际存储超过当前派生档位的上限时，可以浏览、编辑画布结构、重命名、删除和导出，但不能上传新媒体。日落期结束后仍超出免费上限的账号，从最后触达时间最早的媒体开始清理，直到回到 50 MB，而不是删除全部数据。任意充值都按 `max(paid_until, now()) + entitlement_days` 延长权益并立即重新计算档位。
 
 ## 数据模型
 
@@ -86,38 +125,42 @@ description: 账号体系与后端服务规划第三期的详细开发底稿，�
 
 ```go
 type Credit struct {
-    UserID    uuid.UUID `gorm:"type:uuid;primaryKey"` // 同时是 users 的外键
-    Balance   int64     `gorm:"not null;default:0"`
-    UpdatedAt time.Time
+    UserID          uuid.UUID  `gorm:"type:char(36);primaryKey"`
+    PurchasedMicros int64      `gorm:"not null;default:0"`
+    GrantedMicros   int64      `gorm:"not null;default:0"`
+    PaidUntil       *time.Time `gorm:"type:datetime(3)"`
+    UpdatedAt       time.Time
 }
 
 type CreditTransaction struct {
-    ID           uuid.UUID `gorm:"type:uuid;primaryKey"`
-    UserID       uuid.UUID `gorm:"type:uuid;index;not null"`
-    Type         string    `gorm:"type:varchar(16);not null;index:idx_credit_tx_refund,unique,priority:1,where:type = 'refund'"` // purchase | consume | refund | grant | expire
-    Amount       int64     `gorm:"not null"`                  // 正数为增、负数为减
-    BalanceAfter int64     `gorm:"not null"`
-    RefType      string    `gorm:"type:varchar(16)"`          // order | generation | admin
-    RefID        string    `gorm:"type:varchar(64);index:idx_credit_tx_refund,unique,priority:2"` // refund 时指向被退的那条 consume 流水
-    Note         string    `gorm:"type:varchar(200)"`
-    CreatedAt    time.Time `gorm:"index"`
+    ID                    uuid.UUID  `gorm:"type:char(36);primaryKey"`
+    UserID                uuid.UUID  `gorm:"type:char(36);index;not null"`
+    Bucket                string     `gorm:"type:varchar(16);not null"` // purchased | granted
+    Type                  string     `gorm:"type:varchar(16);not null"` // purchase | consume | refund | grant | expire
+    AmountMicros          int64      `gorm:"not null"`
+    BalanceAfterMicros    int64      `gorm:"not null"` // 当前桶写入后的余额
+    RefType               string     `gorm:"type:varchar(16)"`
+    RefID                 string     `gorm:"type:varchar(64);index"`
+    RefundOfTransactionID *uuid.UUID `gorm:"type:char(36);uniqueIndex"`
+    Note                  string     `gorm:"type:varchar(200)"`
+    CreatedAt             time.Time  `gorm:"type:datetime(3);index"`
 }
 ```
 
-`idx_credit_tx_refund` 是一个**部分唯一索引**，只约束 `type = 'refund'` 的行，让 `(type, ref_id)` 在退还流水里唯一。它是退还幂等的唯一机制，具体怎么用见下面的「点数扣减的一致性」。**只能建成部分索引**：管理员增减点数写的是 `type=grant`、`ref_id` 为操作管理员 id，同一个管理员必然要发很多次点，全量唯一索引会从第二次开始直接拒绝；消费流水同样允许同一个请求产生多条。GORM 的 `index` 标签支持 `where` 选项，上面的写法能让 `AutoMigrate` 直接建出部分索引；如果所用 GORM 版本不支持，就在 `AutoMigrate` 之后补一句 `CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_tx_refund ON credit_transactions (type, ref_id) WHERE type = 'refund'`，与第一期建索引的代码放在一起，不要散到 service 里。
+MySQL 8.0 不支持 PostgreSQL 风格的部分唯一索引，因此退款幂等通过可空的 `refund_of_transaction_id` 实现：普通流水为 `NULL`，退款流水指向被冲正的消费流水；MySQL 唯一索引允许多行 `NULL`，但同一个非空消费 id 只能出现一次。跨桶消费会生成两条消费流水，退款时也分别指向并退回各自原桶。
 
-`credits` 一个用户一行，注册时随 user 在同一事务里创建余额为 0 的行，不要等到第一次充值才建，否则每个读余额的地方都要处理「行不存在」的分支。
+`credits` 一个用户一行。第三期上线时为已有用户补零值行，并把创建动作加入后续注册事务；不要等第一次充值才建，否则每个读余额的地方都要处理“行不存在”。
 
-整套账本只有一条不变量，但它必须永远成立：**`credits.balance` 等于该用户全部 `credit_transactions.amount` 的和。** `balance_after` 是写入那一刻的余额快照，用于事后逐条核对是哪一笔开始对不上。任何改余额的代码路径都必须在同一事务里同时写流水，**禁止出现只 UPDATE `credits` 不写流水的地方**，那会让这条不变量失去意义，也就失去了唯一的对账手段。
+整套账本有两条必须永远成立的不变量：`credits.purchased_micros` 等于该用户 `bucket = purchased` 的 `amount_micros` 之和，`credits.granted_micros` 等于 `bucket = granted` 的对应之和。任何改桶余额的路径都必须在同一事务写流水，禁止裸 UPDATE。
 
-扣减用带条件的单条 UPDATE 完成，不要先读后写：
+扣减顺序固定为先 `granted`、后 `purchased`。在事务中锁定该用户的 `credits` 行，计算两个桶各扣多少，校验总余额后更新两桶并按实际涉及的桶写一到两条消费流水；不能用两条彼此独立的 UPDATE，否则跨桶扣减可能只成功一半。
 
 ```sql
-UPDATE credits SET balance = balance - $1, updated_at = now()
-WHERE user_id = $2 AND balance >= $1
+SELECT purchased_micros, granted_micros
+FROM credits WHERE user_id = ? FOR UPDATE;
 ```
 
-影响行数为 1 表示扣减成功，为 0 表示余额不足，直接返回 402 `INSUFFICIENT_CREDITS`。这样不需要显式行锁，也不存在「读到余额够、写的时候已经不够」的竞态窗口。
+总余额不足时不更新任何桶、不写流水，返回 402 `INSUFFICIENT_CREDITS`。`balance_after_micros` 记录当前流水所属桶写入后的余额，不记录两桶合计。
 
 `expire`（点数过期）本期不启用，先把枚举值留好，避免以后加类型时又要动一遍校验白名单和前端文案表。
 
@@ -125,25 +168,27 @@ WHERE user_id = $2 AND balance >= $1
 
 ```go
 type CreditPackage struct {
-    ID           string `gorm:"primaryKey;type:varchar(32)"`
-    Name         string `gorm:"type:varchar(80);not null"`
-    Credits      int64  `gorm:"not null"`
-    BonusCredits int64  `gorm:"not null;default:0"`
-    PriceCents   int64  `gorm:"not null"`
-    Currency     string `gorm:"type:varchar(8);not null;default:CNY"`
-    Enabled      bool   `gorm:"not null;default:true"`
-    Sort         int    `gorm:"not null;default:0"`
+    ID              string `gorm:"primaryKey;type:varchar(32)"`
+    Name            string `gorm:"type:varchar(80);not null"`
+    PriceMicros     int64  `gorm:"not null"`
+    BonusMicros     int64  `gorm:"not null;default:0"`
+    EntitlementDays int    `gorm:"not null;default:30"`
+    Currency        string `gorm:"type:varchar(8);not null;default:CNY"`
+    Enabled         bool   `gorm:"not null;default:true"`
+    Sort            int    `gorm:"not null;default:0"`
 }
 
 type Order struct {
-    ID              uuid.UUID  `gorm:"type:uuid;primaryKey"`
-    UserID          uuid.UUID  `gorm:"type:uuid;index;not null"`
-    Provider        string     `gorm:"type:varchar(16);not null"` // alipay | wechat | stripe
+    ID              uuid.UUID  `gorm:"type:char(36);primaryKey"`
+    UserID          uuid.UUID  `gorm:"type:char(36);index;not null"`
+    Provider        string     `gorm:"type:varchar(16);not null"` // alipay | wechat
     ProviderOrderID *string    `gorm:"type:varchar(128);uniqueIndex"`
     PackageID       string     `gorm:"type:varchar(32);not null"`
-    AmountCents     int64      `gorm:"not null"`
+    PriceMicros     int64      `gorm:"not null"`
     Currency        string     `gorm:"type:varchar(8);not null"`
-    Credits         int64      `gorm:"not null"`
+    PurchasedMicros int64      `gorm:"not null"`
+    GrantedMicros   int64      `gorm:"not null"`
+    EntitlementDays int        `gorm:"not null"`
     Status          string     `gorm:"type:varchar(16);not null;default:pending"` // pending | paid | failed | refunded
     PaidAt          *time.Time
     CreatedAt       time.Time
@@ -151,7 +196,7 @@ type Order struct {
 }
 ```
 
-`amount_cents` 与 `credits` 在建单时从 `credit_packages` **快照**到订单行，到账时不回查档位表。档位的价格和赠送点数随时可能被管理员调整，回查会让「用户下单时看到的」和「实际到账的」对不上，而这种差错在支付场景里是没法解释的。
+价格、购买桶点数、赠送桶点数和权益天数在建单时从 `credit_packages` **快照**到订单行，到账时不回查档位表。`purchased_micros` 与 `price_micros` 1:1，`bonus_micros` 进入 `granted` 桶；提交支付渠道时再把微元换算成分，并要求价格是 10000 微元的整数倍。
 
 `provider_order_id` 的唯一索引是回调幂等的基础设施。建单时若第三方还没返回单号，字段留 `NULL`——唯一索引对 `NULL` 不生效，但**空串会互相冲突**，第二个待支付订单会直接插不进去。因此字段类型必须是 `*string` 而不是 `string`，GORM 下用零值字符串是很容易踩进去的坑。
 
@@ -161,15 +206,31 @@ type Order struct {
 
 ```go
 type ModelCatalog struct {
-    ID          uuid.UUID      `gorm:"type:uuid;primaryKey"`
+    ID          uuid.UUID      `gorm:"type:char(36);primaryKey"`
     Name        string         `gorm:"type:varchar(120);not null"`
     DisplayName string         `gorm:"type:varchar(120);not null"`
     Capability  string         `gorm:"type:varchar(16);not null"` // image | video | text | audio
     Provider    string         `gorm:"type:varchar(60);not null"`
-    Constraints datatypes.JSON `gorm:"type:jsonb"`
-    CreditCost  datatypes.JSON `gorm:"type:jsonb"`
+    Constraints datatypes.JSON `gorm:"type:json"`
+    CreditCost  datatypes.JSON `gorm:"type:json"`
+    FreeTrialEligible bool     `gorm:"not null;default:false;index"`
     Enabled     bool           `gorm:"not null;default:true"`
     Sort        int            `gorm:"not null;default:0"`
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
+}
+
+type ModelPricePromotion struct {
+    ID          uuid.UUID      `gorm:"type:char(36);primaryKey"`
+    ModelID     uuid.UUID      `gorm:"type:char(36);not null;index"`
+    Name        string         `gorm:"type:varchar(120);not null"`
+    MatchParams datatypes.JSON `gorm:"type:json;not null"`
+    DiscountBPS int            `gorm:"not null"` // 8000 = 8 折
+    Priority    int            `gorm:"not null;default:0"`
+    Version     int            `gorm:"not null;default:1"`
+    Status      string         `gorm:"type:varchar(16);not null;default:draft"` // draft | scheduled | active | ended | disabled
+    StartsAt    time.Time      `gorm:"type:datetime(3);not null"`
+    EndsAt      time.Time      `gorm:"type:datetime(3);not null"`
     CreatedAt   time.Time
     UpdatedAt   time.Time
 }
@@ -195,22 +256,28 @@ type ModelCatalog struct {
 
 不适用的键直接省略，前端按「键在不在」决定渲染哪些控件，不写模型名的硬编码分支。
 
-`credit_cost` 描述按参数计费的规则：
+`credit_cost` 描述精确参数价格矩阵。图片按分辨率、质量配置单张价格，最终乘 `n`；视频按分辨率与时长逐项配置：
 
 ```json
 {
-  "base": 10,
-  "rules": [
-    { "when": { "quality": "high" }, "multiplier": 2 },
-    { "when": { "size": "1536x1024" }, "add": 5 },
-    { "when": { "duration": 8 }, "multiplier": 2 }
+  "version": 1,
+  "dimensions": ["resolution", "duration"],
+  "prices": [
+    { "params": { "resolution": "480p", "duration": 5 }, "costMicros": 500000 },
+    { "params": { "resolution": "480p", "duration": 10 }, "costMicros": 900000 },
+    { "params": { "resolution": "720p", "duration": 5 }, "costMicros": 1000000 },
+    { "params": { "resolution": "720p", "duration": 10 }, "costMicros": 1800000 }
   ]
 }
 ```
 
-求值顺序固定：从 `base` 起，按 `rules` 的数组顺序依次应用命中的 `add` 与 `multiplier`，结果向上取整。顺序写死在规则数组里而不是靠优先级字段，是为了让管理员在后台看到的顺序就是实际生效的顺序。
+上面的金额仅用于说明结构，不是正式定价。价格矩阵的 `dimensions` 必须是该模型 `constraints` 键的子集：图片模型如果用 `size` 表示 1K/2K/4K，就配置 `dimensions: ["size", "quality"]`；如果某家模型明确用 `resolution`，则约束和请求也统一使用 `resolution`。`n` 不进矩阵，按单张价格做整数乘法。视频统一用 `resolution` 与 `duration`，后台保存时验证笛卡尔积全部有且只有一个价格。
 
-两个 jsonb 之所以不拆成列，是因为不同能力的参数维度完全不同——图片按尺寸和质量，视频按时长和分辨率，音频按字数——拆列会拆出一堆常年为空的字段，而且每加一种计费维度都要改表结构。代价是不能用 SQL 直接算价，但计价本来就发生在应用层。
+折扣不改写 `credit_cost` 基础矩阵，单独存进 `model_price_promotions`。空 `match_params` 匹配整模型；`{"resolution":"720p"}` 匹配全部 720p；`{"duration":10}` 匹配全部 10 秒；`{"resolution":"720p","duration":10}` 只匹配该组合。折扣系数使用 `discount_bps`，例如 8000 表示按原价 80% 收取，最终微元向上取整。
+
+多条活动同时有效时不叠加折扣：先选 `match_params` 键最多的规则，再选 `priority` 最大的规则。后台不允许存在同一时间段内可同时命中、具体度和优先级又完全相同的规则。价格解析器返回基础价格、命中活动和折后价格，Phase 4 的报价与真实预扣共用这一实现。
+
+两个 `JSON` 字段不拆成列，是因为不同能力的参数维度完全不同；计价发生在应用层。图片价格矩阵使用模型实际声明的尺寸字段（`size` 或 `resolution`），视频使用模型声明的 `resolution` 与 `duration`，不能在目录层强行改名。`free_trial_eligible` 必须是独立布尔列并默认 false，因为它在生成热路径和后台筛选中需要直接查询，新模型不能自动进入免费范围。
 
 这张表只描述「平台侧提供哪些模型、怎么计价」，与第二期用户自带渠道里的模型列表是两回事：前者花点数，后者花用户自己的第三方额度。两者在前端必须分开展示，不要混进同一个下拉。
 
@@ -222,31 +289,33 @@ type ModelCatalog struct {
 
 本期采用**先扣后生成、失败自动退还**。判断依据是两类错误的可恢复性不同：漏扣不可恢复，算力已经消耗掉了，事后没有任何办法追回；多扣可恢复，退一笔就行。宁可走多扣退还的路径，也不要走漏扣的路径。
 
-**退还必须走流水**，写一条 `type=refund`、`amount` 为正数、`ref_type=generation`、**`ref_id` 指向被退的那条 `type=consume` 流水的 id** 的记录，不能直接把 `balance` 加回去。指向消费流水而不是指向转发请求或生成记录，是因为退还的对象本来就是那一笔扣款：一次生成可能因为重试产生多条消费流水，只有流水 id 能唯一确定这次退的是哪一笔，而且它同时是下面那个唯一索引的去重键。这条规则的全部价值在于让 `balance = SUM(amount)` 这条等式永远成立：一旦不等，就说明有代码绕过了账本，可以立刻定位到是哪一笔、哪个路径写的。任何时候都能对账，是财务类数据唯一可接受的状态。
+**退还必须走流水并回到原桶。** 每条退款写 `refund_of_transaction_id` 指向被冲正的消费流水，不能直接增加余额，也不能把购买桶消费退进赠送桶。唯一索引保证同一消费流水最多退款一次。
 
 供第四期调用的内部方法就两个：
 
 ```go
-// 扣减，余额不足返回 ErrInsufficientCredits
-func (s *CreditService) Reserve(ctx context.Context, userID uuid.UUID, amount int64, refID string) error
+// 先扣 granted、再扣 purchased，返回实际产生的消费流水
+func (s *CreditService) Reserve(ctx context.Context, userID uuid.UUID, amountMicros int64, refID string) ([]CreditTransaction, error)
 
-// 退还，refID 是被退的那条 consume 流水 id，靠部分唯一索引保证幂等
-func (s *CreditService) Refund(ctx context.Context, userID uuid.UUID, amount int64, refID, note string) error
+// 按消费流水逐条退回原桶，靠 refund_of_transaction_id 唯一索引保证幂等
+func (s *CreditService) Refund(ctx context.Context, userID uuid.UUID, consumes []uuid.UUID, note string) error
 ```
 
-`Reserve` 用上面那条带条件的 UPDATE 扣减并在同一事务里写 `type=consume` 流水，余额不足时返回 `ErrInsufficientCredits`，由 handler 转成 402。`Refund` 的幂等**完全依赖 `idx_credit_tx_refund` 这个部分唯一索引**：直接插入退还流水，撞上唯一冲突就把它当成「已经退过了」返回成功。不要在写入前先查一遍有没有同一条退还记录再决定写不写，查与写之间有竞态窗口，两个并发的退还都会查到「没有」然后各写一条，而这正是唯一索引存在的理由。转发接口重试时会重复触发退还，没有这个索引就会退两次。
+`Reserve` 在一个事务中锁定余额、扣桶并写流水；`Refund` 直接尝试插入退款流水，撞上 `refund_of_transaction_id` 唯一冲突视为已经退过。不要先查后写，避免并发双退。
 
 **本期不会产生任何 `type=consume` 的流水**，因为没有任何地方调用 `Reserve`——实际扣减发生在第四期的转发接口里。本期只把这两个方法、账本表和对账不变量建好，并用管理后台的手工增减点数（`type=grant`）验证账本正确。读到这里不要以为本期上线后点数就会自动消耗。
 
 ## 用量统计
 
-### 只有存储需要计数器
+### 存储与一次性试用使用计数器
 
-`usage_records` 只服务一个 metric，按 `(user_id, metric, period)` 唯一。
+`usage_records` 按 `(user_id, metric, period)` 唯一，`period` 本期固定为 `total`。
 
 | metric | period 形态 | 更新时机 |
 | --- | --- | --- |
 | `storage_bytes` | `total` | 文件上传成功时增加，删除时减少 |
+| `free_image_trials` | `total` | 第四期成功占用一次免费图片额度时增加，只增不减 |
+| `free_video_trials` | `total` | 第四期成功占用一次免费视频额度时增加，只增不减 |
 
 之所以存储不像生成次数那样实时 `SUM`，是因为它要在**每次上传前**校验，而 `SUM(bytes)` 会随文件数增长逐渐变慢，放在上传热路径上不合适。计数器是这里的必要妥协。
 
@@ -261,14 +330,14 @@ func (s *CreditService) Refund(ctx context.Context, userID uuid.UUID, amount int
 ```sql
 SELECT count(*) FROM generations
 WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
-  AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
+  AND created_at >= UTC_DATE()
 ```
 
 `(user_id, kind, created_at desc)` 索引第二期已经建好，这个查询很便宜。日期按 UTC 算，避免跨时区用户看到的「今日」和服务端不一致。
 
 但**扣费依据不是这张表，而是 `credit_transactions`**。两者记录的是不同性质的事实：`generations` 记录「生成了什么」，是业务历史，用户可以软删除；`credit_transactions` 记录「花了多少点」，是财务事实，永不删除。用户删掉一条生成记录，历史里少一条，已经花掉的点数不会退回来。
 
-因此不要试图用「生成条数 × 单价」反推消耗，也不要在对账时拿两张表的行数比大小。两者行数天然不相等：一次生成可能只扣一次点却产出多张图；失败的生成会留下一条 `consume` 加一条 `refund`，却没有对应的成功生成记录；用户软删除生成记录时流水也不会跟着少。**唯一的对账等式是 `credits.balance = SUM(credit_transactions.amount)`**，除此之外的任何交叉验算都会得出错误结论。
+因此不要用“生成条数 × 单价”反推消耗。唯一财务对账口径是两个桶分别等于各自流水之和；免费试用则只和 `usage_records` 的一次性计数及领取资格核对，删除生成历史不返还试用。
 
 ### 存储用量的自愈
 
@@ -292,7 +361,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 
 孤儿文件回收是第二期遗留给本期的工作。第二期删掉了客户端的垃圾回收（它依赖「前端持有全量数据」这个已经不成立的前提，留着会误删其它画布正在引用的图片），但没有实现服务端的替代品，所以在本期之前，用户删掉画布后其引用的媒体会一直留在磁盘上。这不影响任何人的数据，只是占空间，因此推迟是安全的。
 
-它和保留期清理的输入完全一样——都要扫 `canvases`、`assets`、`generations` 三张表的 jsonb 字段收集还被引用的 `storage_key`——因此**合并成同一个扫描任务**，扫一遍出两个结果集：
+它和保留期清理的输入完全一样，都要扫 `canvases`、`assets`、`generations` 三张表的 `JSON` 字段收集还被引用的 `storage_key`，因此合并成同一个扫描任务。
 
 1. 在 `media_files` 里存在但没有任何引用的 `storage_key`，即孤儿，直接删。
 2. 有引用但最后触达时间已超过 `retention_days` 的，即过期媒体，删。
@@ -301,7 +370,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 
 两个必须注意的点。**判断引用时不能漏掉软删除的记录**——`deleted_at` 不为空的画布仍可能是用户想恢复的，它引用的文件不该被当成孤儿删掉；软删除记录的 `updated_at` 同样参与最后触达时间的计算，所以一张软删除后再没动过的画布，其独占的媒体会在保留期后随过期清理一起消失，不需要为软删除单独定义一套保留期。**回收要按用户隔离**，绝不能做成全局扫描后统一删除，一旦引用收集逻辑有 bug，影响面就是全部用户而不是一个。
 
-宽限期满的降档清理复用同一个任务，只是排序和终止条件不同：按最后触达时间从旧到新删，删到该用户 `storage_bytes` 落回 `free` 档上限以内即停止，不是删光。
+日落期满的降档清理复用同一个任务，只是排序和终止条件不同：按最后触达时间从旧到新删，删到该用户 `storage_bytes` 落回 `free` 档上限以内即停止，不是删光。
 
 建议先做成管理后台按需触发的动作，在单个用户上验证正确后再挂定时任务。清理完成后顺带重算一次该用户的存储用量。
 
@@ -317,7 +386,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 | 409 | `ORDER_ALREADY_PAID` | 取消一个已支付的订单 |
 | 400 | `INVALID_SIGNATURE` | 支付回调验签失败 |
 
-第二期的 507 `STORAGE_QUOTA_EXCEEDED` 继续沿用。上传接口的判断顺序是**先余额后总量**：先判只读态返回 402，不是只读态再判总量返回 507。顺序反过来会让只读用户看到「存储超限，请清理文件」的提示，而对他们正确的引导是充值。
+第二期的 507 `STORAGE_QUOTA_EXCEEDED` 继续沿用。上传接口先解析当前档位与只读态，再校验本次上传后的总量；响应带当前档位、已用量和上限，让前端正确提示充值或清理。
 
 ### 用量、档位与点数
 
@@ -326,15 +395,15 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 ```json
 {
   "user": { "...": "..." },
-  "plan": { "id": "paid", "name": "付费档", "storageBytes": 1073741824, "maxFileBytes": 209715200, "retentionDays": 14 },
-  "credits": { "balance": 1280 },
-  "usage": { "storageBytes": 1234567, "imageGenerateToday": 12, "videoGenerateToday": 2 },
+  "plan": { "id": "paid", "name": "付费档", "storageBytes": 1073741824, "maxFileBytes": 209715200, "retentionDays": 15 },
+  "credits": { "purchasedMicros": 1000000, "grantedMicros": 280000, "totalMicros": 1280000, "paidUntil": "..." },
+  "usage": { "storageBytes": 1234567, "freeImageTrialsUsed": 1, "freeVideoTrialsUsed": 0 },
   "readOnly": false,
   "graceEndsAt": null
 }
 ```
 
-`plan` 里不再有 `dailyImages` 与 `dailyVideos`，前端所有读这两个字段的地方都要删掉，不要留成「两套配额判断并存」。`plan.id` 由余额实时判定，不查任何订阅表。
+`plan` 里不再有每日额度字段。`plan.id` 由统一档位解析器根据 `purchasedMicros` 与 `paidUntil` 实时判定，`grantedMicros` 不产生付费身份。
 
 `readOnly` 与 `graceEndsAt` 是服务端算好的派生字段。判定规则虽然只有两个条件，但让前端各自实现一遍必然出现口径不一致，而这个口径直接决定用户看到的是「充值」还是「清理文件」。
 
@@ -342,13 +411,16 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 
 ### 点数与流水
 
-**GET `/api/credits`** 需登录，返回余额与最近流水摘要：
+**GET `/api/credits`** 需登录，返回双桶余额、权益截止时间与最近流水摘要：
 
 ```json
 {
-  "balance": 1280,
+  "purchasedMicros": 1000000,
+  "grantedMicros": 280000,
+  "totalMicros": 1280000,
+  "paidUntil": "...",
   "recent": [
-    { "id": "t1...", "type": "purchase", "amount": 1100, "balanceAfter": 1280, "refType": "order", "refId": "o1...", "note": "标准包", "createdAt": "..." }
+    { "id": "t1...", "bucket": "purchased", "type": "purchase", "amountMicros": 1000000, "balanceAfterMicros": 1000000, "refType": "order", "refId": "o1...", "note": "标准包", "createdAt": "..." }
   ]
 }
 ```
@@ -362,7 +434,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 ```json
 {
   "items": [
-    { "id": "t2...", "type": "consume", "amount": -20, "balanceAfter": 1260, "refType": "generation", "refId": "g1...", "note": "GPT Image · hd", "createdAt": "..." }
+    { "id": "t2...", "bucket": "granted", "type": "consume", "amountMicros": -20000, "balanceAfterMicros": 260000, "refType": "generation", "refId": "g1...", "note": "GPT Image · hd", "createdAt": "..." }
   ],
   "nextCursor": "eyJ0..."
 }
@@ -383,7 +455,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 ```json
 {
   "items": [
-    { "id": "standard", "name": "标准包", "credits": 1000, "bonusCredits": 100, "priceCents": 3000, "currency": "CNY" }
+    { "id": "standard", "name": "标准包", "priceMicros": 30000000, "purchasedMicros": 30000000, "bonusMicros": 1000000, "entitlementDays": 30, "currency": "CNY" }
   ]
 }
 ```
@@ -394,12 +466,12 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 
 ```json
 {
-  "order": { "id": "o1...", "packageId": "standard", "amountCents": 3000, "currency": "CNY", "credits": 1100, "status": "pending", "createdAt": "..." },
+  "order": { "id": "o1...", "packageId": "standard", "priceMicros": 30000000, "currency": "CNY", "purchasedMicros": 30000000, "grantedMicros": 1000000, "entitlementDays": 30, "status": "pending", "createdAt": "..." },
   "payment": { "type": "qrcode", "payload": "https://qr.alipay.com/..." }
 }
 ```
 
-`order.credits` 是 `credits + bonusCredits` 的和，建单时算好写进订单行。
+订单分别快照购买桶、赠送桶和权益天数，不存一个无法解释来源的合计点数字段。
 
 `payment.type` 取 `qrcode`、`redirect`、`clientSecret`，前端据此决定渲染二维码、跳转还是拉起渠道 SDK。三个渠道的形态差异全部收敛在这一个字段里，前端不写 `if (provider === "alipay")` 这类分支。
 
@@ -415,7 +487,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 
 **POST `/api/payments/webhook/{provider}`** 公开路由，不走 `RequireAuth`，但**必须验签**。
 
-请求体是各渠道自己的格式，不做统一约定。每个渠道一个适配函数，把原始报文验签并解析成统一的 `{ providerOrderID, outTradeNo, amountCents, status }` 再进入同一套处理流程。
+请求体是各渠道自己的格式，不做统一约定。每个渠道一个适配函数，把原始报文验签并解析成统一的 `{ providerOrderID, outTradeNo, priceMicros, status }` 再进入同一套处理流程；只有调用渠道 SDK 时才把 `priceMicros` 换算为分。
 
 响应格式**按渠道要求返回**，支付宝要 `success` 纯文本，微信要固定结构的 JSON，Stripe 只看 2xx。这一处不能套用项目统一的错误响应格式，否则渠道会判定回调失败并持续重试。
 
@@ -437,13 +509,17 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
       "capability": "image",
       "provider": "openai",
       "constraints": { "size": ["1024x1024", "1536x1024"], "quality": ["low", "medium", "high"], "n": { "max": 4 }, "features": ["referenceImage"] },
-      "creditCost": { "base": 10, "rules": [ { "when": { "quality": "high" }, "multiplier": 2 } ] }
+      "creditCost": { "version": 1, "dimensions": ["size", "quality"], "prices": [ { "params": { "size": "1024x1024", "quality": "standard" }, "costMicros": 500000 } ] },
+      "effectivePrices": [
+        { "params": { "size": "1024x1024", "quality": "standard" }, "baseCostMicros": 500000, "finalCostMicros": 400000, "discount": { "name": "1K 限时 8 折", "discountBps": 8000, "endsAt": "..." } }
+      ],
+      "nextPricingChangeAt": "..."
     }
   ]
 }
 ```
 
-`creditCost` 要原样下发给前端，用于在生成按钮旁实时显示「本次消耗 N 点」。但**前端算出来的价只用于展示**：第四期扣点时服务端用同一份规则重新算一遍，不接受客户端传来的价格。前端能改的数字不能成为收费依据。
+`creditCost` 保留基础矩阵，`effectivePrices` 是服务端按当前时间和折扣优先级计算好的展示矩阵，前端不自行匹配活动。`nextPricingChangeAt` 是当前模型下一次活动开始或结束时间；前端在该时刻后立即重新拉取目录，并在窗口重新聚焦时刷新。最终价格与可支付性仍由第四期 `/api/ai/quote` 返回，生成请求必须携带报价凭证。
 
 错误：`UNAUTHORIZED`、`VALIDATION_FAILED`（`capability` 不在枚举内）。
 
@@ -451,7 +527,7 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 
 第二期已有的 `PUT /api/media/{storageKey}` 增加两条校验，顺序不能颠倒：
 
-1. 只读态（余额为 0 且 `storage_bytes` 已超 `free` 档上限）返回 402 `INSUFFICIENT_CREDITS`，响应体带 `{ "graceEndsAt": "..." }`。
+1. 实际用量超过当前派生档位上限时返回 402 `INSUFFICIENT_CREDITS`，响应体带当前 `planId` 与日落期结束时间；只有付费权益有效才恢复 `paid` 上限。
 2. 当前 `storage_bytes` 加上本次文件大小超过所属档位的 `storage_bytes`，返回 507 `STORAGE_QUOTA_EXCEEDED`，响应体带 `{ "used": ..., "limit": ... }`。
 
 校验与写入必须在同一事务内，先占用后写盘，失败则回滚计数。
@@ -472,6 +548,8 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 | GET | `/api/admin/stats` | 总览：用户总数、今日新增、存储总占用、今日生成量、今日充值金额、全站点数余额总量 |
 | GET/POST | `/api/admin/models` | 模型目录列表与新增 |
 | PATCH/DELETE | `/api/admin/models/{id}` | 单个模型的修改与删除 |
+| GET/POST | `/api/admin/model-promotions` | 折扣活动列表与新增，支持按模型、状态和时间筛选 |
+| PATCH | `/api/admin/model-promotions/{id}` | 修改活动、调整优先级或停用；每次修改递增版本 |
 | GET/POST | `/api/admin/credit-packages` | 充值档位列表与新增 |
 | PATCH | `/api/admin/credit-packages/{id}` | 单个充值档位的修改 |
 | GET | `/api/admin/orders` | 全站订单列表，支持 `page`、`size`、`sort`，以及按 `status`、`provider`、`userId` 筛选 |
@@ -479,20 +557,20 @@ WHERE user_id = ? AND kind = ? AND deleted_at IS NULL
 用户列表响应：
 
 ```json
-{ "items": [ { "id": "...", "email": "...", "username": "...", "role": "user", "status": "active", "emailVerified": true, "planId": "paid", "balance": 1280, "storageBytes": 123, "createdAt": "..." } ], "total": 128, "page": 1, "size": 20 }
+{ "items": [ { "id": "...", "email": "...", "username": "...", "role": "user", "status": "active", "emailVerified": true, "planId": "paid", "purchasedMicros": 1000000, "grantedMicros": 280000, "paidUntil": "...", "storageBytes": 123, "createdAt": "..." } ], "total": 128, "page": 1, "size": 20 }
 ```
 
-两个列表接口的分页参数直接沿用第二期给业务资源定的那套约定，不另立一份：`page` 从 1 开始、缺省 1，`size` 缺省 20、上限 100，越界返回 `VALIDATION_FAILED`；`sort` 走白名单枚举再映射到列名，不能把参数拼进 SQL，前缀 `-` 表示倒序，两个接口都缺省 `-createdAt`，不在白名单内返回 `VALIDATION_FAILED`。`/api/admin/users` 的白名单是 `createdAt`、`balance`、`storageBytes`，`/api/admin/orders` 的白名单是 `createdAt`、`amountCents`。管理后台的列表页天然要在注册时间、余额、订单金额之间来回排序，沿用同一套参数名前端还能直接复用第二期已有的分页写法。
+两个列表接口的分页参数直接沿用第二期给业务资源定的那套约定，不另立一份：`page` 从 1 开始、缺省 1，`size` 缺省 20、上限 100，越界返回 `VALIDATION_FAILED`；`sort` 走白名单枚举再映射到列名，不能把参数拼进 SQL，前缀 `-` 表示倒序，两个接口都缺省 `-createdAt`，不在白名单内返回 `VALIDATION_FAILED`。`/api/admin/users` 的白名单是 `createdAt`、`purchasedMicros`、`grantedMicros`、`storageBytes`；`/api/admin/orders` 的白名单是 `createdAt`、`priceMicros`。管理后台必须明确显示两个点数桶，不再出现“余额”这种无法说明来源的单一排序字段。
 
-`planId` 不是 `users` 表上的列，而是余额的派生值，按它筛选必须 join `credits` 判余额：`planId=paid` 对应 `credits.balance > 0`，`planId=free` 对应余额为 0。列表里的 `balance` 与 `storageBytes` 同样来自 join `credits` 与 `usage_records`，一次查询取齐，不要渲染每一行时再各查一次。
+`planId` 不是 `users` 表上的列，筛选与展示必须复用统一档位表达式：购买桶非零或权益未过期为 `paid`，权益过期 60 天内为 `sunset`，其余为 `free`。列表里的两个桶与存储用量通过一次 join 取齐，不能逐行查询。
 
 全部管理接口的公共错误：`UNAUTHORIZED`（未登录）、`FORBIDDEN`（非管理员）、`NOT_FOUND`（用户或资源不存在）、`VALIDATION_FAILED`（参数不合法），下面只列各接口特有的部分。
 
-`PATCH /api/admin/users/{id}` **不再能改 `planId`**。档位由余额决定，管理员想给某个用户升档就发点数，让判定路径保持唯一。留一个能直接改档位的后门，等于允许出现「档位是 paid 但余额为 0」这种账本解释不了的状态。
+`PATCH /api/admin/users/{id}` 不允许改 `planId`。档位由购买桶和 `paid_until` 派生；线下收款补单必须明确进入 `purchased` 桶并按规则延长权益，普通补偿进入 `granted` 桶且不升档。
 
-**POST `/api/admin/users/{id}/credits`** 请求 `{ "amount": 500, "note": "客服补偿" }`，`amount` 正增负减，成功 200 返回 `{ "balance": 1780 }`。
+**POST `/api/admin/users/{id}/credits`** 请求 `{ "bucket": "granted", "amountMicros": 500000, "note": "客服补偿" }`，金额正增负减，成功返回两个桶的新余额。`bucket` 和 `note` 都必填。
 
-必须写入一条 `type=grant`、`ref_type=admin`、`ref_id` 为操作管理员 id 的流水，`note` 一并落库。**不允许直接改 `credits.balance`**，否则对账等式立刻失效，而这是本期唯一一个由人手工触发的余额变更入口，最容易被图省事写成裸 UPDATE。扣减到负数直接拒绝，返回 402 `INSUFFICIENT_CREDITS`。
+必须写入指定桶的 `type=grant` 流水，`ref_type=admin`、`ref_id` 为管理员 id。禁止直接改任一桶；指定桶扣到负数时返回 402。
 
 **DELETE `/api/admin/models/{id}`** 是硬删除，但只允许删从未被使用过的模型；已经产生过流水的模型只能置 `enabled = false`。流水的 `note` 里存了模型名，删掉目录行不会让历史流水失去可读性，但把用户正在用的模型删掉，会让前端下拉里的选中项凭空消失。
 
@@ -517,9 +595,9 @@ WHERE id = $1 AND status = 'pending'
 
 影响行数为 1 才继续加点数，为 0 说明这一单已经处理过，**直接返回成功响应给渠道，不要报错**——返回错误会让渠道认为回调失败并无限重试。
 
-**到账必须是一个事务。** 更新订单状态、增加 `credits.balance`、写 `credit_transactions` 三件事在同一个数据库事务里完成，任何一步失败整体回滚。分开做的后果是两种都很难收场的差错：加了点数但订单还是 `pending`，下次回调再加一次；或者订单标记成已付但点数没加，用户付了钱拿不到东西。
+**到账必须是一个事务。** 更新订单状态、增加两个桶、延长 `paid_until`、写对应流水必须一起提交，任何一步失败整体回滚。
 
-**不要信任回调里的金额。** 到账点数一律取本地订单行的 `credits`，金额校验取本地 `amount_cents`。回调里的金额只用于比对，不一致时**拒绝到账并记 error 级日志**，因为这意味着要么订单被篡改，要么对接了错误的渠道账号，两种情况都不该靠自动逻辑兜过去。绝不能用回调里的数字覆盖本地记录。
+**不要信任回调里的金额。** 到账桶金额与权益天数取本地订单快照，回调金额只和 `price_micros` 换算后的渠道金额比较；不一致时拒绝到账并记录错误，绝不能覆盖本地记录。
 
 **验签失败一律拒绝。** 不提供 `SKIP_SIGNATURE_VERIFY` 之类的开关，也不因为「本地调试不方便」临时放宽——伪造回调等于凭空造钱，这是整条支付链路上唯一一个能被外部直接攻击的入口。各渠道的公钥或密钥从环境变量读取，缺失时启动失败并明确报错，写法与第一期校验 SMTP 变量一致。
 
@@ -529,12 +607,18 @@ WHERE id = $1 AND status = 'pending'
 
 | 路径 | 职责 |
 | --- | --- |
-| `internal/model/model.go` | 新增 `UsageRecord`、`Credit`、`CreditTransaction`、`CreditPackage`、`Order`、`ModelCatalog`；改写 `Plan`，删除 `Subscription` |
+| `internal/model/model.go` | 新增 `UsageRecord`、`Credit`、`CreditTransaction`、`CreditPackage`、`Order`、`ModelCatalog`、`ModelPricePromotion`；改写 `Plan`，删除 `Subscription` |
 | `internal/service/credit.go` | 余额读写、流水写入、`Reserve` 与 `Refund`，供本期与第四期共用 |
 | `internal/service/quota.go` | 档位判定、只读态判定、存储配额校验与计数器增减 |
 | `internal/service/cleanup.go` | 引用收集、孤儿与过期媒体扫描、宽限期到期的降档清理 |
+| `internal/service/pricing.go` | 基础价格矩阵校验与唯一组合解析 |
+| `internal/service/promotion.go` | 折扣合法性、冲突检测、具体度与优先级匹配、折后整数计价 |
+| `internal/service/pricing_audit.go` | 记录价格矩阵、促销版本、全局开关和管理员操作的审计摘要 |
+| `server/internal/model/audit.go` | `admin_audit_logs` 模型，保存操作者、目标、版本摘要、原因和 request id |
+| `internal/service/pricing.go` | 基础价格矩阵校验与唯一组合解析 |
+| `internal/service/promotion.go` | 折扣合法性、冲突检测、具体度与优先级匹配、折后整数计价 |
 | `internal/payment/payment.go` | `Provider` 接口定义与统一的回调结果结构 |
-| `internal/payment/alipay.go`、`wechat.go`、`stripe.go` | 各渠道实现 |
+| `internal/payment/alipay.go`、`wechat.go` | 两个支付渠道实现，验签使用官方 SDK |
 | `internal/handler/credit.go` | 余额、流水、充值档位查询 |
 | `internal/handler/order.go` | 订单创建、列表、取消 |
 | `internal/handler/payment.go` | 回调入口，验签后交给 service 处理 |
@@ -543,6 +627,10 @@ WHERE id = $1 AND status = 'pending'
 | `internal/middleware/admin.go` | `RequireAdmin` 校验 |
 
 两条组织原则。**所有改余额的路径都必须经过 `service/credit.go`**，handler 里不允许出现对 `credits` 表的直接 UPDATE，这是对账等式能够成立的前提。**渠道差异全部收敛在 `internal/payment` 里**，handler 只认统一后的结构，接一个新渠道不应该改到 handler。
+
+价格和促销操作也必须收口：模型、价格矩阵、促销活动、版本和 `PRICING_PROMOTION_ENABLED` 的修改只能经 service 层完成，handler 不得直接写 `model_catalog` 或 `model_price_promotions`。每次操作在同一事务中保存新版本和 `admin_audit_logs`，缓存失效事件必须在事务提交后触发；事务失败时既不能留下新规则，也不能提前清掉旧缓存。
+
+`admin_audit_logs` 至少包含 `id`、`actor_user_id`、`action`、`target_type`、`target_id`、`request_id`、`before_summary`、`after_summary`、`reason`、`created_at`。版本摘要只保存脱敏后的价格、折扣、状态和版本，不保存 API Key、提示词、媒体内容或完整用户凭据；审计记录只能追加，不能通过业务接口修改或删除。
 
 ```go
 type Provider interface {
@@ -572,7 +660,7 @@ type Provider interface {
 
 ### 生成入口的点数拦截
 
-生成前用 `/api/me` 的 `credits.balance` 与模型目录算出的预估消耗做本地比较，不足则禁用按钮并提示充值，不需要额外请求。
+生成前可以用 `/api/me` 的 `totalMicros` 做即时 UI 提示，但最终是否走免费额度、扣多少点以第四期 `/api/ai/quote` 和真实请求的同一服务端逻辑为准。
 
 但要写清楚：**本期的前端拦截只是体验优化，真正的扣点在第四期的转发接口里。** 前端算出的预估价只用于展示「本次消耗 N 点」，不要据此在本地扣减任何数字，也不要在生成后自己往流水里写东西——流水根本没有写接口。
 
@@ -588,7 +676,7 @@ type Provider interface {
 
 切换模型时要校验当前已选参数在新模型的 `constraints` 里是否仍然合法，不合法就回落到第一个可选值。漏掉这一步会出现「换了模型但尺寸还是上一个模型独有的值」，一直到第四期的转发接口才报错，用户完全看不懂。
 
-预估消耗跟着参数变化实时重算并显示在生成按钮附近，求值顺序与服务端的 `credit_cost` 规则保持一致。这段求值逻辑抽成 `web/src/lib/credit-cost.ts` 的纯函数，三个生成入口共用，不要在每个页面各写一份。
+生成页既展示当前组合的 `N 点（¥X.XX）`，也提供“查看价格表”：图片按 1K/2K/4K、质量列出，视频用分辨率为行、时长为列展示。参数变化时先根据目录矩阵即时更新，再防抖请求服务端报价覆盖显示；未拿到有效报价凭证时生成按钮不可提交。
 
 平台模型与第二期用户自带渠道的模型要在 UI 上分开，不要混进同一个下拉——两者的计费主体完全不同，一个花点数，一个花用户自己的第三方额度，混在一起用户根本不知道这一次生成花的是谁的钱。
 
@@ -606,7 +694,7 @@ type Provider interface {
 
 列表统一用 Ant Design `Table` 配 `@ant-design/pro-components`（项目已有依赖），支持搜索、筛选、分页。用户页的行操作包含封禁解封、增减点数、重置密码、触发清理扫描、查看详情。
 
-模型页支持新增、编辑、上下架，`constraints` 与 `credit_cost` 两个 jsonb 字段要用受控的表单控件编辑，**不要做成裸 JSON 文本框**：直接让管理员手写 JSON，拼错一个键就会让前端的动态表单渲染不出控件，而这个错误在保存时看不出来，要到用户打开生成页才暴露。`constraints` 的七个键各配一种控件：`size`、`quality`、`duration`、`resolution`、`ratio` 五个数组键用可增删的标签输入，`n` 用一个数字输入填 `max`，`features` 用固定选项的多选框（当前只有 `mask` 与 `referenceImage`），每个键都能整体启用或删除，删掉即表示该模型不支持这个参数。控件的键集与上面数据模型一节写死的那七个键一一对应，加新键要同时改后端校验、这里的表单和前端的动态渲染，三处缺一不可。
+模型页支持新增、编辑、上下架，`constraints` 与 `credit_cost` 两个 `JSON` 字段使用受控表单，不做裸 JSON 文本框。模型详情增加“折扣活动”区域，可选择整模型、一个参数或多个参数组合，设置折扣、开始结束时间和优先级，并实时预览受影响的价格矩阵。已排期活动进入 `scheduled` 后不能覆盖编辑，修改必须保存为新版本；活动支持停用但不删除，后台显示当前状态和历史版本。键集变更必须同时修改后端校验、后台表单、促销匹配和生成页动态渲染。
 
 ### 路由与守卫
 
@@ -622,36 +710,39 @@ type Provider interface {
 
 点数账本：
 
-- 管理后台给用户加 500 点后，`/api/credits` 的余额相应增加，流水里多一条 `type=grant`、`ref_type=admin` 的记录，`balanceAfter` 与新余额一致。
-- 对任意用户执行 `SELECT SUM(amount) FROM credit_transactions WHERE user_id = ?`，结果等于 `credits.balance`；充值、增减、退还等任意操作之后重复验证，等式始终成立。
-- 管理员把余额扣成负数被拒绝，返回 402 `INSUFFICIENT_CREDITS`，余额与流水都不变。
-- 并发对同一用户发起多次扣减，最终余额正确，不出现超扣。
+- 管理后台向 `granted` 桶增加 500,000 点后，只有 `granted_micros` 增加，流水带正确 `bucket`、`amount_micros` 与 `balance_after_micros`，档位仍为 `free`。
+- 对任意用户分别执行 `SUM(amount_micros)` 并按 `bucket` 分组，结果始终等于 `credits` 两个桶；充值、赠送、跨桶扣减和退还后重复验证。
+- 管理员扣减指定桶到负数被拒绝，两个桶和流水都不变。
+- 并发发起多次跨桶扣减，最终不超扣，也不出现只扣一个桶的半事务。
 - 流水没有任何写接口，前端无法伪造记录。
-- 本期部署上线后不会自动产生 `type=consume` 的流水，余额只随充值与管理员操作变化。
+- 第一阶段已批准的同一赠送活动重放多次只向 `granted` 桶入账一次，不产生付费身份。
+- 本期部署上线后不会自动产生生成用 `type=consume` 流水，直到第四期接入平台模型转发。
 
 扣点失败退还：
 
-- 用单元测试或临时调试入口调用 `Reserve` 后模拟生成失败再调 `Refund`，余额回到扣减前的值，流水里 `consume` 与 `refund` 成对出现，且 `refund` 的 `ref_id` 等于那条 `consume` 的 id。
-- 用同一条消费流水的 id 连续调用两次 `Refund`，第二次撞上 `idx_credit_tx_refund` 唯一冲突后仍返回成功，只产生一条 `type=refund` 流水，余额只增加一次；同一个管理员连续给同一用户发两次点则两次都成功，不会被这个索引误伤。
-- 余额不足时 `Reserve` 返回错误且不产生任何流水，上层接口返回 402 `INSUFFICIENT_CREDITS`。
+- 让一次 Reserve 同时消耗 `granted` 与 `purchased`，再 Refund 后两个桶分别回到原值，并产生两条指向原消费流水的退款记录。
+- 对同一消费流水连续 Refund 两次，第二次因 `refund_of_transaction_id` 唯一约束按成功幂等处理，只退款一次。
+- 总余额不足时 Reserve 返回错误且不改变任何桶、不产生流水。
 
 支付与订单：
 
-- 创建订单返回的 `credits` 等于档位的 `credits + bonusCredits`；管理员随后调整该档位的价格与赠送点数，已创建订单的金额与点数不变。
-- 用同一个 `provider_order_id` 重复推送回调，只到账一次，余额只增加一次，流水只多一条，且第二次回调返回渠道要求的成功响应而不是错误。
+- 订单快照包含 `priceMicros`、`purchasedMicros`、`grantedMicros` 与 `entitlementDays`；管理员修改档位后，已创建订单快照不变。
+- 同一个 `provider_order_id` 重复回调只到账一次，购买和赠送各写一条对应桶流水，第二次仍返回渠道要求的成功响应。
 - 伪造签名的回调返回 400 `INVALID_SIGNATURE`，订单状态与余额都不变。
-- 回调里的金额与本地订单的 `amount_cents` 不一致时拒绝到账，日志里有 error 级记录。
+- 回调金额与本地 `price_micros` 换算值不一致时拒绝到账，日志有 error 记录。
 - 在到账事务中人为让写流水失败，订单状态回滚为 `pending`、余额不变，重推回调能正常到账。
 - 取消已支付的订单返回 409 `ORDER_ALREADY_PAID`；用另一个账号的订单 id 调取消返回 404。
 - 待支付订单超过 30 分钟被置为 `failed`，且置失败前向渠道主动查过一次真实状态；把渠道状态构造成已支付时，该订单转为正常到账而不是 `failed`。
+- 连续充值两次时 `paid_until` 从原截止时间继续延长，不会从当前时间重算导致权益缩短。
 
 档位与只读：
 
-- 新注册用户余额为 0、档位为 `free`，能正常上传媒体，不会被误判成只读。
+- 只有 `granted` 余额的新用户仍为 `free`，能在 50 MB 上限内正常上传。
 - 充值后 `/api/me` 的 `plan.id` 立刻变成 `paid`，`storageBytes`、`maxFileBytes`、`retentionDays` 同步变大，全程不需要管理员操作。
-- 付费用户点数耗尽且用量超过 `free` 上限后，`/api/me` 的 `readOnly` 为 true、`graceEndsAt` 有值，媒体上传返回 402 `INSUFFICIENT_CREDITS` 并带 `graceEndsAt`。
+- 购买桶耗尽但 `paid_until` 未到时仍为 `paid`；权益到期后进入 `sunset`，60 天结束后才进入 `free`。
+- 当前用量超过派生档位上限时 `readOnly` 为 true，媒体上传被拒；浏览、结构编辑、删除和导出仍可用。
 - 只读态下仍能浏览画布、编辑画布结构、重命名、删除数据、导出 zip。
-- 只读用户充值任意金额后立刻恢复上传，`readOnly` 变回 false、`graceEndsAt` 变回 null。
+- 只读用户充值后立刻恢复 `paid` 上限和上传能力。
 - 存储接近上限时上传被拒绝，返回 507 `STORAGE_QUOTA_EXCEEDED` 且响应体含 `used` 与 `limit`。
 - 并发上传多个文件后，`usage.storageBytes` 与 `media_files` 的 `SUM(bytes)` 一致。
 - 「重算存储用量」能修正人为改坏的计数。
@@ -663,7 +754,7 @@ type Provider interface {
 - 一个媒体只被一张画布引用时，把该画布的 `updated_at` 改到 `retention_days` 之前，扫描后该媒体被清理；重新编辑一次画布让 `updated_at` 刷新，同一个媒体不再被清理，验证按最后触达时间续期生效。
 - 软删除但仍在保留期内的画布，其引用的媒体不会被清理。
 - 同一次扫描同时产出孤儿与过期两个结果集，日志里能看到两者分别清理了多少个文件、多少字节。
-- 宽限期满的降档清理按最后触达时间从旧到新删，删到 `storage_bytes` 落回 `free` 上限即停止，不会把用户媒体删光。
+- 日落期满的降档清理按最后触达时间从旧到新删，删到 `storage_bytes` 落回 `free` 上限即停止，不会把用户媒体删光。
 - 到期前 2 天收到预警邮件与站内提示，提示里有可用的一键导出入口，同一用户不会每天重复收到。
 
 模型目录：
@@ -671,20 +762,30 @@ type Provider interface {
 - 管理员新增一个模型后，前端生成页的下拉里立刻出现，参数表单按 `constraints` 渲染出对应控件。
 - 从某个模型的 `constraints` 里去掉 `quality` 后，前端不再渲染质量选择器，其余控件不受影响。
 - 切换模型时不合法的已选参数自动回落到第一个可选值，不会把上一个模型独有的取值带过去。
-- 生成按钮旁的预估消耗随参数变化实时更新，与服务端按同一份 `credit_cost` 算出的结果一致。
+- 图片价格表能展示 1K/2K/4K 与质量组合的点数和人民币；视频价格表以分辨率为行、时长为列展示全部合法组合。
+- 选择 480p/5 秒、480p/10 秒、720p/5 秒等不同组合时，生成按钮旁的当前价格立即变化，且不存在合法参数却没有价格的情况。
+- 后台拒绝保存缺少组合、重复组合、负价格或包含 `constraints` 外参数的价格矩阵。
+- 创建整模型 9 折后，所有组合显示相同折扣；再创建 720p 8 折后，720p 使用 8 折，其余仍为 9 折。
+- 同时创建 10 秒 8.5 折和 720p/10 秒 7 折后，720p/10 秒只命中 7 折，不叠加其他活动。
+- 后台拒绝无效折扣、结束时间不晚于开始时间、`match_params` 不在模型约束内，以及时间重叠且具体度与优先级相同的冲突规则。
+- 停用或修改活动后版本递增，生成页价格矩阵刷新，历史基础价格不被改写。
+- 活动到达 `starts_at` 或 `ends_at` 后，前端依据 `nextPricingChangeAt` 自动刷新完整价格矩阵，不需要用户手工刷新页面。
+- 活动进入 `scheduled` 后修改会生成新版本，旧版本和对应审计记录仍可查询，不能直接覆盖历史活动。
+- 关闭 `PRICING_PROMOTION_ENABLED` 后所有新报价回到基础价，旧折扣 token 全部失效；恢复开关后仍需重新报价，不能复用旧 token。
+- 管理员停用活动、修改活动和切换全局开关都能按 request id 查询审计记录。
 - 已产生过流水的模型无法硬删除，只能下架；下架后前端下拉里消失，历史流水仍能读出模型名。
 - 充值档位没有删除入口，下架后 `GET /api/credit-packages` 不再返回，但历史订单仍能查到来源档位。
 - 平台模型与用户自带渠道的模型在界面上分开展示，能一眼看出这次生成花的是点数还是自己的第三方额度。
 
 管理后台：
 
-- 管理员能看到用户列表，能按邮箱搜索、按状态与 `planId` 筛选、按余额排序、翻页，列表里能看到点数余额与当前档位；`size` 传 500 或 `sort` 传白名单外的值都返回 `VALIDATION_FAILED`。
+- 管理员能按邮箱、状态与 `planId` 筛选用户，列表展示购买桶、赠送桶、`paidUntil`、当前档位和存储用量。
 - 封禁用户后其 refresh token 全部失效，最多 15 分钟后完全掉线。
 - 管理员重置用户密码后，该用户全部设备被踢下线。
 - **非管理员账号直接请求 `/api/admin/users`、`/api/admin/models`、`/api/admin/credit-packages`、`/api/admin/orders` 一律返回 403**，即使前端入口被隐藏也拦得住。
 - 非管理员访问 `/admin` 下任意路由被重定向到首页。
 - 订单列表能按状态、渠道、用户筛选，能看到每单对应的点数与到账时间。
-- 模型页的 `constraints` 与 `credit_cost` 用表单控件编辑，不是裸 JSON 文本框。
+- 模型页用受控表单编辑 `constraints`、价格矩阵和限时折扣，可预览整模型、分辨率、时长与完整组合折后的价格。
 
 一致性：
 

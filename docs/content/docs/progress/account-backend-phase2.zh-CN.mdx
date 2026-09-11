@@ -1,11 +1,11 @@
 ---
-title: 第二期实施清单：凭据托管与数据资源化
-description: 账号体系与后端服务规划第二期的详细开发底稿，涵盖凭据加密、画布素材与生成记录的资源化接口、媒体对象存储与前端按需加载改造
+title: 第二期执行计划：凭据托管与数据资源化
+description: 账号体系与后端服务规划第二期的中文执行计划，涵盖凭据加密、资源化接口、对象存储、偏离纠正与验收
 ---
 
-# 第二期实施清单：凭据托管与数据资源化
+# 第二期执行计划：凭据托管与数据资源化
 
-本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第二期的开发底稿。前置条件是[第一期](/zh-CN/docs/progress/account-backend-phase1)已交付并通过验收。
+本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第二期的中文执行计划。前置条件是[第一期](/zh-CN/docs/progress/account-backend-phase1)已交付并通过验收。
 
 ## 范围界定
 
@@ -19,9 +19,56 @@ description: 账号体系与后端服务规划第二期的详细开发底稿，�
 
 单文件大小校验本期就做，因为 `plans.max_file_bytes` 在第一期已建好，且需要给 nginx 的 `client_max_body_size` 一个后端兜底。存储**总量**校验依赖用量统计，留到第三期。
 
-孤儿媒体文件的回收同样留到第三期。判断一个 `storage_key` 还有没有人引用，需要扫描三张业务表的 jsonb 字段，这与第三期的存储用量重算是同一类工作，放在一起做更合适；本期只保证「用户主动删除的文件立刻从磁盘消失」。
+孤儿媒体文件的回收同样留到第三期。判断一个 `storage_key` 还有没有人引用，需要扫描三张业务表的 `JSON` 字段，这与第三期的存储用量重算是同一类工作，放在一起做更合适；本期只保证「用户主动删除的文件立刻从磁盘消失」。
 
-**媒体保留期清理也在第三期。** 这里要提醒一句：本期上传的媒体在产品上并非永久保存——免费档 7 天、付费档 14 天，按最后触达时间续期，到期由第三期的清理任务删除。本期不实现这个逻辑，但设计前端时心里要有这件事，别做出「文件传上去就一定还在」的假设，尤其是导出和分享这类功能。
+**媒体保留期清理也在第三期。** 这里要提醒一句：本期上传的媒体在产品上并非永久保存——免费档 7 天、付费档 15 天，按最后触达时间续期，到期由第三期的清理任务删除。本期不实现这个逻辑，但设计前端时心里要有这件事，别做出「文件传上去就一定还在」的假设，尤其是导出和分享这类功能。
+
+## 阶段目标与完成定义
+
+本期目标是把登录态的数据权威从浏览器迁到服务端，同时保持匿名态继续纯本地。完成标准不是“新增了一组 CRUD”，而是两套实现通过同一契约工作、跨设备一致、冲突可见、媒体不会越权或误删。
+
+| 目标 | 完成定义 | 主要证据 |
+| --- | --- | --- |
+| 凭据托管 | 第三方配置加密落库，换设备可恢复，密文和日志中没有明文 Key | 数据库检查与双设备验收 |
+| 资源化数据 | 画布、素材、生成记录支持分页、筛选、详情和软删除 | API 集成测试与网络请求检查 |
+| 媒体存储 | `local`、`s3` 两种驱动遵循同一接口，上传前校验身份、邮箱和单文件大小 | 驱动契约测试与真实上传下载 |
+| 冲突可控 | 同一画布并发写返回 409，不同画布互不影响 | 双客户端并发测试 |
+| 双作用域隔离 | 匿名数据和每个账号数据不混读，登录、退出、切账号时旧异步结果不能回写 | 作用域切换测试 |
+| 旧链路退出 | WebDAV 和整域同步没有调用方，匿名态必要的本地回收逻辑仍安全 | 全局搜索与匿名回归 |
+
+## 实施任务与顺序
+
+| 顺序 | 任务 | 主要文件 | 具体改动 | 任务完成检查 |
+| --- | --- | --- | --- | --- |
+| 1 | 固定数据契约 | `web/src/services/data/types.ts`、后端 model/DTO | 先定义摘要、详情、分页、游标、revision、错误语义和作用域 | local/remote 两套实现通过同一契约测试 |
+| 2 | 跑通单张画布纵向切片 | canvas handler/service/repository、前端 canvas data/store/page | 实现列表、详情、创建、保存、冲突和删除 | 两台设备编辑冲突可复现且不静默覆盖 |
+| 3 | 扩展素材与生成记录 | asset/generation 后端与前端数据层 | 服务端筛选、标签关联表、游标分页、pending 恢复 | 千条数据仍按页加载，无全量请求 |
+| 4 | 接凭据托管 | `server/internal/crypto/`、credentials handler、配置页 | AES-GCM、随机 nonce、主密钥校验和配置恢复 | 库中搜不到明文，换设备调用成功 |
+| 5 | 接媒体存储 | `server/internal/storage/`、media handler、前端 media client | local/s3 驱动、校验和、幂等上传、302 预签名读取、媒体 cookie | 两驱动通过同一上传读取删除用例 |
+| 6 | 完成作用域切换 | `services/data/index.ts`、`scope.ts`、相关 query keys | 匿名、用户 id 隔离，取消旧请求并清缓存 | A 退出后 B 看不到 A 的任何列表或详情 |
+| 7 | 删除旧同步链路 | WebDAV、`app-sync.ts`、配置和文案 | 验收新链路后一次删净，不保留双写或兼容分支 | 全局搜索无残留，匿名导入导出仍可用 |
+
+## 阶段检查与纠偏
+
+| 偏离信号 | 说明 | 立即纠偏 |
+| --- | --- | --- |
+| 登录态 store 启动时拉取全量业务数据 | 资源化退化为远端 manifest | 停止扩展其他资源，先改成列表摘要 + 按 id 详情 |
+| 页面直接判断登录态并分别调用 localforage/API | 双实现逻辑散落，后续必然漂移 | 收口到 `services/data/`，页面只依赖统一接口 |
+| revision 作用在整个用户域 | 不同画布会产生无意义冲突 | 把 revision 下放到单条画布并补并发用例 |
+| 登录态执行客户端孤儿 GC | 按需加载下会把未加载资源误判为孤儿 | remote 实现改为空操作，服务端 GC 留到 Phase 3 |
+| 用 `data::text ILIKE`、PostgreSQL 数组或 GIN | 实现偏离 MySQL 8.0 技术基线 | 改为 MySQL `JSON`、生成列或明确字段查询，标签用 `asset_tags` |
+| S3 上传绕过后端直传且缺少同等校验 | 邮箱、配额、校验和边界失效 | 本期保持后端代理写入，优化直传另立设计 |
+| 为保留 WebDAV 做双写 | 出现两个权威源和不可解释冲突 | 在新链路验收后删除旧链路，不做兼容层 |
+
+每完成一种资源都要分别在匿名态和登录态跑同一组创建、读取、更新、删除用例。发现行为漂移时先修改共享契约测试，再修两套实现，不能只在页面增加条件分支掩盖差异。
+
+## 阶段门禁
+
+- 自动化：后端资源、权限、revision、媒体驱动和凭据加密测试通过；前端数据契约、作用域切换和防抖保存测试通过；`bun run typecheck` 与 `bun run test` 通过。
+- 数据：A/B 账号、匿名作用域互不泄漏；跨账号资源统一返回 404；列表响应不含大字段。
+- 安全：凭据密文、对象存储私有桶、预签名缓存、路径穿越和媒体 cookie 均通过专项检查。
+- 数据安全：remote 路径不存在客户端 GC；删除和清理测试证明共享媒体不会被误删。
+- 交接：只有双设备、双存储驱动、匿名模式和旧链路移除全部验收后，Phase 3 才能开始。
 
 ## 为什么放弃整域同步模型
 
@@ -53,7 +100,7 @@ AES-256-GCM。主密钥从 `CREDENTIAL_MASTER_KEY` 读取，是 base64 编码的
 
 ```go
 type UserCredential struct {
-    UserID     uuid.UUID `gorm:"type:uuid;primaryKey"`
+    UserID     uuid.UUID `gorm:"type:char(36);primaryKey"`
     Payload    []byte    `gorm:"not null"`
     Nonce      []byte    `gorm:"not null"`
     KeyVersion int       `gorm:"not null;default:1"`
@@ -110,10 +157,10 @@ type UserCredential struct {
 
 ```go
 type Canvas struct {
-    ID              uuid.UUID      `gorm:"type:uuid;primaryKey"`
-    UserID          uuid.UUID      `gorm:"type:uuid;not null"`
+    ID              uuid.UUID      `gorm:"type:char(36);primaryKey"`
+    UserID          uuid.UUID      `gorm:"type:char(36);not null"`
     Title           string         `gorm:"type:varchar(200);not null"`
-    Data            datatypes.JSON `gorm:"type:jsonb;not null"`
+    Data            datatypes.JSON `gorm:"type:json;not null"`
     Revision        int64          `gorm:"not null;default:1"`
     NodeCount       int            `gorm:"not null;default:0"`
     ConnectionCount int            `gorm:"not null;default:0"`
@@ -124,12 +171,11 @@ type Canvas struct {
 }
 
 type Asset struct {
-    ID         uuid.UUID      `gorm:"type:uuid;primaryKey"`
-    UserID     uuid.UUID      `gorm:"type:uuid;not null"`
+    ID         uuid.UUID      `gorm:"type:char(36);primaryKey"`
+    UserID     uuid.UUID      `gorm:"type:char(36);not null"`
     Kind       string         `gorm:"type:varchar(16);not null"` // text | image | video
     Title      string         `gorm:"type:varchar(200);not null"`
-    Tags       pq.StringArray `gorm:"type:text[]"`
-    Data       datatypes.JSON `gorm:"type:jsonb;not null"`
+    Data       datatypes.JSON `gorm:"type:json;not null"`
     StorageKey string         `gorm:"type:varchar(80)"`
     Bytes      int64          `gorm:"not null;default:0"`
     CreatedAt  time.Time
@@ -138,22 +184,22 @@ type Asset struct {
 }
 
 type Generation struct {
-    ID         uuid.UUID      `gorm:"type:uuid;primaryKey"`
-    UserID     uuid.UUID      `gorm:"type:uuid;not null"`
+    ID         uuid.UUID      `gorm:"type:char(36);primaryKey"`
+    UserID     uuid.UUID      `gorm:"type:char(36);not null"`
     Kind       string         `gorm:"type:varchar(16);not null"` // image | video
     Status     string         `gorm:"type:varchar(16);not null"` // pending | success | failed
     Prompt     string         `gorm:"type:text"`
     Model      string         `gorm:"type:varchar(120)"`
-    Config     datatypes.JSON `gorm:"type:jsonb"`
-    Result     datatypes.JSON `gorm:"type:jsonb"`
+    Config     datatypes.JSON `gorm:"type:json"`
+    Result     datatypes.JSON `gorm:"type:json"`
     DurationMs int            `gorm:"not null;default:0"`
     CreatedAt  time.Time
     DeletedAt  gorm.DeletedAt
 }
 
 type MediaFile struct {
-    ID         uuid.UUID `gorm:"type:uuid;primaryKey"`
-    UserID     uuid.UUID `gorm:"type:uuid;not null"`
+    ID         uuid.UUID `gorm:"type:char(36);primaryKey"`
+    UserID     uuid.UUID `gorm:"type:char(36);not null"`
     StorageKey string    `gorm:"type:varchar(80);not null"`
     ObjectPath string    `gorm:"type:varchar(300);not null"`
     MimeType   string    `gorm:"type:varchar(120);not null"`
@@ -168,7 +214,7 @@ type MediaFile struct {
 | 表 | 索引 | 服务的查询 |
 | --- | --- | --- |
 | `canvases` | `(user_id, deleted_at, updated_at desc)` | 列表页默认查询：当前用户、未删除、按更新时间倒序翻页 |
-| `assets` | `(user_id, deleted_at, updated_at desc)`，另对 `tags` 建 GIN | 前者服务翻页，后者服务标签筛选 |
+| `assets` | `(user_id, deleted_at, updated_at desc)`；`asset_tags` 建 `(tag, asset_id)` | 前者服务翻页，后者服务标签筛选 |
 | `generations` | `(user_id, kind, created_at desc)` | 工作台历史的游标分页 |
 | `media_files` | 唯一 `(user_id, storage_key)` | 归属校验与重复上传时的幂等覆盖 |
 
@@ -178,7 +224,7 @@ type MediaFile struct {
 
 `MediaFile` 刻意没有 `DeletedAt`。删除媒体时磁盘上的对象也要一并删掉，留一行「已删除但文件已经不在了」的记录没有任何用处，因此走硬删除。
 
-`Tags` 用 PostgreSQL 原生数组而不是 jsonb，是为了能建 GIN 索引，让按标签筛选走索引而不是全表扫描。
+MySQL 不使用 PostgreSQL 数组。标签存入 `asset_tags` 关联表，通过 `(asset_id, tag)` 唯一索引和 `(tag, asset_id)` 普通索引支持筛选。
 
 `user_credentials` 的结构在上面的凭据托管一节给出，同样由 `AutoMigrate` 建表。原先设计里的 `sync_domains` 与 tombstone 表不再需要，`sync_files` 改名为 `media_files`。
 
@@ -303,11 +349,11 @@ WHERE id = $2 AND user_id = $3 AND revision = $4 AND deleted_at IS NULL
 
 **GET `/api/assets?page=&size=&kind=&q=&tag=&sort=`**
 
-`kind` 取 `text`、`image`、`video`，缺省不筛选。`q` 只匹配两处：`title` 列与 `data->>'content'`。`tag` 可以重复传，多个标签之间是「同时包含」语义，用 `tags @> ARRAY[...]` 命中 GIN 索引。
+`kind` 取 `text`、`image`、`video`，缺省不筛选。`q` 只匹配 `title` 和 `data.content`。`tag` 可以重复传，多个标签之间是“同时包含”语义，通过 `asset_tags` 分组并用 `HAVING COUNT(DISTINCT tag) = ?` 实现。
 
-`q` 的范围必须写死在这两列上，不能图省事写成 `data::text ILIKE`。`data` 是 jsonb，只有文本素材的 `data` 带正文——`web/src/stores/use-asset-store.ts:10` 定义的 `TextAsset.data` 就是 `{ content: string }`；图片和视频素材的 `data` 里一个字的正文都没有，只有 `storageKey`、`mimeType` 和宽高这些元数据。整列转成文本去搜，用户搜「png」会把全部 PNG 图片翻出来，随手粘一段 `storageKey` 片段也能搜到东西，这不是搜索该有的行为。
+`q` 的范围必须写死在标题与文本正文两个业务字段上，不能图省事把整个 `JSON` 转成文本搜索。只有文本素材的 `data.content` 带正文；图片和视频素材的 `data` 只有 `storageKey`、`mimeType` 和宽高等元数据。MySQL 可通过明确的 `JSON_UNQUOTE(JSON_EXTRACT(data, '$.content'))` 或持久化生成列查询正文，但不能让用户搜索 `png` 或一段 `storageKey` 就命中所有媒体。
 
-这里留一条记录：`ILIKE '%关键字%'` 前后都带通配符，B-tree 索引用不上，两列都是顺序扫描。本期单用户素材量在几百条量级，全表扫描的代价可以忽略，先不额外建索引；等到单用户素材上万、搜索开始变慢，再装 pg_trgm 扩展并对 `title` 与 `(data->>'content')` 建 GIN 索引，届时接口不用动，只加索引即可。
+本期使用 `LIKE CONCAT('%', ?, '%')` 匹配标题和提取后的正文。前后通配符无法利用普通 B-tree，但单用户几百条素材时可接受；数据量真实增长后再根据 MySQL 慢查询决定是否增加 FULLTEXT 或持久化生成列，不提前引入 PostgreSQL 扩展思路。
 
 响应形状与画布列表一致，但 `items` 里是**完整的素材对象**：
 
@@ -332,7 +378,7 @@ WHERE id = $2 AND user_id = $3 AND revision = $4 AND deleted_at IS NULL
 | `id` | `assets.id` | 原来由前端 `nanoid()` 生成，改为服务端返回 uuid |
 | `kind` | `assets.kind` | 一一对应，枚举不变 |
 | `title` | `assets.title` | 一一对应 |
-| `tags` | `assets.tags` | 一一对应，落 `text[]` |
+| `tags` | `asset_tags.tag` | 一一对应，落关联表 |
 | `createdAt`、`updatedAt` | `assets.created_at`、`assets.updated_at` | 服务端生成，请求体传了也忽略 |
 | `data.content`（文本素材） | `data.content` | 文本正文，`q` 搜的就是这个键 |
 | `data.storageKey` | `assets.storage_key` 与 `data.storageKey` | 列上存一份供归属校验与删除，`data` 里留一份供前端直接拼 URL |
@@ -440,7 +486,7 @@ WHERE id = $2 AND user_id = $3 AND revision = $4 AND deleted_at IS NULL
 
 ### 未验证邮箱禁止上传
 
-只在 `PUT /api/media/{storageKey}` 上加这条约束，画布、素材、生成记录的读写全部不限制。未验证用户仍能创建画布、写文本素材、记录生成历史，只是不能占用磁盘，既控制了成本，又不至于让账号感觉完全不可用。
+只在 `PUT /api/media/{storageKey}` 上加这条约束，画布、素材、生成记录的读写全部不限制。未验证用户仍能创建画布、写文本素材、记录生成历史，只是不能占用磁盘，也不能领取平台免费赠送，既控制了成本，又不至于让账号感觉完全不可用。
 
 第一期预留的 `EMAIL_NOT_VERIFIED` 错误码在此处首次启用。前端收到后要引导用户去验证邮箱并提供重发入口，同时**不要让整个保存动作失败**——画布本身该存还得存，只是其中引用的媒体缺失，提示要说清楚是哪些文件没能上传。
 

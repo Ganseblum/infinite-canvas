@@ -33,10 +33,11 @@
 
 - [更新日志](/zh-CN/docs/progress/changelog)
 - [账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)
-- [第一期实施清单](/zh-CN/docs/progress/account-backend-phase1)
-- [第二期实施清单](/zh-CN/docs/progress/account-backend-phase2)
-- [第三期实施清单](/zh-CN/docs/progress/account-backend-phase3)
-- [第四期实施清单](/zh-CN/docs/progress/account-backend-phase4)
+- [第一期执行计划](/zh-CN/docs/progress/account-backend-phase1)
+- [第二期执行计划](/zh-CN/docs/progress/account-backend-phase2)
+- [第三期执行计划](/zh-CN/docs/progress/account-backend-phase3)
+- [第四期执行计划](/zh-CN/docs/progress/account-backend-phase4)
+- [第五期执行计划](/zh-CN/docs/progress/account-backend-phase5)
 - [待测试](/zh-CN/docs/progress/pending-test)
 - [TODO](/zh-CN/docs/progress/todo)
 

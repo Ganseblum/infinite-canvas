@@ -34,6 +34,55 @@ description: 规划新增 Go 后端服务，实现登录注册、云端数据与
 - 平台链路上的输入与产物经内容审核，满足面向中国大陆运营的合规要求。
 - 全套服务通过 Docker Compose 部署在自有服务器上，媒体走 S3 兼容对象存储。
 
+## 目标追踪与执行规则
+
+这套后端不是五个互相独立的功能包，而是一条按依赖逐步闭环的交付链。每个阶段只能在前一阶段通过验收后开始，不能用“代码基本写完”代替阶段完成。
+
+| 阶段 | 核心目标 | 必须产出的可验证结果 | 禁止提前开放的能力 |
+| --- | --- | --- | --- |
+| Phase 1 | 建立可信账号身份和邮件链路 | 注册、验证、登录、会话刷新、找回密码、免费赠送资格判定均可审计 | 云端数据、充值、平台模型 |
+| Phase 2 | 让登录用户的数据和媒体以服务端为权威 | 两台设备能按资源接口读取同一份画布、素材、生成记录和媒体，匿名数据仍留本地 | 总量计费、充值、平台模型 |
+| Phase 3 | 建立可对账的权益、存储配额和支付基础 | 双桶余额与流水逐桶相等，支付只到账一次，降档和清理可演练 | 对外充值入口，直到 Phase 4 同批上线 |
+| Phase 4 | 让平台模型调用可计量、可扣点、可退还 | 平台 Key 不出服务端，报价与实扣一致，失败原桶退还，用户渠道仍直连 | 对外开放注册，直到 Phase 5 和合规前置完成 |
+| Phase 5 | 在服务端可达链路建立内容安全闭环 | 输入、参考图、产物和上传按规则审核，后台可追溯、复核和补偿 | 未完成审核与备案时的公开运营 |
+
+### 每个阶段的执行闭环
+
+每个 Phase 都按同一套顺序推进：
+
+1. **确认基线。** 对照总规划、上一阶段验收记录和当前源码，列出本阶段允许修改的边界；发现文档与源码不一致时先修计划，不带着冲突开始编码。
+2. **按纵向切片实现。** 优先打通一条最小完整链路，再扩展同类能力。例如 Phase 2 先跑通单张画布的列表、详情、保存和冲突，再复制到素材与生成记录，避免三条半成品链路并行。
+3. **任务级验证。** 每个任务完成后立即运行对应单元或集成测试，不把所有问题留到阶段末一起排查。
+4. **阶段门禁。** 完成该 Phase 文档中的自动化检查、人工验收、数据不变量和安全检查；任何一项未通过都保持本阶段，不进入下一期。
+5. **记录结果。** 把已实现且待用户确认的行为写入 `pending-test.zh-CN.mdx`，从 `todo.zh-CN.mdx` 移除已完成范围，并在 `CHANGELOG.md` 的 `Unreleased` 归纳用户可感知变化。
+
+### 如何判断已经偏离目标
+
+出现任一情况就视为偏离，不以“以后再补”为理由继续扩大改动：
+
+- 为了省事把 access token 或第三方 Key 写进 `localStorage`，或让平台 Key 出现在浏览器、响应体和日志中。
+- 登录态继续把业务全量数据当作本地权威，或者页面绕过统一数据层直接混用 localforage 与远端 API。
+- 余额可以不经过流水直接修改，支付回调可能重复到账，报价逻辑与实际扣点逻辑各写一份。
+- 用户自定义 `baseUrl` 被服务端代请求，从而引入 SSRF；匿名模式被强制要求登录或上传本地数据。
+- 内容审核只做前端拦截、审核原文被长期保存，或者宣称匿名模式与用户直连渠道已被全链路审核。
+- 为尚未确认的多实例、订阅、退款、迁移或多云需求提前引入复杂抽象，导致当前阶段无法闭环。
+
+### 纠偏流程
+
+1. 立即暂停当前切片，不继续叠加依赖它的新代码。
+2. 用一个最小复现、失败测试、SQL 对账或网络抓包确认偏离是实现问题还是计划冲突。
+3. 以本总规划的关键决策和当前 Phase 的完成定义为准，删除越界实现或修正文档；不能同时满足时必须回到总规划重新决策。
+4. 修复后重跑当前任务测试、该阶段受影响的回归集和上一阶段关键冒烟用例。
+5. 在阶段执行记录中写清“偏离信号、根因、修改、复验结果”；同类问题再次出现时补充到 `AGENTS.md` 的可执行规则。
+
+### 全局质量门禁
+
+- 后端至少通过 `go test ./...`，涉及 MySQL、支付、对象存储或外部服务的路径还要有对应集成测试。
+- 前端至少通过 `bun run typecheck`、`bun run test` 和与本阶段相关的浏览器人工验收。
+- 数据库不变量、安全边界、幂等和并发行为必须通过专门用例验证，不能只验正常页面流程。
+- 阶段验收必须保留证据：命令结果、关键接口响应、SQL 对账结果或截图；只有文字结论不算通过。
+- 任何跳过项都要写明原因、风险、负责人和补验条件；存在阻断级跳过项时不得进入下一 Phase。
+
 ## 已确认的关键决策
 
 | 决策项 | 结论 | 影响 |
@@ -44,12 +93,12 @@ description: 规划新增 Go 后端服务，实现登录注册、云端数据与
 | 媒体文件同步范围 | 登录用户全量上云，图片与视频原文件都同步；匿名用户不上传 | 体验最完整；对象存储的容量与出网流量成本自行承担，需要配额兜底 |
 | 对象存储 | S3 兼容，`STORAGE_DRIVER` 在 `local` 与 `s3` 之间切换 | 云端优先 Cloudflare R2（出网流量免费），大陆访问速度实测不可接受则退到阿里云 OSS + CDN；读走 302 重定向到预签名 URL，写仍经后端代理；本地磁盘驱动保留给开发与私有化部署 |
 | WebDAV 同步 | 直接移除 | 只保留云端同步一条路径，删除 `webdav-sync.ts` 及配置页 UI、国际化文案与配置导出字段 |
-| 注册策略 | 完全开放注册 | 任何人都能注册，必须配合注册限流、邮箱验证、免费档配额与免费生成额度共同兜底 |
-| 邮箱验证与找回密码 | 两者都做 | 需要接入 SMTP，新增邮件令牌表与两个落地页 |
+| 注册策略 | 邮箱必填并完成验证 | 任何人都能注册，但邮箱验证只是基础门槛；免费赠送还要经过账号、IP、设备和活动领取记录的联合风控 |
+| 邮箱验证与找回密码 | 两者都做，SMTP 可替换 | 当前小体量部署先使用 QQ 邮箱 SMTP；后端只依赖通用 SMTP 配置，后续可切换腾讯云、阿里云或其他事务邮件服务 |
 | 管理后台 | 第三期实现轻量版 | 在本项目内新增 `/admin` 路由，覆盖用户列表、点数增减、用量查看与封禁，第四期补上模型目录与充值档位配置，第五期补上审核记录与人工复核 |
 | 档位配额 | 免费、付费、日落三档 | 免费 50 MB 存储、单文件 20 MB、媒体保留 7 天；付费 1 GB、200 MB、15 天；日落档 200 MB、200 MB、7 天，只在降档后的 60 天宽限期内出现，不可购买 |
 | 付费形态 | 只卖点数，双桶记账加付费权益有效期 | 点数分 `purchased` 与 `granted` 两桶，付费身份判定为 `purchased_micros > 0 OR paid_until > now()`；充值把 `paid_until` 往后推 `entitlement_days`，赠送与签到只进 `granted` 桶、不产生付费身份；仍然没有 subscriptions 表 |
-| 免费生成额度 | free 档给一次性的 3 张图片与 1 个视频，两个计数器互不占用 | 只覆盖被锁定的最便宜参数组合，参数超出即改走点数分支而不是报错；模型侧由 `model_catalog.free_trial_eligible` 限制范围；不每日重置 |
+| 免费生成额度 | free 档给一次性的 3 张图片与 1 个视频，两个计数器互不占用 | 只覆盖被锁定的最便宜参数组合，参数超出即改走点数分支而不是报错；模型侧由 `model_catalog.free_trial_eligible` 限制范围；不每日重置；领取资格单独记录并做多维风控 |
 | AI 请求链路 | 平台预设模型经后端转发，用户自配渠道仍走浏览器直连 | 平台 Key 只存服务端，点数在服务端扣减；用户自己的 Key 不扣点数，但产物仍受存储配额与保留期约束 |
 | 模型目录 | 由后台维护，前端按目录动态渲染参数表单 | 前端不再靠关键词猜能力、不再硬编码分辨率与时长；用户自定义渠道与模型继续保留 |
 | 媒体保留期 | 全部媒体按最后触达时间计时，超期清理 | 活跃项目不会被回收，长期无人问津的媒体到期释放存储；到期前 2 天预警并提供导出入口 |
@@ -70,7 +119,13 @@ description: 规划新增 Go 后端服务，实现登录注册、云端数据与
 
 ### 点数与付费身份
 
-单位先定死：**1 点 = 1 微元 = 0.000001 元，充值按 1:1 到账**，充 10 元就是 10,000,000 点。全部金额与点数一律 `int64`，任何位置都不允许浮点参与运算——浮点里 0.1 + 0.2 不等于 0.3，而计费系统里每一次舍入误差最后都会变成一笔对不上的账。取微元而不是分作最小单位，是因为单次生成的成本很可能低到几厘，用分记账会逼出「不足一分按一分收」这种粗糙定价。用户界面一律展示金额（元），「点数」只是内部记账单位，不需要教育用户去换算。
+单位先定死：**1 点 = 1 微元 = 0.000001 元，充值按 1:1 到账**，充 10 元就是 10,000,000 点。全部金额与点数一律 `int64`，任何位置都不允许浮点参与运算。用户界面同时展示点数与人民币，例如 `500,000 点（¥0.50）`，用户既能核对余额变化，也不用自行换算。
+
+平台模型必须提供可读的**价格矩阵**，不能只在生成后给出一笔总扣款。图片按模型支持的分辨率、质量与数量展示，例如 1K、2K、4K 各多少点和多少元；视频按分辨率与时长形成二维矩阵，例如 480p/5 秒、480p/10 秒、720p/5 秒、720p/10 秒分别多少钱。后台编辑结构化价格矩阵，生成页突出当前选中组合，并允许展开查看完整价格表。
+
+基础价格之上支持独立的**限时折扣规则**。管理员可以给整个模型、指定分辨率、指定时长或完整参数组合设置折扣与生效区间，例如整个模型 9 折、全部 720p 8 折、全部 10 秒 8.5 折，或者只给 720p/10 秒设置 7 折。折扣不叠加：匹配参数最多的规则优先，参数数相同时按显式 `priority` 选择；同一具体度和优先级存在冲突时拒绝保存。这样完整组合可覆盖单参数折扣，单参数折扣可覆盖整模型折扣，最终价格只有一个确定答案。
+
+参数变化时前端防抖调用 `POST /api/ai/quote`。服务端返回原价、命中的折扣、折后价、人民币展示值、是否走免费额度、余额是否足够、差额和短期签名 `quoteToken`。点击生成必须携带该 token；后端先验证参数与报价一致，再在事务中原子占用免费次数或预扣折后点数，成功后才调用上游。报价有效期不得晚于促销结束时间；基础价格、折扣规则或免费资格变化时返回 `QUOTE_STALE`，要求用户按最新价格重新确认，不能静默恢复原价或改成更高价格生成。
 
 **账本分双桶。** `purchased` 桶只装用户花钱买来的点数，`granted` 桶装赠送——签到、充值包里的赠送部分、管理员补偿都进这里。扣减时先扣 `granted` 再扣 `purchased`，让用户先花掉不用付钱的那部分。
 
@@ -102,7 +157,7 @@ description: 规划新增 Go 后端服务，实现登录注册、云端数据与
 
 但「画布里的图片会被删掉」听起来像是会毁掉用户的项目，所以计时方式必须配套。一个媒体文件的**最后触达时间**取所有引用它的画布 `updated_at`、素材 `updated_at`、生成记录 `created_at` 里的最大值，只要有任何一处被动过，计时就重新开始；超过所属档位的 `retention_days`（免费与日落档 7 天，付费档 15 天）才进入清理。结果是活跃项目永远不会被回收，只有真正放着不管、既没打开过画布也没碰过素材的媒体才会到期。
 
-实现上不新增 `expires_at` 列。到期时间是一个会被多张表的写入不断刷新的派生值，落成列就得在每次画布保存、素材更新、生成写入时同步维护，写放大且极容易漏掉一处。改为清理任务扫描时现算，并**与第三期的孤儿文件回收合并成同一个扫描任务**——两者都要遍历三张业务表的 jsonb 字段解析引用关系，扫一遍就能同时算出「谁没人引用」和「谁最后一次被触达是什么时候」。
+实现上不新增 `expires_at` 列。到期时间是一个会被多张表的写入不断刷新的派生值，落成列就得在每次画布保存、素材更新、生成写入时同步维护，写放大且极容易漏掉一处。改为清理任务扫描时现算，并与第三期的孤儿文件回收合并成同一个扫描任务，两者都遍历三张业务表的 MySQL `JSON` 字段解析引用关系。
 
 到期前必须预警：到期前 2 天发邮件，同时在站内给出提示，并提供一键导出入口，让用户能把要留的东西先拿走。没有预警的自动删除等同于事故。
 
@@ -199,7 +254,7 @@ infinite-canvas/
 | --- | --- | --- |
 | HTTP 框架 | Gin | 生态成熟、文档充足，路由与中间件写法简洁 |
 | ORM | GORM + AutoMigrate | 项目尚未上线，不需要迁移脚本，AutoMigrate 建表最省代码 |
-| 数据库 | PostgreSQL | 画布与素材是大块 JSON，直接用 JSONB 字段存储并可索引 |
+| 数据库 | MySQL 8.0+ | 使用原生 JSON 字段保存画布与素材数据；标签改为关联表，避免依赖 PostgreSQL 数组与 GIN 索引 |
 | 鉴权 | golang-jwt/jwt v5 | access token + refresh token 双令牌 |
 | 密码哈希 | golang.org/x/crypto/bcrypt | 标准做法，无需自行设计 |
 | 凭据加密 | 标准库 crypto/aes + cipher.GCM | 无需引入第三方加密库 |
@@ -218,7 +273,7 @@ infinite-canvas/
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
+| `id` | char(36) | UUID 主键 |
 | `email` | varchar | 唯一，登录标识 |
 | `username` | varchar | 唯一，登录标识 |
 | `password_hash` | varchar | bcrypt 哈希 |
@@ -226,41 +281,60 @@ infinite-canvas/
 | `avatar_url` | varchar | 头像 |
 | `role` | varchar | `user` / `admin`，管理后台鉴权依据 |
 | `status` | varchar | `active` / `disabled`，封禁用 |
-| `email_verified_at` | timestamptz | 邮箱验证时间，为空表示未验证 |
-| `created_at` / `updated_at` | timestamptz | |
+| `email_verified_at` | datetime(3) | 邮箱验证时间，为空表示未验证 |
+| `created_at` / `updated_at` | datetime(3) | UTC 时间 |
 
-未验证邮箱的账号可以登录并浏览，但**不允许上传媒体文件**，这是开放注册下控制存储成本的关键约束。
+未验证邮箱的账号可以登录并浏览，但**不允许上传媒体文件或使用平台免费生成额度**，这是开放注册下控制存储和上游调用成本的基础约束。邮箱验证不是唯一的防刷依据，免费赠送还要经过独立的领取记录与风险判断。
+
+**free_grant_claims** — 免费赠送领取记录
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | char(36) | 主键 |
+| `user_id` | char(36) | 用户 id |
+| `campaign_id` | varchar | 活动标识 |
+| `grant_type` | varchar | `signup` / `campaign` / `payment_bonus` / `admin_compensation` |
+| `amount_micros` | bigint | 本次赠送点数；免费图片和视频次数仍使用独立计数器 |
+| `email_hash` | varchar(64) | 规范化邮箱的哈希，不保存用于风控的明文副本 |
+| `device_hash` | varchar(64) | 设备标识哈希，仅用于风险评分 |
+| `ip_prefix_hash` | varchar(64) | IP 网段哈希，仅用于风险评分 |
+| `risk_score` | int | 领取时的风险评分 |
+| `status` | varchar | `granted` / `rejected` / `revoked` |
+| `reason` | varchar | 风控判定说明 |
+| `claimed_at` / `expires_at` | datetime(3) | 领取时间与赠送有效期 |
+
+至少建立唯一索引 `(user_id, campaign_id)`；如果一轮活动限制同一邮箱只能领取一次，再建立 `(email_hash, campaign_id)`。设备和 IP 网段只参与风险评分，不做绝对唯一约束，避免误伤家庭、公司和校园网络中的正常用户。
 
 **email_tokens** — 邮箱验证与密码重置共用一张表，按 `purpose` 区分
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
+| `id` | char(36) | UUID 主键 |
 | `user_id` | uuid | 外键 |
 | `token_hash` | varchar | 只存哈希，明文只出现在邮件链接里 |
 | `purpose` | varchar | `verify_email` / `reset_password` |
-| `expires_at` | timestamptz | 验证邮件建议 24 小时，重置密码建议 1 小时 |
-| `used_at` | timestamptz | 已使用时间，保证一次性 |
-| `created_at` | timestamptz | 用于发信频率限制 |
+| `expires_at` | datetime(3) | 验证邮件建议 24 小时，重置密码建议 1 小时 |
+| `used_at` | datetime(3) | 已使用时间，保证一次性 |
+| `created_at` | datetime(3) | 用于发信频率限制 |
 
 **refresh_tokens** — 刷新令牌，支持多设备登录与主动踢下线
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
-| `user_id` | uuid | 外键 |
+| `id` | char(36) | UUID 主键 |
+| `user_id` | char(36) | 外键 |
 | `token_hash` | varchar | 只存哈希，不存明文 |
-| `expires_at` | timestamptz | 过期时间 |
-| `revoked_at` | timestamptz | 撤销时间，可空 |
+| `expires_at` | datetime(3) | 过期时间 |
+| `revoked_at` | datetime(3) | 撤销时间，可空 |
 | `user_agent` / `ip` | varchar | 设备溯源 |
 
 **user_credentials** — 加密托管的第三方凭据
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `user_id` | uuid | 外键，唯一 |
-| `payload` | bytea | AES-GCM 密文，明文是 `AiConfig` 的 JSON，含各渠道的 `baseUrl` 与 `apiKey` |
-| `nonce` | bytea | GCM nonce，每次写入重新生成 |
+| `user_id` | char(36) | 外键，唯一 |
+| `payload` | blob | AES-GCM 密文，明文是 `AiConfig` 的 JSON，含各渠道的 `baseUrl` 与 `apiKey` |
+| `nonce` | binary(12) | GCM nonce，每次写入重新生成 |
 | `key_version` | int | 主密钥版本，供后续轮换 |
 
 ### 业务数据
@@ -271,16 +345,16 @@ infinite-canvas/
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
-| `user_id` | uuid | 外键，索引 |
+| `id` | char(36) | UUID 主键 |
+| `user_id` | char(36) | 外键，索引 |
 | `title` | varchar | 画布标题，支持模糊搜索 |
-| `data` | jsonb | 完整画布内容：`nodes`、`connections`、`viewport`、`chatSessions`、`backgroundMode` 等 |
+| `data` | json | 完整画布内容：`nodes`、`connections`、`viewport`、`chatSessions`、`backgroundMode` 等 |
 | `revision` | bigint | 乐观锁，每次写入递增 |
 | `node_count` | int | 冗余字段，列表页展示用，避免解析 `data` |
 | `connection_count` | int | 同上，列表卡片要显示「N 个节点 · N 条连线」 |
 | `cover_key` | varchar | 封面图的 `storage_key`，可空 |
-| `created_at` / `updated_at` | timestamptz | |
-| `deleted_at` | timestamptz | 软删除，可空 |
+| `created_at` / `updated_at` | datetime(3) | UTC 时间 |
+| `deleted_at` | datetime(3) | 软删除，可空 |
 
 索引 `(user_id, deleted_at, updated_at desc)` 正好覆盖列表页的默认查询：当前用户、未删除、按更新时间倒序。`node_count` 与 `connection_count` 是刻意做的冗余，让列表接口完全不用碰 `data` 这个可能有几 MB 的字段。
 
@@ -290,34 +364,34 @@ infinite-canvas/
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
-| `user_id` | uuid | 外键，索引 |
+| `id` | char(36) | UUID 主键 |
+| `user_id` | char(36) | 外键，索引 |
 | `kind` | varchar | `text` / `image` / `video` |
 | `title` | varchar | 素材标题 |
-| `tags` | text[] | 标签，可用 GIN 索引做标签筛选 |
-| `data` | jsonb | 与 `kind` 相关的字段 |
+| `tags` | - | 标签存入 `asset_tags` 关联表 |
+| `data` | json | 与 `kind` 相关的字段 |
 | `storage_key` | varchar | 主媒体的 `storage_key`，可空 |
 | `bytes` | bigint | 主媒体大小 |
-| `created_at` / `updated_at` / `deleted_at` | timestamptz | |
+| `created_at` / `updated_at` / `deleted_at` | datetime(3) | UTC 时间 |
 
-`tags` 用原生数组而不是 JSONB，是为了能建 GIN 索引，让按标签筛选走索引而不是全表扫描。
+`tags` 不直接存 JSON 数组。MySQL 版本新增 `asset_tags` 关联表，使用 `(asset_id, tag)` 唯一索引和 `(tag, asset_id)` 普通索引支持标签筛选与标签全集查询。
 
 **generations** — 生成记录，取代原先 image-workbench 与 video-workbench 两个域
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
-| `user_id` | uuid | 外键 |
+| `id` | char(36) | UUID 主键 |
+| `user_id` | char(36) | 外键 |
 | `kind` | varchar | `image` / `video` |
 | `status` | varchar | 生成状态 |
 | `prompt` | text | 提示词 |
 | `model` | varchar | 使用的模型 |
-| `config` | jsonb | 生成参数 |
-| `result` | jsonb | 生成结果，含 `storage_key` 列表 |
+| `config` | json | 生成参数 |
+| `result` | json | 生成结果，含 `storage_key` 列表 |
 | `duration_ms` | int | 耗时 |
-| `moderation_status` | varchar | `skipped` / `pending` / `passed` / `rejected`，第五期之前一律 `skipped` |
-| `created_at` | timestamptz | 索引，倒序游标分页用 |
-| `deleted_at` | timestamptz | 软删除，可空 |
+| `moderation_status` | varchar | `skipped` / `pending` / `passed` / `rejected` / `error`，第五期之前一律 `skipped` |
+| `created_at` | datetime(3) | 索引，倒序游标分页用 |
+| `deleted_at` | datetime(3) | 软删除，可空 |
 
 索引 `(user_id, kind, created_at desc)` 服务工作台历史的游标分页。生成记录是只增的历史流，量会随使用线性增长，因此它是四张表里最不能一次性全量拉取的一张。
 
@@ -325,15 +399,15 @@ infinite-canvas/
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
-| `user_id` | uuid | 外键 |
+| `id` | char(36) | UUID 主键 |
+| `user_id` | char(36) | 外键 |
 | `storage_key` | varchar | 形如 `image:xxx` / `video:xxx`，与前端一致 |
 | `object_path` | varchar | 对象存储中的实际路径 |
 | `mime_type` | varchar | |
 | `bytes` | bigint | 文件大小 |
 | `checksum` | varchar | sha256 |
-| `moderation_status` | varchar | `skipped` / `pending` / `passed` / `rejected`，第五期之前一律 `skipped` |
-| `created_at` | timestamptz | |
+| `moderation_status` | varchar | `skipped` / `pending` / `passed` / `rejected` / `error`，第五期之前一律 `skipped` |
+| `created_at` | datetime(3) | UTC 时间 |
 
 `(user_id, storage_key)` 唯一。业务表里存的是 `storage_key`，二进制内容与实际落盘路径由这张表统一管理，存储用量统计也从这里聚合。
 
@@ -361,7 +435,7 @@ infinite-canvas/
 | `paid` | 付费 | 1 GB | 200 MB | 15 天 | 0 | 0 |
 | `sunset` | 日落 | 200 MB | 200 MB | 7 天 | 0 | 0 |
 
-免费额度落成 `free_image_trials` 与 `free_video_trials` 两列，而不是一个 `trial_units` 之类的 jsonb 或一个通用次数：它们本来就是两个互不相干的计数器，写成结构化字段既能直接参与 SQL 判断，也不给「以后可能有第三种能力」预留一个现在没人需要的扩展点。这两列只定义**上限**，用户已用了多少不在这张表里，按 `(user_id, metric)` 记在 `usage_records`——这样调整额度只改一行档位定义，不需要动任何用户数据。
+免费额度落成 `free_image_trials` 与 `free_video_trials` 两列，而不是一个通用 `JSON` 次数：它们是互不相干的计数器，可直接参与 SQL 判断。这两列只定义上限，已用数量按 `(user_id, metric)` 记在 `usage_records`。
 
 `sunset` 不是卖给用户的档位，它只出现在降档路径上，因此不进 `/api/plans` 的对外列表，也不可购买。把它做成一行档位定义而不是在代码里硬编码一组降档参数，是为了让「日落期能存多少、留多久」和另外两档一样可配、可查、可在管理后台改。
 
@@ -377,11 +451,11 @@ infinite-canvas/
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `user_id` | uuid | 主键兼外键，一个用户一行 |
+| `user_id` | char(36) | UUID 主键兼外键，一个用户一行 |
 | `purchased_micros` | bigint | 充值买来的点数余额，不允许为负 |
 | `granted_micros` | bigint | 赠送得来的点数余额，不允许为负 |
-| `paid_until` | timestamptz | 付费权益到期时间，可空 |
-| `updated_at` | timestamptz | |
+| `paid_until` | datetime(3) | 付费权益到期时间，可空 |
+| `updated_at` | datetime(3) | UTC 时间 |
 
 **不再单独存一个 `balance` 总额列**：它等于两桶之和，多存一份就多一个可能与两桶不一致的「真相」，而对外展示时现算一次加法的成本可以忽略。扣减一律先扣 `granted` 再扣 `purchased`，跨桶时两桶的更新必须在同一个事务里完成。
 
@@ -389,16 +463,17 @@ infinite-canvas/
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
-| `user_id` | uuid | 外键，索引 |
+| `id` | char(36) | UUID 主键 |
+| `user_id` | char(36) | 外键，索引 |
 | `type` | varchar | `purchase` / `consume` / `refund` / `grant` / `expire` |
 | `bucket` | varchar | `purchased` / `granted`，这一笔动的是哪个桶 |
 | `amount_micros` | bigint | 正数为增、负数为减，单位微元 |
 | `balance_after_micros` | bigint | 本次变动后**该桶**的余额 |
 | `ref_type` | varchar | `order` / `generation` / `admin` / `checkin` |
 | `ref_id` | varchar | 关联对象的 id |
+| `refund_of_transaction_id` | char(36) | 退款指向的消费流水，可空且唯一 |
 | `note` | varchar | 备注 |
-| `created_at` | timestamptz | 索引，游标分页用 |
+| `created_at` | datetime(3) | 索引，游标分页用 |
 
 点数流水单独成表而不是只留余额字段，是因为收费系统必须可对账：用户问「我的点数为什么少了」，产品必须能逐条列出来源。`balance_after_micros` 是刻意的冗余，出问题时不用从头累加就能定位到是哪一笔开始算错。余额与流水的写入必须在同一个事务里，否则迟早会出现「扣了余额没有流水」或者反过来的情况，而这类数据一旦错了就无法自动修复。
 
@@ -425,21 +500,21 @@ infinite-canvas/
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | uuid | 主键 |
-| `user_id` | uuid | 外键 |
+| `id` | char(36) | UUID 主键 |
+| `user_id` | char(36) | 外键 |
 | `provider` | varchar | `alipay` / `wechat` |
 | `provider_order_id` | varchar | 渠道侧订单号，唯一 |
 | `package_id` | varchar | 外键，指向 credit_packages |
-| `amount_cents` | bigint | 实付金额，以分为单位，与渠道对账用 |
+| `price_micros` | bigint | 实付金额快照，内部统一使用微元 |
 | `currency` | varchar | 币种，当前只有 `CNY` |
 | `purchased_micros` | bigint | 本单进 `purchased` 桶的点数快照 |
 | `granted_micros` | bigint | 本单进 `granted` 桶的赠送点数快照 |
 | `entitlement_days` | int | 本单延长的付费权益天数快照 |
 | `status` | varchar | `pending` / `paid` / `failed` / `refunded`（保留枚举，v1 不启用） |
-| `paid_at` | timestamptz | 支付完成时间，可空 |
-| `created_at` / `updated_at` | timestamptz | |
+| `paid_at` | datetime(3) | 支付完成时间，可空 |
+| `created_at` / `updated_at` | datetime(3) | UTC 时间 |
 
-原先一个 `credits` 字段现在拆成三个快照。拆开是必要的而不是形式上的整齐：回调到账时这三项分别写进两个不同的桶和一个到期时间，合成一个数就没法还原；而三项都可能在用户下单之后被后台改掉（调价、改赠送比例、缩短促销权益期），只有下单时快照才能保证用户拿到的是他当时看到的东西。回调时直接用这三个值，不反查 credit_packages——档位随时可能调价或下架，而回调可能在几分钟甚至几小时后才到。`amount_cents` 保留以分为单位，因为它是给支付渠道和财务对账用的，不参与内部记账。
+订单快照必须保留 `price_micros`、两个桶的到账金额和权益天数，回调时不反查 `credit_packages`。内部账本和订单统一用微元，创建支付单和校验回调时再把 `price_micros` 换算成渠道要求的分；后台只允许保存 10000 微元的整数倍，避免产生渠道无法收取的金额。
 
 `provider_order_id` 唯一是回调幂等的地基：同一笔支付重复回调时，第二次会被唯一索引直接挡住，不可能重复加点。渠道普遍会重试回调，这是常态而不是异常路径。
 
@@ -456,18 +531,58 @@ infinite-canvas/
 | `display_name` | varchar | 展示名 |
 | `capability` | varchar | `image` / `video` / `text` / `audio` |
 | `provider` | varchar | 归属渠道 |
-| `constraints` | jsonb | 参数约束，形如 `{ sizes: [], aspectRatios: [], durations: [], qualities: [], maxReferenceImages: n }` |
-| `credit_cost` | jsonb | 按参数计费的规则，单位微元 |
+| `constraints` | json | 参数约束，形如 `{ sizes: [], aspectRatios: [], durations: [], qualities: [], maxReferenceImages: n }` |
+| `credit_cost` | json | 精确参数价格矩阵，包含计价维度、每个参数组合的 `cost_micros` 与版本号 |
 | `free_trial_eligible` | bool | 是否允许被免费生成额度使用，默认 false |
 | `enabled` | bool | 是否对用户可见 |
 | `sort` | int | 排序 |
-| `created_at` / `updated_at` | timestamptz | |
+| `created_at` / `updated_at` | datetime(3) | |
 
 这张表要解决的是当前前端的三处硬伤：模型能力靠 `use-config-store` 里的 `guessCapability` 按名字关键词猜；分辨率与最大边长这类参数是 `image.ts` 里的 `QUALITY_BASE`、`IMAGE_MAX_EDGE` 等全局硬编码，对所有模型一视同仁；系统压根不知道某个具体模型支持哪些尺寸、比例或时长，用户只能试——选了不支持的组合，要等上游接口报错才知道。
 
-`constraints` 落成 jsonb 而不是拆成多列，是因为不同能力的约束维度本来就不一样：图片模型关心尺寸与比例，视频模型关心时长，语音模型两者都不关心。拆成列会得到一张大部分字段为空的宽表，而这些约束只被前端表单读取和渲染，从来不需要按字段查询。`credit_cost` 同理，计费规则天然和参数绑定——同一个模型出 1024×1024 和出 4K 的成本不同，视频按时长计费，这些只能按模型逐个配。
+`constraints` 与 `credit_cost` 使用 MySQL `JSON`，因为不同能力的约束与计价维度不同。`credit_cost` 不使用容易产生匹配优先级歧义的加法和乘法规则，而保存精确组合：图片按 `resolution`、`quality` 给出单张价格，再乘 `n`；视频按 `resolution`、`duration` 精确匹配；对话与语音可使用无参数固定价。后台保存时必须验证 `constraints` 的全部可选组合都有唯一价格，缺价、重复价或多余组合都拒绝保存。
 
 `free_trial_eligible` 反过来必须是一个可查询的布尔列而不是塞进 `constraints`：免费额度的判定在生成热路径上，需要它参与 SQL 与索引条件，也需要管理后台能一眼列出「当前哪些模型在试用范围内」。默认 false 是刻意的——新上架的模型不自动进入试用范围，否则每次上架一个更贵的模型都在无声地放大免费敞口。
+
+**model_price_promotions** — 模型限时折扣
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | char(36) | UUID 主键 |
+| `model_id` | char(36) | 平台模型 id，索引 |
+| `name` | varchar | 活动名称 |
+| `match_params` | json | 匹配参数；空对象表示整模型，支持模型 `constraints` 中的计价维度 |
+| `discount_bps` | int | 折扣系数，基点制；8000 表示 8 折，范围 1-9999 |
+| `priority` | int | 同一具体度的显式优先级，值越大越优先 |
+| `version` | int | 每次修改递增，报价凭证绑定该版本 |
+| `starts_at` / `ends_at` | datetime(3) | 生效区间，`starts_at < ends_at` |
+| `status` | varchar | `draft` / `scheduled` / `active` / `ended` / `disabled` |
+| `created_at` / `updated_at` | datetime(3) | UTC 时间 |
+
+折后价使用纯整数计算：`ceil(base_cost_micros * discount_bps / 10000)`。不允许 0 折，免费活动继续走已有免费额度体系，不能用折扣规则绕开领取风控和预算。`match_params` 的键必须属于模型价格矩阵的 `dimensions`，值必须在 `constraints` 内；折扣只改变价格，不得扩大模型支持的参数范围。
+
+同一模型的候选规则按“`match_params` 键数量倒序、`priority` 倒序”选择第一条。后台保存时如果时间区间重叠、具体度相同、优先级相同且存在可同时命中的规则，直接拒绝并要求管理员调整优先级；运行时不靠创建时间或数据库返回顺序碰运气。
+
+促销活动按生命周期管理，不物理删除：`draft` 只对管理员可见，`scheduled` 等待 `starts_at`，`active` 在有效时间内生效，`ended` 到达 `ends_at` 后只读，`disabled` 由管理员提前停用。活动进入 `scheduled` 后修改匹配条件、折扣或时间必须递增 `version`，已经签发的报价全部失效；已经 `active` 的活动不允许直接覆盖原记录，修改必须生成新版本并保留旧版本快照，方便解释历史扣款。运营误配时先停用活动，再重新创建修正版，不通过直接改库恢复。
+
+增加 `PRICING_PROMOTION_ENABLED` 全局开关。关闭后新报价只返回基础价格，所有旧的折扣报价凭证返回 `QUOTE_STALE`；该开关只影响折扣，不影响基础价格、免费额度、登录和用户自配渠道。关闭或恢复开关都必须写管理审计日志并触发价格缓存失效。
+
+促销记录不得硬删除。管理员创建、修改、启用、停用和全局关闭操作都写入 `admin_audit_logs`，审计内容包含操作者、请求 id、目标活动、旧版本摘要、新版本摘要和原因；审计日志不保存 API Key、原始提示词或媒体内容。
+
+**admin_audit_logs** — 管理操作审计
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | char(36) | UUID 主键 |
+| `actor_user_id` | char(36) | 操作管理员 |
+| `action` | varchar | `promotion_create` / `promotion_update` / `promotion_disable` / `pricing_switch` 等 |
+| `target_type` / `target_id` | varchar | 被操作资源 |
+| `request_id` | varchar | 关联请求日志 |
+| `before_summary` / `after_summary` | json | 脱敏后的版本摘要，不含密钥和原始内容 |
+| `reason` | varchar | 操作原因，停用和回滚时必填 |
+| `created_at` | datetime(3) | 创建后不可修改 |
+
+审计日志只能追加，管理员不能通过业务 API 修改或删除。运维归档时保留校验和，保证后续能还原活动当时的价格规则。
 
 必须强调的是：**模型目录是平台预设，不是强制白名单。** 用户自己配置的渠道与模型继续保留，前端把两者合并展示，区别只在于自定义模型没有 `constraints` 可用，参数表单退回当前的通用形态，也不消耗点数。
 
@@ -495,6 +610,7 @@ infinite-canvas/
 | GET | `/api/me` | 返回用户信息、当前档位、双桶余额、`paidUntil`、免费额度剩余与用量 |
 | PATCH | `/api/me` | 修改展示名与头像 |
 | POST | `/api/me/password` | 修改密码，需校验原密码并撤销其他设备令牌 |
+| POST | `/api/me/free-grant/claim` | 邮箱验证后按当前活动领取一次免费赠送；按账号、活动、邮箱、IP 与设备风险控制，重复领取幂等 |
 
 ### 凭据托管
 
@@ -612,9 +728,9 @@ infinite-canvas/
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/models` | 平台模型目录，含 `constraints` 与计费规则 |
+| GET | `/api/models` | 平台模型目录，含 `constraints`、基础价格矩阵与当前折扣展示信息 |
 
-前端在生成页初始化时拉一次，之后按用户选中的模型动态渲染参数表单：该模型不支持的尺寸、比例、时长直接禁用，而不是让用户选完再等上游报错。返回体里带上每个模型的 `credit_cost` 与 `free_trial_eligible`，前端可以据此做一个粗略的价格提示，但**对外展示的价格以 `/api/ai/quote` 的返回为准**——目录里的规则只够算出「大概这个量级」，而免费额度、锁定组合这些判定只有服务端算得准。
+前端在生成页初始化时拉取目录并按模型动态渲染参数表单和完整价格矩阵。当前有效折扣按每个组合计算后展示原价、折后价、折扣标识和结束时间；目录只用于即时展示，最终确认价格以 `/api/ai/quote` 为准，因为活动时钟、实时余额、免费资格和版本只有服务端能准确判断。
 
 ### AI 请求转发
 
@@ -622,14 +738,14 @@ infinite-canvas/
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/ai/quote` | 预估本次生成的花费：走免费额度还是扣点、扣多少 |
+| POST | `/api/ai/quote` | 返回当前组合的原价、折扣、折后价、人民币金额、免费资格、余额差额和短期报价凭证 |
 | POST | `/api/ai/images/generations` | 图片生成，文生图与图生图共用一个入口 |
 | POST | `/api/ai/videos/generations` | 视频生成，只创建异步任务并返回 `taskId` |
 | GET | `/api/ai/videos/tasks/{id}` | 查询视频任务的状态与产物 |
 | POST | `/api/ai/audio/speech` | 语音合成 |
 | POST | `/api/ai/chat/completions` | 对话补全，SSE 流式 |
 
-`/api/ai/quote` 是给「点生成之前先告诉我这次要花多少钱」这件事做校准的。前端本来可以拿 `/api/models` 里的 `credit_cost` 自己算，但那份计算迟早会和服务端的实际扣费逻辑漂移——参数组合的边界、免费额度是否适用、`free_trial_eligible` 的开关、锁定组合的定义，任何一条改动都要求两侧同步修改，而漂移的表现是用户看到 A、被扣了 B，这是收费产品最不能出的错。因此把口径收到服务端一处：前端传本次的模型与参数，服务端用**与真实扣费完全相同的那段代码**算一遍并返回结果，前端只负责显示。它不预留额度、不写任何数据、不产生流水，纯查询，因此可以在参数表单变化时随手调用。
+`/api/ai/quote` 使用与真实预扣相同的基础价格和折扣解析器。它本身是纯查询，不占余额、不消耗免费次数；响应中的 HMAC 签名 `quoteToken` 固定模型、参数哈希、计费模式、原价、折后价、基础价格版本、命中的活动 id 与活动版本。普通报价最长 5 分钟；命中活动时取“5 分钟后”和 `ends_at` 中更早的时间。真实生成重新解析当前活动，活动开始、结束、停用、修改或更具体规则生效导致当前价格与 token 不一致时返回 `QUOTE_STALE`；即使新价格更低也要求重新确认，不能按旧原价多扣。
 
 路径贴着 OpenAI 兼容协议的形状，但**请求体与响应体都不是上游的原样透传**。请求按能力定义自己的字段，参考图传 `storageKey` 而不是 base64；响应固定给出本次花费（扣了多少点，或标明走的是免费额度）与 `storageKey` 形式的产物，各家上游那些字段名、信封、`b64_json` 与 `url` 的差异全部收敛在服务端。`/api/ai/chat/completions` 同理，它是一套自有事件流而不是上游 SSE 的透传，后端逐块 flush，不能等上游返回完再一次性吐出来，否则画布里的助手对话会从流式变成整段弹出，体验直接倒退。
 
@@ -653,6 +769,7 @@ infinite-canvas/
 | POST | `/api/admin/users/{id}/credits` | 管理员增减用户点数，请求体必须显式带 `bucket` |
 | GET | `/api/admin/users/{id}/usage` | 查看单个用户的存储占用与生成用量 |
 | GET/POST/PATCH/DELETE | `/api/admin/models` | 模型目录的增删改查 |
+| GET/POST/PATCH | `/api/admin/model-promotions` | 模型折扣活动查询、新增、修改与停用 |
 | GET/POST/PATCH | `/api/admin/credit-packages` | 充值档位的查询、新增与修改 |
 | GET | `/api/admin/orders` | 订单列表，支持按状态与用户筛选 |
 | GET | `/api/admin/stats` | 总览：用户数、存储总量、当日生成量 |
@@ -788,10 +905,10 @@ infinite-canvas/
 ```txt
 app   nginx + 前端静态产物，对外暴露 3000
 api   Go 后端，仅内网暴露 8080
-db    PostgreSQL 17（`postgres:17-alpine`），仅内网暴露 5432
+db    MySQL 8.0（`mysql:8.0`），仅内网暴露 3306
 ```
 
-数据卷：`pgdata` 持久化数据库；`media` 卷只在 `STORAGE_DRIVER=local` 时使用，切到 `s3` 之后媒体不落本机磁盘，这个卷可以不挂。`db` 的初始账号、密码与库名由 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB` 提供，健康检查用 `pg_isready -U $POSTGRES_USER`，`api` 要等它通过之后再启动。
+数据卷：`mysqldata` 持久化数据库；`media` 卷只在 `STORAGE_DRIVER=local` 时使用，切到 `s3` 之后媒体不落本机磁盘，这个卷可以不挂。`db` 的初始账号、密码与库名由 `MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE` 和 `MYSQL_ROOT_PASSWORD` 提供，健康检查使用 `mysqladmin ping`，`api` 要等它通过之后再启动。
 
 `nginx.conf` 增加反代，前端与后端同源，无需处理 CORS：
 
@@ -813,14 +930,14 @@ location /api/ {
 
 **`proxy_pass` 不能带任何 URI 部分**，这是这份配置里最容易踩的坑。写成 `http://api:8080/` 时，nginx 会把 location 匹配到的 `/api/` 剥掉再转发，`/api/auth/login` 到后端就成了 `/auth/login`；而本文档所有接口都写作 `/api/...`，后端也统一注册在 `r.Group("/api")` 下，照字面实现会全线 404。不带尾斜杠则路径原样透传，和后端的路由前缀严格对齐。
 
-体积上限必须拆成两档。200MB 是付费档的单文件上限，默认的 1MB 会直接导致上传失败，但这个额度只应该给 `/api/media/`：它对 `/api/` 下所有接口一视同仁的话，画布保存接口也跟着放开，而画布 `data` 存的是 jsonb、不计入任何存储配额，用户反复提交 200 MB 的画布 JSON 就能把数据库撑爆。所以媒体接口放到 200m，其余接口收到 2m，nginx 的前缀匹配是最长优先，两个 location 的书写顺序不影响结果。免费档 20 MB 的更严格限制由后端按用户档位校验，nginx 层不做区分——档位是会随付费身份翻转的动态属性，放在网关上判断既拿不到用户身份也没法实时跟随。上传经后端代理转发到对象存储，因此即使切到 `s3` 驱动，这个体积上限依然作用在 `/api/media/` 这条路径上。
+体积上限必须拆成两档。200MB 只给 `/api/media/`，其余 API 限制为 2MB；否则画布 `data` 的 MySQL `JSON` 也能提交 200MB 并撑大数据库。免费档 20MB 的更严格限制由后端按派生档位校验。
 
 后端所需环境变量写入 `server/.env.example`：
 
 | 变量 | 说明 |
 | --- | --- |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `db` 服务的初始账号、密码与库名，同时供 compose 的 `pg_isready -U $POSTGRES_USER` 健康检查使用 |
-| `DATABASE_URL` | PostgreSQL 连接串，取值必须与上面三个变量一致 |
+| `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` / `MYSQL_ROOT_PASSWORD` | `db` 服务的初始账号、密码、库名与 root 密码，同时供 MySQL 健康检查使用 |
+| `DATABASE_URL` | MySQL 连接串，取值必须与上面数据库变量一致 |
 | `PORT` | 后端监听端口，缺省 8080，改了要同步 nginx 的 `proxy_pass` 与 compose 的健康检查 |
 | `JWT_SECRET` | 访问令牌签名密钥 |
 | `CREDENTIAL_MASTER_KEY` | 凭据 AES-GCM 主密钥，32 字节；第四期的平台渠道 Key 复用同一把，不再引入第二把密钥 |
@@ -842,7 +959,13 @@ location /api/ {
 | `SMTP_HOST` / `SMTP_PORT` | 邮件服务器地址与端口 |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | 邮件服务账号 |
 | `SMTP_FROM` | 发件人地址 |
+| `SMTP_SECURITY` | `ssl` 或 `starttls`；QQ 邮箱当前建议 `smtp.qq.com:465` + `ssl`，后续替换邮件服务时只改配置 |
 | `REGISTRATION_ENABLED` | 注册总开关，默认开启，出问题时可紧急关闭 |
+| `FREE_GRANT_ENABLED` | 免费赠送总开关，默认开启；被刷时关闭赠送但不影响已有账号登录 |
+| `FREE_GRANT_CAMPAIGN_ID` | 当前免费赠送活动标识，用于按活动幂等领取 |
+| `FREE_GRANT_DAILY_BUDGET_MICROS` | 每日免费赠送预算上限，达到后停止发放新的赠送 |
+| `FREE_GRANT_RISK_THRESHOLD` | 风险评分阈值，达到后拒绝或转人工处理 |
+| `PRICING_PROMOTION_ENABLED` | 限时折扣总开关；关闭后新报价只使用基础价格，折扣报价全部失效 |
 | `ALIPAY_*` / `WECHATPAY_*` | 支付宝与微信的商户号、密钥与回调地址，未配置的渠道自动不上架 |
 
 `MODERATION_FAIL_MODE` 刻意不给缺省值。审核服务挂掉时是「宁可拦错也不放过」还是「宁可放过也不挡住用户」，这是一个业务与合规的取舍，不该由框架替谁做决定；不写就启动失败，逼部署方明确表态一次，比默认放行之后在事故里才发现要好得多。
@@ -853,7 +976,7 @@ location /api/ {
 
 对象存储有两条必须写进**部署检查清单**的项。第一条是**桶必须保持私有**：Cloudflare R2 的 `r2.dev` 开发域名一旦启用，整个桶立刻变成公开可读，本文档所有预签名与鉴权设计当场归零——而这个开关就在控制台一个很容易被顺手点开的位置，上线前要实测一次匿名直接访问确实被拒。第二条是**上线前实测一次目标地区的访问速度**：R2 出网免费是选它的主要理由，但如果在中国大陆的实际下载速度不可接受，这个理由不足以抵消体验损失，届时退到阿里云 OSS + CDN，代价是流量费重新成为第一大成本项，需要同步配置流量告警与预算上限。
 
-`APP_BASE_URL` 配错会直接导致验证邮件里的链接不可用，部署时需要重点核对。SMTP 全部变量为空时后端应启动失败并给出明确报错，而不是静默地发不出邮件。
+`APP_BASE_URL` 配错会直接导致验证邮件里的链接不可用，部署时需要重点核对。当前小体量部署可以使用 QQ 邮箱 SMTP，例如 `SMTP_HOST=smtp.qq.com`、`SMTP_PORT=465`、`SMTP_SECURITY=ssl`；`SMTP_PASSWORD` 填 QQ 邮箱生成的授权码，不填邮箱登录密码。后端只依赖通用 SMTP 配置，不在代码中绑定 QQ，后续可切换其他事务邮件服务。SMTP 全部变量为空时后端应启动失败并给出明确报错，而不是静默地发不出邮件。
 
 支付回调地址必须公网可达，且要能被各渠道的服务器直接访问——纯内网部署无法完成支付闭环，这一点要在部署文档里写明。两个支付渠道相互独立，只配其中一个也能跑，未配置的渠道在 `/api/credit-packages` 与下单接口里自动不可选，而不是让用户点进去才失败。
 
@@ -883,26 +1006,30 @@ location /api/ {
 
 - 注册与发信接口按 IP 和邮箱维度双重限流，防止批量注册与邮件轰炸。
 - 邮箱验证通过前禁止上传媒体，未验证账号无法占用存储。
+- 邮箱验证通过前禁止领取平台免费赠送；邮箱验证只是基础门槛，不是唯一身份证明。
+- 免费赠送按 `campaign_id` 记录领取结果，至少以 `(user_id, campaign_id)` 幂等；邮箱哈希、IP 网段哈希和设备哈希参与风险评分，不能只依赖其中一个维度。
+- 免费赠送使用独立预算、风险阈值和紧急开关；达到预算或风险阈值时停止发放，不影响正常登录与用户自有渠道。
 - 存储配额、单文件上限与点数余额在操作前校验，超额或余额不足直接拒绝。
 - 平台模型的转发接口按用户限流，新注册账号不因为「已登录」就能无限制驱动平台 Key。
 - 免费生成额度是一次性的，且只对锁定参数组合与 `free_trial_eligible` 的模型生效，把「注册即可白嫖」的单账号上限压到一个确定的小数。
 - `REGISTRATION_ENABLED` 与 `FREE_TRIAL_ENABLED` 作为紧急开关，被刷时可立即关闭注册或免费额度。
+- `FREE_GRANT_ENABLED`、`FREE_GRANT_DAILY_BUDGET_MICROS` 与 `FREE_GRANT_RISK_THRESHOLD` 作为免费赠送的独立控制项；关闭赠送不应误伤已注册用户的登录和自定义渠道。
 
 ## 分期实施计划
 
-每期都有独立的开发底稿，精确到文件职责、接口出入参、错误码与验收清单：[第一期](/zh-CN/docs/progress/account-backend-phase1)、[第二期](/zh-CN/docs/progress/account-backend-phase2)、[第三期](/zh-CN/docs/progress/account-backend-phase3)、[第四期](/zh-CN/docs/progress/account-backend-phase4)。第五期的底稿待补。
+每期都有一份中文执行计划，精确到文件职责、实施顺序、接口出入参、偏离判定、纠偏动作与验收清单：[第一期](/zh-CN/docs/progress/account-backend-phase1)、[第二期](/zh-CN/docs/progress/account-backend-phase2)、[第三期](/zh-CN/docs/progress/account-backend-phase3)、[第四期](/zh-CN/docs/progress/account-backend-phase4)、[第五期](/zh-CN/docs/progress/account-backend-phase5)。
 
 ### 第一期：账号体系与邮件链路
 
-后端搭建 `server/` 骨架，实现 users、refresh_tokens、email_tokens 三张表，注册登录登出刷新改密码、`/api/me`、鉴权中间件，接入 SMTP 完成邮箱验证与找回密码，并给注册和发信接口加上限流。
+后端搭建 `server/` 骨架，实现 users、refresh_tokens、email_tokens 与 `free_grant_claims` 表，注册登录登出刷新改密码、`/api/me`、鉴权中间件，接入可配置 SMTP 完成邮箱验证与找回密码，并给注册、发信和免费赠送领取接口加上限流与风险判断。当前部署使用 QQ SMTP 配置示例，代码不得绑定 QQ 专用逻辑。
 
 前端新增统一 client、`use-auth-store`、登录注册页、邮件验证与密码重置两个落地页、顶栏用户菜单与国际化文案。路由守卫只加在 `/profile`、`/billing`、`/admin` 上——业务页面对匿名用户照常开放，这一期不引入任何强制跳转登录的路径。
 
 部署上完成三服务编排、`/api` 反代与 `client_max_body_size` 放开。
 
-因为选择了开放注册，邮箱验证不能推迟到后面的阶段——它是限制未验证账号占用存储的前提，必须和账号体系一起交付。
+因为选择了开放注册，邮箱验证不能推迟到后面的阶段——它是限制未验证账号占用存储和领取免费赠送的基础前提，必须和账号体系一起交付；但免费赠送还必须经过独立领取记录和多维风控。
 
-验收标准：全新环境起容器后可注册并收到验证邮件，点击链接完成验证；可登录、刷新令牌、登出；忘记密码能收到重置邮件并成功改密；未登录仍可正常打开画布并保存到本机，只有个人中心与充值页会引导登录。
+验收标准：全新环境起容器后可注册并收到验证邮件，点击链接完成验证；可登录、刷新令牌、登出；忘记密码能收到重置邮件并成功改密；未验证账号不能上传媒体或领取免费赠送；同一账号重复领取同一活动只成功一次，命中风险阈值或活动预算后拒绝赠送；未登录仍可正常打开画布并保存到本机，只有个人中心与充值页会引导登录。
 
 ### 第二期：凭据托管、数据资源化与对象存储
 
@@ -985,7 +1112,7 @@ location /api/ {
 
 **同期必须修掉 `cleanupUnusedMedia` 的一个现存 bug**，否则它会被原样带进匿名态的真实现里。这个函数在收集「仍被引用的媒体」时**漏扫了两个生成日志库**：它只看传进来的素材与画布，而图片侧的 `cleanupUnusedImages` 会额外 iterate `imageLogStore` 与 `videoLogStore` 把历史里引用的 key 也收进去。于是只存在于视频历史、没有被任何画布或素材引用的媒体会被判成孤儿删掉，用户看到的是「历史记录还在，点开文件没了」。旧代码里它没有集中爆发，是因为触发得少、且大部分媒体确实同时挂在画布上；改造后它是匿名态唯一的回收路径，触发只会更频繁。顺带一提，它还绕过 `deleteStoredMedia` 直接删记录，既不释放 ObjectURL 也不清缓存 Map，图片侧的同名函数则处理正确——这个不一致在迁移时一并抹平。
 
-**服务端的孤儿文件回收则可以留到第三期。** 在它上线之前，用户删掉画布后其引用的媒体会暂时留在对象存储里，代价只是占空间，不影响任何人的数据。这块工作要扫三张业务表的 jsonb 字段判断引用关系，和第三期的存储用量重算、媒体保留期的到期判定是同一类活——三者共用同一次扫描，放一起做省下的不只是工作量，还有反复遍历大表的开销。
+**服务端的孤儿文件回收则可以留到第三期。** 它与存储用量重算、媒体保留期都需要扫描三张业务表的 MySQL `JSON` 字段，三者共用同一次扫描。
 
 **支付回调的幂等与时序。** 渠道会重试回调，也可能乱序到达，甚至可能在用户已经手动取消订单之后才到。加点必须以 `orders.provider_order_id` 唯一索引加订单状态机为准，只允许 `pending → paid` 这一次跃迁，重复回调返回成功但不做任何写入。订单状态、两个桶的余额、`paid_until` 与两条点数流水必须在同一个事务里写完，任何一处失败都整体回滚——回调半成功比回调完全失败难查得多，而且用户会直接感知为「钱付了点没到」。还要处理「回调先于下单响应到达」这种情况：下单事务尚未提交时回调查不到订单，需要有重试或延迟处理机制，不能直接当成非法请求丢掉。
 

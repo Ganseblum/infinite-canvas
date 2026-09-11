@@ -1,25 +1,73 @@
 ---
-title: 第一期实施清单：账号体系与邮件链路
-description: 账号体系与后端服务规划第一期的详细开发底稿，精确到文件职责、接口出入参与错误码
+title: 第一期执行计划：账号体系与邮件链路
+description: 账号体系与后端服务规划第一期的中文执行计划，覆盖文件职责、实施顺序、偏离纠正、接口与验收
 ---
 
-# 第一期实施清单：账号体系与邮件链路
+# 第一期执行计划：账号体系与邮件链路
 
-本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第一期的开发底稿，用于直接指导编码。方案层面的取舍与理由见规划文档，本文档只讲「具体做什么、怎么做」。
+本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第一期的中文执行计划，用于直接指导编码、阶段检查与验收。方案层面的取舍与理由见规划文档，本文档负责说明「具体改什么、按什么顺序改、如何发现偏离以及如何验收」。
 
 ## 范围界定
 
 ### 本期要做
 
-后端账号体系（注册、登录、登出、令牌刷新、修改密码、当前用户信息）、SMTP 邮件链路（邮箱验证、找回密码）、限流、前端登录注册与路由守卫、三服务 Docker 编排。
+后端账号体系（注册、登录、登出、令牌刷新、修改密码、当前用户信息）、可配置 SMTP 邮件链路（邮箱验证、找回密码）、免费赠送领取资格与基础风控、限流、前端登录注册与路由守卫、三服务 Docker 编排。
 
 ### 本期不做
 
 凭据托管、数据同步、媒体上传、档位权益、配额校验、管理后台。这些属于第二三期。
 
-但**数据模型要一次建到位**：`users` 表的 `role`、`email_verified_at` 字段，以及 `plans` 表在本期就要建好并写入 `free` 与 `paid` 两档默认数据。原因是注册流程一旦上线就会持续产生用户，后期再补字段需要回填历史数据，不如一开始就写对。配额的**校验逻辑**留到第三期，但档位定义本期就要写对。
+但**数据模型要一次建到位**：`users` 表的 `role`、`email_verified_at` 字段，`free_grant_claims` 领取记录，以及 `plans` 表在本期就建好并写入 `free`、`paid`、`sunset` 三档默认数据。配额的校验逻辑留到第三期，但档位定义本期就要写对。
 
-**不建 `subscriptions` 表。** 收费模型是点数制而不是订阅制，付费身份在第三期由点数余额直接推导，不存在需要一张表去维护的订阅状态机；本期建出来，第三期第一件事就是把它删掉。同理，本期也没有「注册时分配套餐」这个动作。本期与第二期都还没有 `credits` 表，档位无从判定，因此**所有用户一律按 `free` 档校验单文件上限**——第二期的 `FILE_TOO_LARGE` 直接读 `plans` 里 `id = free` 那一行的 `max_file_bytes`。等第三期点数体系上线，才改成按 `credits.balance` 是否大于 0 判定档位、再取对应行的上限。`paid` 档的数据本期一并写入，是为了让第三期只需要接上判定逻辑，不用再回头补 seed。
+**不建 `subscriptions` 表。** 收费模型是点数制而不是订阅制，付费身份在第三期由 `purchased_micros > 0 OR paid_until > now()` 推导，不存在需要一张表维护的订阅状态机；本期也没有「注册时分配套餐」这个动作。本期与第二期都还没有 `credits` 表，因此所有用户暂按 `free` 档校验单文件上限。第三期接入双桶余额与 `paid_until` 后，再按统一档位解析器选择 `paid`、`sunset` 或 `free`，不能退回“总余额大于零就是付费”的旧判定。
+
+## 阶段目标与完成定义
+
+本期只解决“系统能可靠识别一个人并维持安全会话”这一件事。完成不等于页面能提交表单，而是账号、邮件、令牌、限流和免费赠送资格都能在失败、重试和并发条件下保持一致。
+
+| 目标 | 完成定义 | 主要证据 |
+| --- | --- | --- |
+| 后端可启动 | MySQL、API、前端经 Compose 启动，健康检查能区分进程存活与数据库就绪 | Compose 状态与健康检查响应 |
+| 身份闭环 | 注册、验证、登录、刷新、登出、改密、找回密码全部可走通 | 集成测试与浏览器流程 |
+| 会话安全 | refresh token 仅在 httpOnly cookie，access token 仅在内存，轮换和复用检测生效 | Cookie 属性、存储检查、令牌复用测试 |
+| 邮件可替换 | `smtp` 与 `log` 两种驱动可用，QQ 只是配置示例 | 配置启动测试与真实 QQ SMTP 冒烟 |
+| 免费赠送资格可控 | 同一活动只能批准一次，预算、风险阈值和开关生效 | 并发领取测试与 `free_grant_claims` 记录 |
+| 匿名模式不回归 | 未登录仍能使用原有业务页面和本地数据，仅账号增强页需要登录 | 匿名模式回归验收 |
+
+## 实施任务与顺序
+
+| 顺序 | 任务 | 主要文件 | 具体改动 | 任务完成检查 |
+| --- | --- | --- | --- | --- |
+| 1 | 建立服务骨架 | `server/go.mod`、`server/cmd/server/main.go`、`server/internal/config/`、`server/internal/db/` | 初始化 Gin、GORM MySQL、配置校验、日志、优雅关闭和健康检查 | 空库启动后表结构正确，停库后 `/readyz` 返回 503 |
+| 2 | 建账号模型 | `server/internal/model/`、`server/internal/db/` | 建 `users`、`refresh_tokens`、`email_tokens`、`free_grant_claims`、`plans`，写幂等 seed 与管理员初始化 | 连续启动两次不重复数据、不覆盖人工修改 |
+| 3 | 完成认证服务 | `server/internal/auth/`、`server/internal/middleware/auth.go` | 密码哈希、JWT、refresh 轮换、复用检测、账号状态校验 | 鉴权与并发刷新自动化测试通过 |
+| 4 | 完成邮件链路 | `server/internal/mail/`、`server/internal/handler/auth.go` | 通用 SMTP、日志驱动、验证和重置令牌、重发限流 | QQ SMTP 和日志驱动各完成一次端到端验证 |
+| 5 | 完成赠送资格风控 | `server/internal/service/free_grant.go`、`server/internal/handler/account.go` | 活动幂等、邮箱/IP/设备风险信号、每日预算、紧急开关 | 同活动并发领取只产生一条批准记录；本阶段只确认资格，不提前制造第三期才存在的点数流水 |
+| 6 | 接前端认证 | `web/src/services/api/`、`web/src/stores/use-auth-store.ts`、认证页面、`router.tsx` | 单飞刷新、启动恢复、表单和错误码、用户菜单、受保护路由 | 刷新不闪登录页，并发 401 只刷新一次 |
+| 7 | 接部署和验收 | `docker-compose.yml`、`nginx.conf`、`server/Dockerfile`、环境变量示例 | 三服务编排、同源 `/api`、请求体分级限制、本地 Vite 代理 | 生产反代与本地代理各跑一次完整流程 |
+
+## 阶段检查与纠偏
+
+每完成上表一个任务就做一次检查，不等到第七步才集中发现架构错误。
+
+| 偏离信号 | 说明 | 立即纠偏 |
+| --- | --- | --- |
+| token 出现在 localStorage、sessionStorage 或 URL | 长效会话可被脚本直接窃取 | 停止前端联调，恢复 cookie + 内存方案并补存储断言 |
+| 注册接口等待 SMTP 才返回 | 邮件抖动会拖垮注册可用性 | 改为事务提交后异步发信，失败允许重发并记录日志 |
+| QQ 地址、端口或授权方式写死在代码里 | 邮件服务无法替换 | 收回通用配置层，只在环境变量示例里保留 QQ 参数 |
+| 免费赠送直接改未来的点数余额且没有流水 | 跨阶段越界并破坏账本 | 本期只写资格与活动记录；实际入 `granted` 桶由第三期统一账本服务处理 |
+| 未登录访问画布被强制跳登录 | 破坏“匿名本地可用”总目标 | 路由守卫只包 `/profile`、`/billing`、`/admin`，恢复业务页匿名访问 |
+| 为限流提前引入 Redis | 当前单实例目标被不必要扩大 | 回退进程内实现，记录多实例触发条件，不提前实现 |
+
+纠偏后必须重跑当前任务测试，并补跑“匿名打开画布、注册验证登录、刷新会话”三条本期冒烟链路。涉及令牌或密码的偏离还要撤销测试账号全部 refresh token，确认旧凭证不能继续使用。
+
+## 阶段门禁
+
+- 自动化：`go test ./...` 覆盖认证、令牌轮换、邮件令牌、限流和赠送幂等；`bun run test` 覆盖 API client 单飞刷新；`bun run typecheck` 通过。
+- 数据：同一邮箱和用户名不能并发注册两次；同一 `(user_id, campaign_id)` 只能有一条领取结论。
+- 安全：日志、响应、浏览器存储中不存在密码、邮件令牌明文、refresh token 或 SMTP 授权码。
+- 回归：匿名用户继续使用原画布、本地素材和用户自配渠道，不因后端不可用而被阻断。
+- 交接：只有下方验收清单全部完成并留存证据后，Phase 2 才能开始。
 
 ## 统一约定
 
@@ -55,20 +103,25 @@ description: 账号体系与后端服务规划第一期的详细开发底稿，�
 | 401 | `TOKEN_EXPIRED` | access token 过期，前端据此触发静默刷新 |
 | 402 | `INSUFFICIENT_CREDITS` | 点数余额不足，或只读态下调用媒体上传（第三期启用） |
 | 403 | `ACCOUNT_DISABLED` | 账号被封禁 |
-| 403 | `EMAIL_NOT_VERIFIED` | 邮箱未验证（本期仅预留，第二期上传接口开始使用） |
+| 403 | `EMAIL_NOT_VERIFIED` | 邮箱未验证，禁止媒体上传或领取免费赠送 |
 | 403 | `FORBIDDEN` | 已登录但无权访问该资源，管理接口用 |
+| 403 | `FREE_GRANT_UNAVAILABLE` | 免费赠送未开启、已领取、预算耗尽或风险评分过高 |
 | 404 | `NOT_FOUND` | 资源不存在 |
 | 409 | `EMAIL_TAKEN` | 邮箱已注册 |
 | 409 | `USERNAME_TAKEN` | 用户名已占用 |
 | 409 | `REVISION_CONFLICT` | 画布乐观锁冲突，附服务端当前 `revision`（第二期启用） |
 | 409 | `CHECKSUM_MISMATCH` | 上传的 `X-Checksum` 与服务端算出的不一致（第二期启用） |
 | 409 | `ORDER_ALREADY_PAID` | 取消一个已支付的订单（第三期启用） |
+| 409 | `QUOTE_STALE` | 报价过期、参数不匹配、价格变化或免费资格已占用（第四期启用） |
+| 409 | `MODERATION_ALREADY_REVIEWED` | 审核记录已被其他管理员复核（第五期启用） |
 | 410 | `TOKEN_INVALID` | 邮件令牌无效、已过期或已使用 |
+| 422 | `CONTENT_REJECTED` | 输入、参考图、产物或上传内容未通过审核（第五期启用） |
 | 413 | `FILE_TOO_LARGE` | 上传文件超过所属档位的 `max_file_bytes`（第二期启用） |
 | 429 | `RATE_LIMITED` | 触发限流，响应头带 `Retry-After` |
 | 429 | `CONCURRENCY_LIMITED` | 同一用户进行中的生成请求数超过上限（第四期启用） |
 | 502 | `UPSTREAM_ERROR` | 上游返回非 2xx 或响应无法解析，附 `upstreamStatus`（第四期启用） |
 | 503 | `REGISTRATION_DISABLED` | 注册开关关闭 |
+| 503 | `MODERATION_UNAVAILABLE` | 审核服务不可用且配置为拒绝放行（第五期启用） |
 | 504 | `UPSTREAM_TIMEOUT` | 上游超时，附 `phase` 说明是连接、首字节还是整体超时（第四期启用） |
 | 507 | `STORAGE_QUOTA_EXCEEDED` | 存储空间超额（本期仅登记，第三期配额校验上线后启用） |
 | 500 | `INTERNAL_ERROR` | 服务端异常，不暴露内部细节 |
@@ -123,11 +176,11 @@ description: 账号体系与后端服务规划第一期的详细开发底稿，�
 
 ### `server/internal/config/config.go`
 
-从环境变量读取配置，结构体承载，启动时校验必填项。`CREDENTIAL_MASTER_KEY` 本期不用但一并校验，避免第二期才发现没配。默认的 `MAIL_DRIVER=smtp` 下，SMTP 相关变量任一为空即启动失败并明确报错；`MAIL_DRIVER=log` 时跳过这组校验，只用于本地开发。
+从环境变量读取配置，结构体承载，启动时校验必填项。`CREDENTIAL_MASTER_KEY` 本期不用但一并校验，避免第二期才发现没配。默认的 `MAIL_DRIVER=smtp` 下，通用 SMTP 变量任一为空即启动失败并明确报错；当前小体量部署使用 QQ 邮箱示例（`smtp.qq.com:465`、SSL、授权码），但代码只实现通用 SMTP，不绑定 QQ；`MAIL_DRIVER=log` 时跳过这组校验，只用于本地开发。
 
 ### `server/internal/db/db.go`
 
-GORM 连接 PostgreSQL，`AutoMigrate` 全部模型，提供 `SeedPlans` 写入 `free` 与 `paid` 两档默认数据，提供 `EnsureAdmin` 依据 `ADMIN_EMAIL` 与 `ADMIN_PASSWORD` 创建或提升首个管理员。
+GORM 连接 MySQL 8.0，`AutoMigrate` 全部模型，提供 `SeedPlans` 写入 `free`、`paid`、`sunset` 三档默认数据，提供 `EnsureAdmin` 依据 `ADMIN_EMAIL` 与 `ADMIN_PASSWORD` 创建或提升首个管理员。
 
 `SeedPlans` 与 `EnsureAdmin` 每次容器重启都会执行，所以幂等语义必须钉死，不能只写「必须幂等」。`SeedPlans` 走 insert-if-missing：只有 `plans` 表里没有对应 `id` 时才插入默认数据，已存在的记录一行都不动。这样运维在管理后台或用 SQL 手工调过的档位额度不会被一次重启打回默认值；代价是改 `.env` 里的额度不再自动生效，后续调整档位一律走管理后台或直接改库，这是刻意选的。
 
@@ -137,7 +190,7 @@ GORM 连接 PostgreSQL，`AutoMigrate` 全部模型，提供 `SeedPlans` 写入 
 
 ```go
 type User struct {
-    ID              uuid.UUID  `gorm:"type:uuid;primaryKey"`
+    ID              uuid.UUID  `gorm:"type:char(36);primaryKey"`
     Email           string     `gorm:"uniqueIndex;not null"`
     Username        string     `gorm:"uniqueIndex;not null"`
     PasswordHash    string     `gorm:"not null"`
@@ -152,8 +205,8 @@ type User struct {
 }
 
 type RefreshToken struct {
-    ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-    UserID    uuid.UUID `gorm:"type:uuid;index;not null"`
+    ID        uuid.UUID `gorm:"type:char(36);primaryKey"`
+    UserID    uuid.UUID `gorm:"type:char(36);index;not null"`
     TokenHash string    `gorm:"uniqueIndex;not null"`
     ExpiresAt time.Time `gorm:"not null"`
     RevokedAt *time.Time
@@ -163,8 +216,8 @@ type RefreshToken struct {
 }
 
 type EmailToken struct {
-    ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-    UserID    uuid.UUID `gorm:"type:uuid;index;not null"`
+    ID        uuid.UUID `gorm:"type:char(36);primaryKey"`
+    UserID    uuid.UUID `gorm:"type:char(36);index;not null"`
     TokenHash string    `gorm:"uniqueIndex;not null"`
     Purpose   string    `gorm:"not null"` // verify_email | reset_password
     ExpiresAt time.Time `gorm:"not null"`
@@ -173,7 +226,7 @@ type EmailToken struct {
 }
 
 type Plan struct {
-    ID            string `gorm:"primaryKey"` // free | paid
+    ID            string `gorm:"primaryKey"` // free | paid | sunset
     Name          string
     StorageBytes  int64
     MaxFileBytes  int64
@@ -181,9 +234,9 @@ type Plan struct {
 }
 ```
 
-`plans` 是档位定义而不是订阅套餐，只描述存储侧的三个上限。`SeedPlans` 写入的两行取值必须与第三期一致：`free` 档 `storage_bytes` 500 MB（524288000）、`max_file_bytes` 50 MB（52428800）、`retention_days` 7；`paid` 档 1 GB（1073741824）、200 MB（209715200）、14。第二期的单文件校验与第三期的存储配额校验都直接读这张表，seed 数值写错会被下游原样沿用，而不会有第二处地方把它纠正回来。
+`plans` 是档位定义而不是订阅套餐，只描述存储侧的三个上限。`SeedPlans` 写入三行并与第三期一致：`free` 档 50 MB、单文件 20 MB、保留 7 天；`paid` 档 1 GB、单文件 200 MB、保留 15 天；`sunset` 档 200 MB、单文件 200 MB、保留 7 天。第二期暂时只读 `free`，第三期启用完整档位解析；seed 数值写错会被下游原样沿用，不能在业务代码再硬编码一套。
 
-没有 `subscriptions` 表，`users` 上也没有 `plan_id`：付费身份是 `credits.balance > 0` 的函数，随时能算出来，不需要一张表维护它的生命周期，也不需要处理到期、续费、宽限这一整套状态机。`retention_days` 本期没有任何代码读它，先写进模型是因为它是档位定义的固有属性，第三期的媒体保留期清理会直接用，届时不必再改表结构。
+没有 `subscriptions` 表，`users` 上也没有 `plan_id`：第三期会根据双桶余额与 `paid_until` 现算档位，赠送余额不产生付费身份，`paid_until` 结束后的 60 天内落 `sunset`。`retention_days` 本期没有代码读取，先写进模型是为了让后续阶段只接规则、不再改基础表结构。
 
 `users.last_login_at` 给第三期管理后台的「最近登录」列用，登录成功和刷新令牌成功时都要更新。只在登录时更新是不够的：长期开着页面、全靠静默刷新维持会话的用户会一直显示成很久没上线。
 
@@ -195,7 +248,7 @@ type Plan struct {
 
 ### `server/internal/mail/mail.go`
 
-SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不阻塞主流程——注册接口不能因为邮件服务抖动而返回失败，用户可以事后重发。发信失败记录 error 级日志。
+SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不阻塞主流程——注册接口不能因为邮件服务抖动而返回失败，用户可以事后重发。发信失败记录 error 级日志。连接安全模式由 `SMTP_SECURITY=ssl|starttls` 配置，QQ 邮箱使用授权码而不是登录密码，后续可以直接替换为其他 SMTP 服务。
 
 模板里的链接用 `APP_BASE_URL` 拼接：验证链接 `{APP_BASE_URL}/verify-email?token=xxx`，重置链接 `{APP_BASE_URL}/reset-password?token=xxx`。
 
@@ -240,7 +293,7 @@ SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不
 }
 ```
 
-注册成功即视为登录，同时异步发送验证邮件。
+注册成功即视为登录，同时异步发送验证邮件；注册成功不会自动发放完整免费赠送，免费额度要等邮箱验证、活动领取幂等和风险判断通过后再发放。
 
 错误：`VALIDATION_FAILED`、`EMAIL_TAKEN`、`USERNAME_TAKEN`、`RATE_LIMITED`、`REGISTRATION_DISABLED`。
 
@@ -288,6 +341,20 @@ SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不
 
 错误：`TOKEN_INVALID`、`VALIDATION_FAILED`。
 
+### POST `/api/me/free-grant/claim`
+
+需登录且邮箱已验证。按当前 `FREE_GRANT_CAMPAIGN_ID` 申请一次免费赠送资格，成功后写入 `free_grant_claims`。本期尚无 `credits` 与 `usage_records`，因此不直接改点数或试用计数；第三期由统一权益服务将非零点数幂等记入 `granted` 桶，第四期消费免费次数时以已批准领取记录和一次性用量计数共同判定。同一用户重复领取同一活动只返回既有结论。
+
+服务端在发放前同时检查：活动开关、每日预算、账号状态、邮箱哈希是否已领取、账号/IP/设备的限流与风险评分。IP 网段和设备只作为风险信号，不单独永久封禁共享网络。高风险请求返回 `FREE_GRANT_UNAVAILABLE`，不影响登录、用户自定义渠道和已有点数使用。
+
+成功 200：
+
+```json
+{ "campaignId": "signup-2026", "status": "granted", "imageTrials": 3, "videoTrials": 1, "grantedMicros": 0 }
+```
+
+错误：`UNAUTHORIZED`、`EMAIL_NOT_VERIFIED`、`FREE_GRANT_UNAVAILABLE`、`RATE_LIMITED`。
+
 ### GET `/api/me`
 
 需登录。返回：
@@ -295,7 +362,7 @@ SMTP 客户端封装与两个邮件模板。发信必须异步执行且失败不
 ```json
 {
   "user": { "id": "...", "email": "...", "username": "...", "displayName": "...", "avatarUrl": "", "role": "user", "emailVerified": true, "createdAt": "..." },
-  "plan": { "id": "free", "name": "免费", "storageBytes": 524288000, "maxFileBytes": 52428800, "retentionDays": 7 }
+  "plan": { "id": "free", "name": "免费", "storageBytes": 52428800, "maxFileBytes": 20971520, "retentionDays": 7 }
 }
 ```
 
@@ -414,11 +481,11 @@ profile.*            个人中心各字段与操作
 
 ### `docker-compose.yml`
 
-三个服务。`app` 是 nginx 加前端静态产物，对外映射 3000；`api` 是 Go 后端，只在内网暴露 8080；`db` 用 `postgres:17-alpine` 镜像，只在内网暴露 5432。`api` 依赖 `db` 健康检查通过后再启动，`app` 依赖 `api`。
+三个服务。`app` 是 nginx 加前端静态产物，对外映射 3000；`api` 是 Go 后端，只在内网暴露 8080；`db` 用 `mysql:8.0` 镜像，只在内网暴露 3306。`api` 依赖 `db` 健康检查通过后再启动，`app` 依赖 `api`。
 
-数据卷：`pgdata` 挂数据库，`media` 挂媒体目录（本期不写入，但先建好）。
+数据卷：`mysqldata` 挂数据库，`media` 挂媒体目录（本期不写入，但先建好）。
 
-`api` 的 healthcheck 探 `/readyz`，命令用 `wget -qO- http://127.0.0.1:8080/readyz`（alpine 自带 wget；运行阶段用 `scratch` 时改成后端二进制自带的健康检查子命令），`interval` 10 秒、`timeout` 3 秒、`retries` 5、`start_period` 15 秒，给 AutoMigrate 和写默认数据留出时间，否则首次启动会被判定为不健康并反复重启。`db` 用 `pg_isready -U $POSTGRES_USER`。`app` 只需要 `depends_on: api: condition: service_healthy`，nginx 自身不必再配 healthcheck。
+`api` 的 healthcheck 探 `/readyz`，命令用 `wget -qO- http://127.0.0.1:8080/readyz`（alpine 自带 wget；运行阶段用 `scratch` 时改成后端二进制自带的健康检查子命令），`interval` 10 秒、`timeout` 3 秒、`retries` 5、`start_period` 15 秒，给 AutoMigrate 和写默认数据留出时间，否则首次启动会被判定为不健康并反复重启。`db` 用 `mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD"`。`app` 只需要 `depends_on: api: condition: service_healthy`，nginx 自身不必再配 healthcheck。
 
 ### `nginx.conf`
 
@@ -446,7 +513,7 @@ location /api/ {
 
 `proxy_pass` **不能带尾斜杠**，这是这份配置里最容易踩的坑。写成 `http://api:8080/` 时，nginx 会把 location 匹配到的 `/api/` 前缀剥掉再转发，`/api/auth/login` 到后端就成了 `/auth/login`；而本文档所有接口都写作 `/api/...`，后端也统一注册在 `r.Group("/api")` 下，照字面实现会全线 404。不带尾斜杠则路径原样透传，和后端路由前缀严格对齐。以后改动这里，必须同时确认后端注册的前缀。
 
-体积上限拆成两档同样是必要的。`client_max_body_size 200m` 本来是为第二期 200 MiB 视频上传放开的，但它对 `/api/` 下所有接口一视同仁，包括画布保存接口 `PUT /api/canvases/{id}`——画布 `data` 存的是 jsonb，又不计入任何存储配额，用户反复提交 200 MB 的画布 JSON 就能把数据库撑爆。所以只有 `/api/media/` 放开到 200m，其余接口收到 2m。nginx 的前缀匹配是最长优先，两个 location 的书写顺序不影响结果。后端还要对画布 `data` 再做一次字节上限校验（建议 2 MB），超出返回 `VALIDATION_FAILED`：绕过 nginx 直连 8080 的请求同样要被拦住，反代不能当作唯一防线。
+体积上限拆成两档同样是必要的。`client_max_body_size 200m` 本来是为第二期 200 MiB 视频上传放开的，但它对 `/api/` 下所有接口一视同仁，包括画布保存接口 `PUT /api/canvases/{id}`——画布 `data` 存的是 JSON，又不计入任何存储配额，用户反复提交 200 MB 的画布 JSON 就能把数据库撑爆。所以只有 `/api/media/` 放开到 200m，其余接口收到 2m。nginx 的前缀匹配是最长优先，两个 location 的书写顺序不影响结果。后端还要对画布 `data` 再做一次字节上限校验（建议 2 MB），超出返回 `VALIDATION_FAILED`：绕过 nginx 直连 8080 的请求同样要被拦住，反代不能当作唯一防线。
 
 `X-Real-IP` 与 `X-Forwarded-For` 必须传，否则后端限流会把所有请求都算到 nginx 容器的同一个 IP 上，限流直接失效。后端要按 `X-Real-IP` 取客户端地址，并且只信任来自内网的这个头。
 
@@ -465,14 +532,20 @@ location /api/ {
 | `COOKIE_SECURE` | `true` | 是否给 cookie 加 `Secure` 属性，无 TLS 的内网或本地环境必须置 `false`，公网部署必须保持 `true` |
 | `LOG_LEVEL` | `info` | 日志级别，可选 `debug`、`info`、`warn`、`error` |
 | `MAIL_DRIVER` | `smtp` | 发信方式，`smtp` 走真实邮件服务，`log` 只把邮件内容与链接打到日志，供本地开发使用 |
+| `SMTP_SECURITY` | `ssl` | SMTP 安全模式，取 `ssl` 或 `starttls`；QQ 邮箱当前使用 `smtp.qq.com:465` 与邮箱授权码 |
 | `PORT` | `8080` | 后端 HTTP 监听端口，不要写死在代码里；改这个值必须同步改 `api` 的 healthcheck 与 `nginx.conf` 的 `proxy_pass` |
-| `POSTGRES_DB` | 无 | `db` 容器初始化时创建的库名 |
-| `POSTGRES_PASSWORD` | 无 | `db` 容器的初始数据库密码 |
-| `POSTGRES_USER` | 无 | `db` 容器的初始数据库用户，`db` 的 healthcheck `pg_isready -U $POSTGRES_USER` 也读它 |
+| `MYSQL_DATABASE` | 无 | `db` 容器初始化时创建的库名 |
+| `MYSQL_PASSWORD` | 无 | `db` 容器的初始数据库密码 |
+| `MYSQL_USER` | 无 | `db` 容器的初始数据库用户 |
+| `MYSQL_ROOT_PASSWORD` | 无 | `db` 容器 root 密码，供 healthcheck 使用 |
+| `FREE_GRANT_ENABLED` | `true` | 免费赠送总开关，被刷时关闭赠送但不影响已有账号登录 |
+| `FREE_GRANT_CAMPAIGN_ID` | 无 | 当前免费赠送活动标识，用于按活动幂等领取 |
+| `FREE_GRANT_DAILY_BUDGET_MICROS` | 无 | 每日免费赠送预算上限 |
+| `FREE_GRANT_RISK_THRESHOLD` | 无 | 风险评分阈值，达到后拒绝或转人工处理 |
 
 `MAIL_DRIVER=log` 时 SMTP 相关变量不参与必填校验，其余情况下任一为空仍然启动失败。
 
-三个 `POSTGRES_*` 变量是给 `db` 容器用的，由 postgres 镜像自己读取，后端进程一个都不读，但它们必须与 `DATABASE_URL` 里的用户名、密码、库名完全一致，否则数据库起得来、后端连不上。它们只在数据卷首次初始化时生效，`pgdata` 已经建好之后再改这三个值不会改动数据库里的真实账号，只会让 `DATABASE_URL` 对不上，要换值必须先删卷。
+四个 `MYSQL_*` 变量是给 `db` 容器用的，由 MySQL 镜像自己读取，后端进程通过 `DATABASE_URL` 连接；它们必须与连接串里的用户名、密码、库名一致。它们只在数据卷首次初始化时生效，`mysqldata` 已经建好之后再改这些值不会改动数据库里的真实账号，只会让连接串对不上，要换值必须先删卷。
 
 ## 本地开发
 
@@ -483,7 +556,7 @@ docker compose up -d db
 cd server && go run ./cmd/server
 ```
 
-后端不在容器里跑时，`DATABASE_URL` 要指向 `localhost:5432`，而不是 compose 网络里的 `db:5432`。本地的 `ADMIN_EMAIL`、`ADMIN_PASSWORD`、`JWT_SECRET` 等变量放在 `server/.env` 里，这个文件不进版本库。
+后端不在容器里跑时，`DATABASE_URL` 要指向 `localhost:3306`，而不是 compose 网络里的 `db:3306`。本地的 `ADMIN_EMAIL`、`ADMIN_PASSWORD`、`JWT_SECRET` 等变量放在 `server/.env` 里，这个文件不进版本库。
 
 ### Vite 代理
 
@@ -511,7 +584,7 @@ export default defineConfig({
 
 ## 测试策略
 
-后端用标准库 `net/http/httptest` 起测试服务器，不引入额外测试框架。三条关键路径必须覆盖：鉴权中间件（无 token、无效 token、过期 token 分别返回 `UNAUTHORIZED` 与 `TOKEN_EXPIRED`，合法 token 能把 user id 写进上下文）、注册到登录的完整流程（注册、发验证邮件、验证、登录、刷新、登出，发信驱动用 `log` 模式，从中取出令牌明文做断言）、限流（连续失败触发锁定、`Retry-After` 数值正确、窗口过期后自动恢复）。需要数据库的用例走集成测试，用 testcontainers 起一个临时 PostgreSQL，本地也可以直接连 `docker compose up -d db` 起的实例，用独立的测试库名避免污染开发数据。
+后端用标准库 `net/http/httptest` 起测试服务器，不引入额外测试框架。三条关键路径必须覆盖：鉴权中间件（无 token、无效 token、过期 token 分别返回 `UNAUTHORIZED` 与 `TOKEN_EXPIRED`，合法 token 能把 user id 写进上下文）、注册到登录的完整流程（注册、发验证邮件、验证、登录、刷新、登出，发信驱动用 `log` 模式，从中取出令牌明文做断言）、限流和免费赠送防刷（连续失败触发锁定、同一活动重复领取幂等、风险阈值与预算生效）。需要数据库的用例走集成测试，用 testcontainers 起一个临时 MySQL，本地也可以直接连 `docker compose up -d db` 起的实例，用独立的测试库名避免污染开发数据。
 
 前端用 Vitest，重点是 `client.ts` 的「单飞刷新 + 请求排队」：用假的 fetch 模拟多个并发请求同时返回 `TOKEN_EXPIRED`，断言刷新接口只被调用一次、所有请求都拿到重放后的成功结果、刷新失败时全部请求以同一个错误 reject 且登录态被清空。前面已经说过这是最容易写出 bug 的地方，并发问题靠手工点是验不出来的，必须有自动化测试。
 
@@ -560,6 +633,6 @@ export default defineConfig({
 
 守卫与限流：
 
-- 未登录访问任意业务页面跳转登录页，登录后跳回原页面。
+- 未登录访问画布、素材和工作台等原有业务页面仍可正常使用本地模式；访问 `/profile`、`/billing`、`/admin` 才跳转登录页，登录后跳回原页面。
 - 连续 5 次密码错误后账号被临时锁定，返回 `RATE_LIMITED` 并带 `Retry-After`。
 - 短时间内重复请求验证邮件被限流。
