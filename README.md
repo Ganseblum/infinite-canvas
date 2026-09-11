@@ -29,6 +29,12 @@
 >
 > 如果你需要稳定维护自己的分支，建议自行 fork 后独立开发。二次开发与 PR 请保留原作者信息和前端页面标识。
 
+## 分支与部署约定
+
+- `main` 是本 Fork 的稳定集成分支，部署使用经过验证的 `origin/main` 或对应版本 tag。
+- `upstream/main` 只作为源头代码，不直接部署；账号体系与服务端规划暂放在 `codex/account-backend-plan`。
+- 定期同步源头时先更新 `main`，再把 `main` 合并到规划或功能分支。完整流程见[**Fork 同步、分支与部署约定**](docs/content/docs/development/fork-maintenance.zh-CN.mdx)。
+
 ## 赞助商
 
 <table>

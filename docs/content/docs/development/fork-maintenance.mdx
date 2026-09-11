@@ -1,0 +1,43 @@
+---
+title: Fork maintenance and deployment
+description: Branch roles, upstream synchronization, and deployment rules for this fork
+---
+
+# Fork maintenance and deployment
+
+This repository is a maintained fork of `basketikun/infinite-canvas`.
+
+## Fixed remote and branch roles
+
+| Ref | Role |
+| --- | --- |
+| `upstream` | The original source repository. Treat `upstream/main` as read-only source code. |
+| `origin` | This fork, used for pushing reviewed changes and deployment. |
+| `main` | The only long-lived stable integration branch. It contains the latest upstream code plus accepted fork changes. |
+| `codex/account-backend-plan` | The current long-lived planning and implementation branch for the account and backend work. |
+
+Short-lived feature or synchronization branches are optional. The project does not require many permanent branches.
+
+## Synchronization procedure
+
+Run the following from a clean worktree:
+
+```bash
+git fetch upstream --prune
+git switch main
+git merge upstream/main
+git push origin main
+git switch codex/account-backend-plan
+git merge main
+git push origin codex/account-backend-plan
+```
+
+Review conflicts and the source changelog before pushing. If `main` has not added fork commits, the merge will normally be a fast-forward; after the fork has custom code, a regular merge is expected.
+
+## Development and deployment
+
+The account and backend plan is currently documentation only. The planned Go service belongs in this repository under `server/`, because it shares authentication, data routing, storage, and deployment decisions with `web/`. The eventual production stack is expected to use Docker Compose for the web app, API, database, and object storage integration.
+
+Deploy only from a reviewed commit on `origin/main` or from a release tag created from it. Do not deploy `upstream/main` or the planning branch directly. The current repository still primarily ships a static web application, and its production Docker static-resource path requires final verification before being treated as fully validated.
+
+When backend work is ready, merge it into `main` only after the phase gate and user acceptance checks in the account backend plan pass. Then deploy that tested `main` commit or tag; use the planning branch only for development or staging previews.

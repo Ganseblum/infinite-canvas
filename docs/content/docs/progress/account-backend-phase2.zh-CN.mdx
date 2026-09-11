@@ -1,0 +1,755 @@
+---
+title: 第二期执行计划：凭据托管与数据资源化
+description: 账号体系与后端服务规划第二期的中文执行计划，涵盖凭据加密、资源化接口、对象存储、偏离纠正与验收
+---
+
+# 第二期执行计划：凭据托管与数据资源化
+
+本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第二期的中文执行计划。前置条件是[第一期](/zh-CN/docs/progress/account-backend-phase1)已交付并通过验收。
+
+## 范围界定
+
+### 本期要做
+
+凭据 AES-GCM 加密托管、画布与素材与生成记录三类业务资源的 REST 接口、媒体文件对象存储、单条记录粒度的乐观锁与软删除、单文件大小校验、「未验证邮箱禁止上传」约束，以及前端数据层从「本地全量加载」改造为「服务端按需加载」。
+
+### 本期不做
+
+存储总量配额、生成次数统计、管理后台，留到第三期。
+
+单文件大小校验本期就做，因为 `plans.max_file_bytes` 在第一期已建好，且需要给 nginx 的 `client_max_body_size` 一个后端兜底。存储**总量**校验依赖用量统计，留到第三期。
+
+孤儿媒体文件的回收同样留到第三期。判断一个 `storage_key` 还有没有人引用，需要扫描三张业务表的 `JSON` 字段，这与第三期的存储用量重算是同一类工作，放在一起做更合适；本期只保证「用户主动删除的文件立刻从磁盘消失」。
+
+**媒体保留期清理也在第三期。** 这里要提醒一句：本期上传的媒体在产品上并非永久保存——免费档 7 天、付费档 15 天，按最后触达时间续期，到期由第三期的清理任务删除。本期不实现这个逻辑，但设计前端时心里要有这件事，别做出「文件传上去就一定还在」的假设，尤其是导出和分享这类功能。
+
+## 阶段目标与完成定义
+
+本期目标是把登录态的数据权威从浏览器迁到服务端，同时保持匿名态继续纯本地。完成标准不是“新增了一组 CRUD”，而是两套实现通过同一契约工作、跨设备一致、冲突可见、媒体不会越权或误删。
+
+| 目标 | 完成定义 | 主要证据 |
+| --- | --- | --- |
+| 凭据托管 | 第三方配置加密落库，换设备可恢复，密文和日志中没有明文 Key | 数据库检查与双设备验收 |
+| 资源化数据 | 画布、素材、生成记录支持分页、筛选、详情和软删除 | API 集成测试与网络请求检查 |
+| 媒体存储 | `local`、`s3` 两种驱动遵循同一接口，上传前校验身份、邮箱和单文件大小 | 驱动契约测试与真实上传下载 |
+| 冲突可控 | 同一画布并发写返回 409，不同画布互不影响 | 双客户端并发测试 |
+| 双作用域隔离 | 匿名数据和每个账号数据不混读，登录、退出、切账号时旧异步结果不能回写 | 作用域切换测试 |
+| 旧链路退出 | WebDAV 和整域同步没有调用方，匿名态必要的本地回收逻辑仍安全 | 全局搜索与匿名回归 |
+
+## 实施任务与顺序
+
+| 顺序 | 任务 | 主要文件 | 具体改动 | 任务完成检查 |
+| --- | --- | --- | --- | --- |
+| 1 | 固定数据契约 | `web/src/services/data/types.ts`、后端 model/DTO | 先定义摘要、详情、分页、游标、revision、错误语义和作用域 | local/remote 两套实现通过同一契约测试 |
+| 2 | 跑通单张画布纵向切片 | canvas handler/service/repository、前端 canvas data/store/page | 实现列表、详情、创建、保存、冲突和删除 | 两台设备编辑冲突可复现且不静默覆盖 |
+| 3 | 扩展素材与生成记录 | asset/generation 后端与前端数据层 | 服务端筛选、标签关联表、游标分页、pending 恢复 | 千条数据仍按页加载，无全量请求 |
+| 4 | 接凭据托管 | `server/internal/crypto/`、credentials handler、配置页 | AES-GCM、随机 nonce、主密钥校验和配置恢复 | 库中搜不到明文，换设备调用成功 |
+| 5 | 接媒体存储 | `server/internal/storage/`、media handler、前端 media client | local/s3 驱动、校验和、幂等上传、302 预签名读取、媒体 cookie | 两驱动通过同一上传读取删除用例 |
+| 6 | 完成作用域切换 | `services/data/index.ts`、`scope.ts`、相关 query keys | 匿名、用户 id 隔离，取消旧请求并清缓存 | A 退出后 B 看不到 A 的任何列表或详情 |
+| 7 | 删除旧同步链路 | WebDAV、`app-sync.ts`、配置和文案 | 验收新链路后一次删净，不保留双写或兼容分支 | 全局搜索无残留，匿名导入导出仍可用 |
+
+## 阶段检查与纠偏
+
+| 偏离信号 | 说明 | 立即纠偏 |
+| --- | --- | --- |
+| 登录态 store 启动时拉取全量业务数据 | 资源化退化为远端 manifest | 停止扩展其他资源，先改成列表摘要 + 按 id 详情 |
+| 页面直接判断登录态并分别调用 localforage/API | 双实现逻辑散落，后续必然漂移 | 收口到 `services/data/`，页面只依赖统一接口 |
+| revision 作用在整个用户域 | 不同画布会产生无意义冲突 | 把 revision 下放到单条画布并补并发用例 |
+| 登录态执行客户端孤儿 GC | 按需加载下会把未加载资源误判为孤儿 | remote 实现改为空操作，服务端 GC 留到 Phase 3 |
+| 用 `data::text ILIKE`、PostgreSQL 数组或 GIN | 实现偏离 MySQL 8.0 技术基线 | 改为 MySQL `JSON`、生成列或明确字段查询，标签用 `asset_tags` |
+| S3 上传绕过后端直传且缺少同等校验 | 邮箱、配额、校验和边界失效 | 本期保持后端代理写入，优化直传另立设计 |
+| 为保留 WebDAV 做双写 | 出现两个权威源和不可解释冲突 | 在新链路验收后删除旧链路，不做兼容层 |
+
+每完成一种资源都要分别在匿名态和登录态跑同一组创建、读取、更新、删除用例。发现行为漂移时先修改共享契约测试，再修两套实现，不能只在页面增加条件分支掩盖差异。
+
+## 阶段门禁
+
+- 自动化：后端资源、权限、revision、媒体驱动和凭据加密测试通过；前端数据契约、作用域切换和防抖保存测试通过；`bun run typecheck` 与 `bun run test` 通过。
+- 数据：A/B 账号、匿名作用域互不泄漏；跨账号资源统一返回 404；列表响应不含大字段。
+- 安全：凭据密文、对象存储私有桶、预签名缓存、路径穿越和媒体 cookie 均通过专项检查。
+- 数据安全：remote 路径不存在客户端 GC；删除和清理测试证明共享媒体不会被误删。
+- 交接：只有双设备、双存储驱动、匿名模式和旧链路移除全部验收后，Phase 3 才能开始。
+
+## 为什么放弃整域同步模型
+
+本期最初的方案是沿用 WebDAV 时代的同步模型：把每个域打包成一份 `DomainManifest` JSON 整体上传下载，客户端用 `mergeById` 合并本地与远端，再靠一张 tombstone 表和本地快照差集处理删除。这套模型已经否决，理由如下。
+
+**整域打包无法分页、搜索、排序。** 画布列表页想按更新时间翻页、素材页想按标签和关键字筛选，这些都是数据库最擅长的事；一旦整个域被压成一个 JSON，任何筛选都只能在客户端做，而前提是先把全部数据下载下来。用户攒的数据越多，打开列表页越慢，这个曲线没有拐点。
+
+**生成记录是只增的历史流，全量拉取不可接受。** 一个正常使用几个月的用户能攒下几千条生成记录，manifest 模型下每次同步都要把它们整体上传下载一遍。用「合并」去处理一条只追加、不修改的日志流，本身也是错配。
+
+**revision 锁在整个域上，粒度太粗。** 两台设备改的是完全不同的两张画布，也会因为共享同一个域的 revision 而冲突，然后触发一轮「重新拉取 → 合并 → 重写」。用户无法理解为什么编辑 A 画布会被提示与 B 画布冲突。
+
+**删除需要额外机制，而软删除天然解决。** manifest 模型必须专门建一张 tombstone 表，再在客户端维护快照差集来推断「哪些 id 是本地删掉的」，每次合并都要按这两份数据过滤。资源化之后，删除就是给那一行写个 `deleted_at`，服务端本来就知道哪条记录被删了。
+
+**「复用 `app-sync.ts` 的合并逻辑」不是省力点。** 原方案把它当作本期的最大优势，但那其实是拿一个更差的架构换短期工作量：冲突解决放在客户端，意味着任何一个装着旧版本前端的浏览器都可能写坏数据，而服务端没有任何约束能拦住。
+
+改为**服务端权威的资源化 REST 模型**之后，这些问题一次性消失：分页、搜索、排序回到 SQL；写入针对单条记录，乐观锁的粒度是一张画布；删除就是 `deleted_at`；客户端不再需要任何合并逻辑。代价是前端要从「全量进内存」改成「按需加载」，这是本期前端工作量的主要来源，下面的「前端改造」一节会逐个页面讲清楚。
+
+## 凭据托管
+
+### 加密方案
+
+AES-256-GCM。主密钥从 `CREDENTIAL_MASTER_KEY` 读取，是 base64 编码的 32 字节，启动时解码并校验长度，不合法直接启动失败。
+
+每次写入生成新的 12 字节随机 nonce，与密文分列存储在 `user_credentials.nonce` 和 `payload`。`key_version` 当前恒为 1，为后续密钥轮换预留。
+
+明文是 `AiConfig` 序列化后的 JSON，包含 `baseUrl`、`apiKey` 以及 `channels[]` 里每个渠道的 `baseUrl` 和 `apiKey`。
+
+本期新增五张表：`canvases`、`assets`、`generations`、`media_files` 与 `user_credentials`。其中 `user_credentials` 此前只在规划文档里做了字段描述、没有给出可落地结构，这里补齐：
+
+```go
+type UserCredential struct {
+    UserID     uuid.UUID `gorm:"type:char(36);primaryKey"`
+    Payload    []byte    `gorm:"not null"`
+    Nonce      []byte    `gorm:"not null"`
+    KeyVersion int       `gorm:"not null;default:1"`
+    CreatedAt  time.Time
+    UpdatedAt  time.Time
+}
+```
+
+`UserID` 直接做主键，一个用户只有一份凭据，不需要另立一列自增或 uuid 主键，也顺带保证了「一人一行」这个约束由数据库而不是业务代码来守。`UpdatedAt` 不能省：下面的 `GET /api/credentials` 响应里带 `updatedAt`，配置页要用它告诉用户这份配置是什么时候同步上去的，没有这一列这个字段就没有来源。时间统一按 RFC3339、UTC、带毫秒序列化。
+
+### 接口
+
+**GET `/api/credentials`** 需登录，返回解密后的完整配置：
+
+```json
+{ "config": { "channelMode": "...", "baseUrl": "...", "apiKey": "...", "channels": [ ... ] }, "updatedAt": "..." }
+```
+
+从未保存过时返回 200 且 `config` 为 `null`，不要返回 404，避免前端多写一个分支。
+
+**PUT `/api/credentials`** 请求体 `{ "config": { ... } }`，加密落库后返回 204。
+
+### 必须写进文档的风险
+
+响应里的 `apiKey` 是**完整明文**，不能脱敏，因为前端拿到它之后要用它直连第三方 AI 渠道。这意味着任何能拿到用户 access token 的人都能读走该用户的全部厂商密钥。
+
+这正是第一期把 refresh token 放进 httpOnly cookie、access token 只存内存的原因。本期实现时不要为了「方便调试」把 token 落到 localStorage，那会让整条防线失效。
+
+**这个风险不会随第四期消失，要按长期存在来对待。** 第四期只把平台预设模型的调用收到后端，用户自己配置的渠道仍然保持浏览器直连——那条链路必须拿到明文 Key 才能发请求，所以 `GET /api/credentials` 会一直返回明文，不会改成打码。
+
+因此第一期定下的那条防线要长期维持，不能因为「后端转发做完了」就放松：access token 只存内存、refresh token 走 httpOnly cookie、两者都不进 localStorage。同时也不必为这个暴露面去叠加二次加密或临时令牌换密钥这类机制——它们挡不住已经拿到 access token 的攻击者，只会增加复杂度。真正有效的是守住令牌本身。
+
+同时 `SECURITY.md` 与 `docs/content/docs/support/security.mdx` 必须在本期同步更新，写明服务端持有用户第三方密钥、加密算法、主密钥保管方式与风险边界。
+
+## 数据资源化
+
+### 资源划分
+
+三类业务资源，每类一张表，一行一个业务对象：
+
+| 资源 | 对应前端概念 | 分页方式 |
+| --- | --- | --- |
+| `canvases` | 画布项目 | 页码分页，列表只返回摘要 |
+| `assets` | 我的素材 | 页码分页，返回完整对象 |
+| `generations` | 生图与视频工作台的生成记录 | 游标分页，只增历史流 |
+
+`generations` 一张表取代了原来 `image-workbench` 与 `video-workbench` 两个域，两者的差别只是 `kind` 字段取 `image` 还是 `video`，其余字段完全一致，没有理由拆成两张表。
+
+媒体二进制不进业务表。业务表里存的是 `storage_key`，文件本体由 `media_files` 索引、由对象存储持有。
+
+### 表结构
+
+按第一期的写法用 GORM 模型定义，`AutoMigrate` 建表。字段级说明见规划文档的数据模型一节，这里只给可直接落地的结构与索引。
+
+```go
+type Canvas struct {
+    ID              uuid.UUID      `gorm:"type:char(36);primaryKey"`
+    UserID          uuid.UUID      `gorm:"type:char(36);not null"`
+    Title           string         `gorm:"type:varchar(200);not null"`
+    Data            datatypes.JSON `gorm:"type:json;not null"`
+    Revision        int64          `gorm:"not null;default:1"`
+    NodeCount       int            `gorm:"not null;default:0"`
+    ConnectionCount int            `gorm:"not null;default:0"`
+    CoverKey        string         `gorm:"type:varchar(80)"`
+    CreatedAt       time.Time
+    UpdatedAt       time.Time
+    DeletedAt       gorm.DeletedAt
+}
+
+type Asset struct {
+    ID         uuid.UUID      `gorm:"type:char(36);primaryKey"`
+    UserID     uuid.UUID      `gorm:"type:char(36);not null"`
+    Kind       string         `gorm:"type:varchar(16);not null"` // text | image | video
+    Title      string         `gorm:"type:varchar(200);not null"`
+    Data       datatypes.JSON `gorm:"type:json;not null"`
+    StorageKey string         `gorm:"type:varchar(80)"`
+    Bytes      int64          `gorm:"not null;default:0"`
+    CreatedAt  time.Time
+    UpdatedAt  time.Time
+    DeletedAt  gorm.DeletedAt
+}
+
+type Generation struct {
+    ID         uuid.UUID      `gorm:"type:char(36);primaryKey"`
+    UserID     uuid.UUID      `gorm:"type:char(36);not null"`
+    Kind       string         `gorm:"type:varchar(16);not null"` // image | video
+    Status     string         `gorm:"type:varchar(16);not null"` // pending | success | failed
+    Prompt     string         `gorm:"type:text"`
+    Model      string         `gorm:"type:varchar(120)"`
+    Config     datatypes.JSON `gorm:"type:json"`
+    Result     datatypes.JSON `gorm:"type:json"`
+    DurationMs int            `gorm:"not null;default:0"`
+    CreatedAt  time.Time
+    DeletedAt  gorm.DeletedAt
+}
+
+type MediaFile struct {
+    ID         uuid.UUID `gorm:"type:char(36);primaryKey"`
+    UserID     uuid.UUID `gorm:"type:char(36);not null"`
+    StorageKey string    `gorm:"type:varchar(80);not null"`
+    ObjectPath string    `gorm:"type:varchar(300);not null"`
+    MimeType   string    `gorm:"type:varchar(120);not null"`
+    Bytes      int64     `gorm:"not null"`
+    Checksum   string    `gorm:"type:varchar(64);not null"`
+    CreatedAt  time.Time
+}
+```
+
+索引：
+
+| 表 | 索引 | 服务的查询 |
+| --- | --- | --- |
+| `canvases` | `(user_id, deleted_at, updated_at desc)` | 列表页默认查询：当前用户、未删除、按更新时间倒序翻页 |
+| `assets` | `(user_id, deleted_at, updated_at desc)`；`asset_tags` 建 `(tag, asset_id)` | 前者服务翻页，后者服务标签筛选 |
+| `generations` | `(user_id, kind, created_at desc)` | 工作台历史的游标分页 |
+| `media_files` | 唯一 `(user_id, storage_key)` | 归属校验与重复上传时的幂等覆盖 |
+
+三个细节值得单独说明。
+
+`Generation` 刻意没有 `UpdatedAt`。除了 pending 记录那一次终态收敛（见下面的生成记录接口），它写完就不再变，加一个几乎永远等于 `CreatedAt` 的字段只会让人以为它可以随意编辑；那次收敛也不需要时间戳，结果落定的确切时刻对用户没有意义，列表排序始终按 `CreatedAt`。
+
+`MediaFile` 刻意没有 `DeletedAt`。删除媒体时磁盘上的对象也要一并删掉，留一行「已删除但文件已经不在了」的记录没有任何用处，因此走硬删除。
+
+MySQL 不使用 PostgreSQL 数组。标签存入 `asset_tags` 关联表，通过 `(asset_id, tag)` 唯一索引和 `(tag, asset_id)` 普通索引支持筛选。
+
+`user_credentials` 的结构在上面的凭据托管一节给出，同样由 `AutoMigrate` 建表。原先设计里的 `sync_domains` 与 tombstone 表不再需要，`sync_files` 改名为 `media_files`。
+
+### 乐观锁与冲突语义
+
+只有 `canvases` 有 `revision`，因为只有画布存在「两台设备长时间同时编辑同一个对象」的场景。
+
+写入用单条带条件的 UPDATE 完成：
+
+```sql
+UPDATE canvases SET data = $1, revision = revision + 1, updated_at = now()
+WHERE id = $2 AND user_id = $3 AND revision = $4 AND deleted_at IS NULL
+```
+
+影响行数为 1 就成功，返回新的 `revision`；为 0 时再查一次当前记录，存在则返回 409 并附上服务端的 `revision`，不存在则返回 404。这样不需要显式事务或行锁，也不存在「先读后写」之间的竞态窗口。
+
+素材和生成记录不加乐观锁。素材是一次改一条、体量很小的对象，冲突概率低且后果轻微，last-write-wins 足够；生成记录压根不支持修改。为不存在的并发场景加锁，只会让前端多写一堆无用的冲突分支。
+
+### 软删除取代 tombstone 表
+
+三张业务表都带 `deleted_at`，删除即写入时间戳。列表与详情查询一律带 `deleted_at IS NULL`，被软删除的记录对客户端而言就是不存在。
+
+重复删除同一个 id 返回 204，保持幂等；删除后再 `GET` 该 id 返回 404。
+
+这样就不需要 tombstone 表，也不需要客户端维护本地快照差集。原方案里「本地删掉的画布下次同步又被带回来」是合并模型特有的 bug，在这个模型下它不会发生——客户端根本没有机会把一份包含已删除记录的全量数据写回服务端。
+
+## 接口定义
+
+### 通用约定
+
+全部资源接口需登录，全部在查询条件里强制带 `user_id = 当前用户`。**跨用户访问统一返回 404 而不是 403**，避免通过状态码差异探测某个 id 是否存在。
+
+页码分页的参数与响应形状统一：
+
+| 项 | 约定 |
+| --- | --- |
+| `page` | 从 1 开始，缺省 1 |
+| `size` | 缺省 20，上限 100，超出返回 `VALIDATION_FAILED` |
+| `q` | 关键字，对标题做大小写不敏感的包含匹配，空串视为不筛选 |
+| `sort` | 取 `updatedAt`、`createdAt`、`title`，前缀 `-` 表示倒序，缺省 `-updatedAt`，不在白名单内返回 `VALIDATION_FAILED` |
+| 响应 | `{ "items": [ ... ], "total": 37, "page": 1, "size": 20 }` |
+
+`sort` 必须走白名单枚举再映射到列名，不能把参数拼进 SQL。
+
+本期新增或首次启用的错误码，其余沿用第一期：
+
+| HTTP | code | 触发场景 |
+| --- | --- | --- |
+| 403 | `EMAIL_NOT_VERIFIED` | 未验证邮箱调用媒体上传，第一期预留、本期首次启用 |
+| 409 | `REVISION_CONFLICT` | 画布 `PUT` 携带的 `revision` 与服务端不一致，`error` 里附当前 `revision` |
+| 409 | `CHECKSUM_MISMATCH` | 客户端传了 `X-Checksum`，与服务端算出的 sha256 不一致 |
+| 413 | `FILE_TOO_LARGE` | 上传文件超过所属套餐的 `max_file_bytes` |
+
+`VALIDATION_FAILED` 在本期覆盖的场景包括：分页参数越界，`sort`、`kind` 或 `status` 不在枚举内，游标无法解码，`storageKey` 不匹配正则，以及对已是终态的生成记录再做状态收敛。
+
+### 画布
+
+**GET `/api/canvases?page=&size=&q=&sort=`**
+
+```json
+{
+  "items": [
+    { "id": "8f...", "title": "分镜草图", "nodeCount": 12, "connectionCount": 8, "coverKey": "", "updatedAt": "..." }
+  ],
+  "total": 37,
+  "page": 1,
+  "size": 20
+}
+```
+
+**响应里没有 `data`**，这是列表页能秒开的全部原因。单页响应大小只和条数有关，与画布内容多少无关。
+
+`connectionCount` 不能省：列表卡片现在显示的是「N 个节点 · N 条连线」，只给 `nodeCount` 会让这句文案缺一半。
+
+`coverKey` 要额外说明一句：**当前列表页根本没有封面图**，卡片是纯色块加标题和统计文字。取值规则下面已经定义（取第一个图片节点的 `storageKey`），但卡片如何展示封面是一项全新的 UI 工作，不是把现有功能搬过来。排期时要把它当新功能算，别默认它跟着数据层改造顺手就完成了。
+
+**POST `/api/canvases`** 请求 `{ "title": "未命名画布", "data": { ... } }`，`data` 可缺省为空画布。成功 201：
+
+```json
+{ "id": "8f...", "title": "未命名画布", "revision": 1, "nodeCount": 0, "connectionCount": 0, "coverKey": "", "createdAt": "...", "updatedAt": "..." }
+```
+
+**GET `/api/canvases/{id}`** 返回完整数据：
+
+```json
+{
+  "id": "8f...",
+  "title": "分镜草图",
+  "data": { "nodes": [], "connections": [], "viewport": { "x": 0, "y": 0, "k": 1 }, "chatSessions": [], "activeChatId": null, "backgroundMode": "lines", "showImageInfo": false },
+  "revision": 12,
+  "nodeCount": 12,
+  "connectionCount": 8,
+  "coverKey": "image:Ab3xY",
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+错误：`NOT_FOUND`。
+
+**PUT `/api/canvases/{id}`** 请求 `{ "data": { ... }, "revision": 12 }`，整体覆盖 `data`。成功 200 返回 `{ "revision": 13, "updatedAt": "..." }`。
+
+`title` **不在这个接口里改**。自动保存每隔几秒就会打一次 PUT，如果它同时覆盖标题，另一台设备刚刚 `PATCH` 过的新标题就会被一个还揣着旧标题的编辑器悄悄改回去。重命名是低频轻操作，走 `PATCH` 更安全也更省流量。
+
+`nodeCount`、`connectionCount` 与 `coverKey` 由服务端从 `data.nodes` 与 `data.connections` 的数组长度算出来（节点数、连线数，以及第一个图片节点的 `storageKey`），客户端传了也忽略。放任客户端上报会让列表页显示的数字和真实内容对不上，而这三个字段存在的意义就是替代解析 `data`。
+
+冲突时 409：
+
+```json
+{ "error": { "code": "REVISION_CONFLICT", "message": "画布已在其他设备被修改", "revision": 15 } }
+```
+
+**PATCH `/api/canvases/{id}`** 请求 `{ "title": "新标题" }`，只改元数据。成功 200 返回 `{ "id": "...", "title": "...", "updatedAt": "..." }`。
+
+**这个接口不递增 `revision`**，因为它不碰 `data`。重命名不应该让另一台设备正在进行的编辑作废。
+
+**DELETE `/api/canvases/{id}`** 软删除，返回 204，重复调用同样 204。
+
+删除画布**不级联删除它引用的媒体文件**，因为同一个 `storage_key` 可能同时被素材或生成记录引用。回收策略留到第三期结合用量统计一起做。
+
+### 素材
+
+**GET `/api/assets?page=&size=&kind=&q=&tag=&sort=`**
+
+`kind` 取 `text`、`image`、`video`，缺省不筛选。`q` 只匹配 `title` 和 `data.content`。`tag` 可以重复传，多个标签之间是“同时包含”语义，通过 `asset_tags` 分组并用 `HAVING COUNT(DISTINCT tag) = ?` 实现。
+
+`q` 的范围必须写死在标题与文本正文两个业务字段上，不能图省事把整个 `JSON` 转成文本搜索。只有文本素材的 `data.content` 带正文；图片和视频素材的 `data` 只有 `storageKey`、`mimeType` 和宽高等元数据。MySQL 可通过明确的 `JSON_UNQUOTE(JSON_EXTRACT(data, '$.content'))` 或持久化生成列查询正文，但不能让用户搜索 `png` 或一段 `storageKey` 就命中所有媒体。
+
+本期使用 `LIKE CONCAT('%', ?, '%')` 匹配标题和提取后的正文。前后通配符无法利用普通 B-tree，但单用户几百条素材时可接受；数据量真实增长后再根据 MySQL 慢查询决定是否增加 FULLTEXT 或持久化生成列，不提前引入 PostgreSQL 扩展思路。
+
+响应形状与画布列表一致，但 `items` 里是**完整的素材对象**：
+
+```json
+{
+  "items": [
+    { "id": "a1...", "kind": "image", "title": "参考图", "tags": ["草稿", "人物"], "data": { "storageKey": "image:Ab3xY", "width": 1024, "height": 1024, "bytes": 812345, "mimeType": "image/png", "source": "手动添加", "note": "", "metadata": {} }, "storageKey": "image:Ab3xY", "bytes": 812345, "createdAt": "...", "updatedAt": "..." }
+  ],
+  "tags": ["草稿", "人物", "背景"],
+  "total": 128, "page": 1, "size": 20
+}
+```
+
+素材不像画布那样拆摘要，因为它的 `data` 里只有尺寸、格式和 `storageKey` 这些几百字节的元数据，图片本体在媒体接口里。为它再设计一套摘要结构是没必要的复杂度。
+
+顶层的 `tags` 是**该用户的标签全集**，用来驱动筛选栏的标签选择器，只在 `page=1` 时返回，翻到后续页时这个字段省略（前端按「拿不到就沿用第一页那份」处理即可）。这里直接选 facets，不再另开 `GET /api/assets/tags`：标签选择器和列表永远同时出现，拆成两个接口等于每次进素材页都多打一次请求；而且项目里已经有现成范式——`web/src/components/prompts/use-prompt-list.ts:25` 就是从首页响应里取 `tags` 拼候选列表的，照抄那套写法即可，前端连新的加载状态都不用加。
+
+服务端的 `assets` 行装不下现在前端的 `Asset` 对象，两边字段必须逐个对齐才动手。`web/src/stores/use-asset-store.ts:9-26` 定义的 `AssetBase` 带 `coverUrl`、`source`、`note`、`metadata`，`ImageAsset.data` 有必填的 `dataUrl`，`VideoAsset.data` 有必填的 `url`，这些在上面的响应里都不存在，去向如下：
+
+| 前端字段 | 服务端去向 | 说明 |
+| --- | --- | --- |
+| `id` | `assets.id` | 原来由前端 `nanoid()` 生成，改为服务端返回 uuid |
+| `kind` | `assets.kind` | 一一对应，枚举不变 |
+| `title` | `assets.title` | 一一对应 |
+| `tags` | `asset_tags.tag` | 一一对应，落关联表 |
+| `createdAt`、`updatedAt` | `assets.created_at`、`assets.updated_at` | 服务端生成，请求体传了也忽略 |
+| `data.content`（文本素材） | `data.content` | 文本正文，`q` 搜的就是这个键 |
+| `data.storageKey` | `assets.storage_key` 与 `data.storageKey` | 列上存一份供归属校验与删除，`data` 里留一份供前端直接拼 URL |
+| `data.width`、`data.height`、`data.mimeType` | `data` 内同名键 | 元数据原样保留 |
+| `data.bytes` | `assets.bytes` 与 `data.bytes` | 单列存一份，第三期的用量统计要按它汇总 |
+| `data.dataUrl`（图片） | **不存储** | 由 `/api/media/{storageKey}` 取代 |
+| `data.url`（视频） | **不存储** | 同上 |
+| `coverUrl` | **不存储** | 同样由 `storageKey` 推导出 `/api/media/{storageKey}` |
+| `source` | `data.source` | 保留，进 `data` 的同名键 |
+| `note` | `data.note` | 保留，进 `data` 的同名键 |
+| `metadata` | `data.metadata` | 整块保留，服务端不解析 |
+
+三个「不存储」的字段是这次改造的要害。`dataUrl`、`url`、`coverUrl` 现在装的都是 blob URL 或 base64，是本地存储时代的产物：前端从 IndexedDB 取出 Blob，`URL.createObjectURL` 生成一个地址，再塞回对象里。接上媒体接口后这些地址完全由 `storageKey` 决定，存进数据库既冗余又必然失效——blob URL 离开当前页面就不指向任何东西。前端的 `Asset` 类型要跟着改：三个字段全部删掉，渲染处直接拼 `/api/media/{storageKey}`，`data.storageKey` 从可选改成必填，`web/src/pages/assets/index.tsx:404` 那句 `asset.coverUrl || asset.data.dataUrl` 的兜底也随之取消。
+
+`source`、`note`、`metadata` 塞进 `data` 而不是各自建列，是因为它们只被展示、从不参与筛选和排序。为一个只在详情面板里露一次面的字段单独建列，列本身、索引和后续迁移的成本都是白花的。
+
+**POST `/api/assets`** 请求体是除 `id` 与时间戳外的完整对象，成功 201 返回创建结果。
+
+**GET `/api/assets/{id}`** 返回单条，错误 `NOT_FOUND`。
+
+**PATCH `/api/assets/{id}`** 接受 `title`、`tags`、`data`、`storageKey`、`bytes` 的任意子集，成功 200 返回更新后的完整对象。没有乐观锁，后写的覆盖先写的。
+
+**DELETE `/api/assets/{id}`** 软删除，返回 204。
+
+### 生成记录
+
+**GET `/api/generations?kind=&status=&cursor=&size=`**
+
+| 参数 | 约定 |
+| --- | --- |
+| `kind` | `image` 或 `video`，缺省不筛选，枚举外返回 `VALIDATION_FAILED` |
+| `status` | `pending`、`success`、`failed`，缺省不筛选，枚举外返回 `VALIDATION_FAILED` |
+| `cursor` | 上一页响应里的 `nextCursor`，缺省从最新一条开始 |
+| `size` | 缺省 20，上限 100，超出返回 `VALIDATION_FAILED` |
+
+按 `(created_at desc, id desc)` 排序。`cursor` 是 `base64url(created_at 的 RFC3339Nano 形式 + "|" + id)`，对客户端不透明，解不出来返回 `VALIDATION_FAILED`。
+
+```json
+{
+  "items": [
+    { "id": "g1...", "kind": "image", "status": "success", "prompt": "...", "model": "gpt-image-1", "config": { ... }, "result": { "images": [ { "storageKey": "image:Ab3xY", "width": 1024, "height": 1024 } ] }, "durationMs": 8421, "createdAt": "..." }
+  ],
+  "nextCursor": "eyJ0..."
+}
+```
+
+没有下一页时 `nextCursor` 为 `null`。
+
+**`status=pending` 是唯一不分页的取值。** 它一次返回该用户全部 pending 记录，`nextCursor` 恒为 `null`，并设 100 条的安全上限。视频页刷新后要恢复轮询，必须拿到所有还在生成中的记录，而它们按创建时间可能散落在任意一页，让调用方翻着页去找等于把一个必然出现的 bug 写进接口。上限取 100 是因为 pending 本来就是短暂状态，正常账号同时进行中的视频不会超过个位数，真攒到 100 条说明有任务卡死了，这时候截断反而是对的。`status` 取其余两个值或不传时，仍然走正常的游标分页。
+
+**这里不返回 `total`**，也不用页码分页。生成记录是持续追加的历史流：用 offset 分页时，新记录插在头部会让翻页出现重复项和漏项；而 `COUNT(*)` 在只增表上会随数据量线性变慢，无限滚动本来也不需要总数。画布和素材是「集合」不是「流」，用户翻页期间列表基本稳定，offset 分页够用，还能显示总数和跳页。
+
+**POST `/api/generations`** 请求 `{ "kind": "image", "status": "success", "prompt": "...", "model": "...", "config": { ... }, "result": { ... }, "durationMs": 8421 }`，成功 201 返回创建的完整记录。
+
+`status` 的枚举就是 `pending`、`success`、`failed` 三个值，写入与查询都按这份白名单校验。`pending` 表示任务已提交、结果还没回来；`success` 表示产物已生成并写进 `result`；`failed` 表示任务终止，失败原因写进 `result`。图片是同步生成，请求返回时结果已经确定，直接落 `success` 或 `failed`，不会出现 `pending`；视频是异步任务，提交时就先以 `pending` 落一条记录，用户刷新页面后才能靠 `status=pending` 把它找回来继续轮询，等轮询到终态再把这条记录收敛成 `success` 或 `failed`。前端 `web/src/pages/video/index.tsx:40` 用的就是这三个值，服务端沿用同一套枚举，两边不需要任何转换。
+
+**PATCH `/api/generations/{id}`** 只用于上面那次终态收敛，请求体只接受 `{ "status": "success" | "failed", "result": { ... }, "durationMs": 8421 }`，成功 200 返回更新后的完整记录。
+
+**GET `/api/generations/{id}`** 返回单条，错误 `NOT_FOUND`。
+
+**DELETE `/api/generations/{id}`** 软删除，返回 204。
+
+`PATCH` 的口子必须开得足够窄：服务端只在记录当前 `status` 为 `pending` 时放行，对已是终态的记录返回 `VALIDATION_FAILED`，`kind`、`prompt`、`model`、`config` 一律不接受修改。生成记录写完就是历史事实，唯一有理由变的只有那个还没落定的结果；不留这条窄缝，视频记录就只能删了重建，`id` 与 `createdAt` 都会变，它在历史列表里的位置也会跟着跳。
+
+### 媒体文件
+
+`storageKey` 出现在路径里，必须做严格校验，正则与前端的 `storageKeyPattern` 对齐并收紧字符集：
+
+```txt
+^(image|video|audio|file|video-reference|audio-reference):[A-Za-z0-9_-]{1,64}$
+```
+
+不匹配一律 400。**绝不能把 `storageKey` 直接拼进文件路径。** 落盘路径由服务端按 `{MEDIA_ROOT}/{userID}/{prefix}/{id}` 重新组装，其中 `prefix` 是冒号前的类型段、`id` 是冒号后的部分。`userID` 前缀天然隔离不同用户，同时杜绝路径穿越。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| HEAD | `/api/media/{storageKey}` | 存在返回 200，响应头带 `Content-Length`、`Content-Type`、`X-Checksum`；不存在 404 |
+| GET | `/api/media/{storageKey}` | 返回二进制流，带 `Content-Type`、`ETag`（用 checksum）与 `Cache-Control: private, max-age=31536000, immutable`，**必须能直接作为 `<img src>` 使用** |
+| PUT | `/api/media/{storageKey}` | 请求体为二进制，`Content-Type` 必填，`X-Checksum` 选填；成功 201 返回 `{ storageKey, bytes, checksum, mimeType }` |
+| DELETE | `/api/media/{storageKey}` | 删除记录与对象，返回 204；不存在也返回 204 |
+
+上传错误：403 `EMAIL_NOT_VERIFIED`、409 `CHECKSUM_MISMATCH`、413 `FILE_TOO_LARGE`。
+
+服务端**始终自行计算 sha256**，不信任客户端提供的值，`X-Checksum` 只用于比对校验；不一致时既不写库也不留文件。
+
+重复 PUT 同一个 `storageKey` 是覆盖语义：`media_files` 靠唯一约束 `(user_id, storage_key)` 更新原有行，不新增记录。这让上传中断后的重试是安全的。
+
+#### GET 必须是可直接引用的 URL
+
+这条约束决定了前端能省掉多少代码，所以单独说明。`GET /api/media/{storageKey}` 要设计成浏览器能直接请求的普通 URL，让前端写 `<img src="/api/media/image:Ab3xY">` 就能显示，**而不是下载 Blob 再转 ObjectURL**。
+
+现状是 `image-storage.ts` 与 `file-storage.ts` 各维护一个模块级的 `storageKey → ObjectURL` Map，打开画布时把所有图片批量解成 ObjectURL。这个 Map 永不驱逐，用户在画布间来回切换内存就单调增长。改成直连 URL 后浏览器 HTTP 缓存接管一切，两个 Map、批量 hydration 的异步逻辑、以及随之而来的泄漏全部消失。
+
+这里有个必须解决的冲突：第一期把 access token 定为只存内存、refresh token 放在 `Path=/api/auth` 的 `ic_refresh` cookie 里，而 `<img src>` 发出的请求两个都够不着。解法是**登录与刷新时额外下发一个只读媒体 cookie**，名字是 `ic_media`，属性 `HttpOnly; Secure; SameSite=Lax; Path=/api/media`，其中 `Secure` 与第一期一样由 `COOKIE_SECURE` 环境变量控制，方便本地 HTTP 调试。它的权限压到最小：只能读当前用户自己的媒体，不能调任何业务接口，更读不到凭据。即使泄漏，损失也远小于 access token——后者能直接读走用户全部第三方 API Key。
+
+`ic_media` 的值是一枚独立签发的短期 JWT，claims 里只放 `sub`（用户 id）与 `scope: "media"`，有效期与 refresh token 同为 30 天，并在每次刷新时与 refresh token 一起轮换。刷新接口下发新的 `ic_refresh` 时必须同时重新下发 `ic_media`，否则用户连续在线超过 30 天后，画布里的图会在某一刻集体变成裂图，而 access token 还是好的，排查起来会格外费劲。
+
+服务端的校验是三步：先验签，再确认 `scope` 等于 `media`，最后取 `sub` 作为 user_id 去 `media_files` 查归属。任何一步不过都返回 401，不要因为「只是张图片」就放宽成静默返回占位图或者干脆放行；`scope` 这一步尤其不能省，少了它，一枚 access token 被拿去当媒体 cookie 用也能通过，等于把两套凭据的边界抹平。
+
+鉴权中间件对 `/api/media/*` 的规则要单独写死：`GET` 与 `HEAD` 接受 `ic_media` cookie 或 `Authorization: Bearer` 二者之一，任一通过即放行，两者都带时以 Bearer 为准；`PUT` 与 `DELETE` 只接受 Bearer，不认 cookie。写操作认 cookie，就等于把这枚专为 `<img src>` 准备的凭据变成一个能被跨站请求利用的写入口，而 `SameSite=Lax` 只挡得住一部分场景，不该拿它当唯一防线。
+
+登出时要连同 `ic_media` 一起清除。第一期的登出只清 `ic_refresh`，本期多了一枚 cookie，登出就必须下发两个立即过期的 cookie，且各自带回原本的 `Path`（`ic_refresh` 是 `/api/auth`，`ic_media` 是 `/api/media`），Path 不对浏览器不会覆盖到原来那枚。漏掉这一步，用户在公用电脑上登出后，别人凭残留的 cookie 仍然能把他的图一张张拉下来。
+
+上传仍走带 `Authorization` 头的正常请求。不要为了省事把 `ic_media` 做成通用会话 cookie，那等于推翻第一期的令牌设计。
+
+### 未验证邮箱禁止上传
+
+只在 `PUT /api/media/{storageKey}` 上加这条约束，画布、素材、生成记录的读写全部不限制。未验证用户仍能创建画布、写文本素材、记录生成历史，只是不能占用磁盘，也不能领取平台免费赠送，既控制了成本，又不至于让账号感觉完全不可用。
+
+第一期预留的 `EMAIL_NOT_VERIFIED` 错误码在此处首次启用。前端收到后要引导用户去验证邮箱并提供重发入口，同时**不要让整个保存动作失败**——画布本身该存还得存，只是其中引用的媒体缺失，提示要说清楚是哪些文件没能上传。
+
+## 后端新增文件
+
+| 路径 | 职责 |
+| --- | --- |
+| `internal/crypto/crypto.go` | AES-GCM 加解密，主密钥装载与长度校验 |
+| `internal/storage/storage.go` | `Storage` 接口定义 |
+| `internal/storage/local.go` | 本地磁盘实现，负责路径组装、原子写入与 sha256 计算 |
+| `internal/handler/credential.go` | 凭据托管的 GET 与 PUT |
+| `internal/handler/canvas.go` | 画布列表、详情、创建、`PUT` 乐观锁更新、`PATCH` 元数据、软删除 |
+| `internal/handler/asset.go` | 素材的分页筛选与增删改查 |
+| `internal/handler/generation.go` | 生成记录的游标分页、`status=pending` 的不分页查询、写入、终态收敛、单条读取与软删除 |
+| `internal/handler/media.go` | 媒体文件的 HEAD、GET、PUT、DELETE，含 `storageKey` 校验、`ic_media` cookie 与 Bearer 的双路鉴权、配额判断 |
+
+`Storage` 接口保持最小：
+
+```go
+type Storage interface {
+    Put(ctx context.Context, path string, r io.Reader) (bytes int64, checksum string, err error)
+    Get(ctx context.Context, path string) (io.ReadCloser, error)
+    Delete(ctx context.Context, path string) error
+    Stat(ctx context.Context, path string) (bytes int64, err error)
+}
+```
+
+本地实现写入时先写临时文件再 rename，避免上传中断留下半个文件被后续请求当成完整文件。`storageKey` 到 `objectPath` 的转换只在 `handler/media.go` 里做一次，`Storage` 拿到的已经是组装好的安全路径，接口层不再关心 key 的格式。
+
+四个业务 handler 的分页、排序、软删除过滤写法必然重复，把它们抽成 `internal/handler` 内的共用小函数即可，不要为此引入一层 repository 抽象——本期的查询都是单表操作，多一层只会让调用链变长。
+
+## 前端改造
+
+### 删除的文件
+
+| 路径 | 原因 |
+| --- | --- |
+| `web/src/services/app-sync.ts` | 整域 manifest 组装、`mergeById` 合并、快照差集、媒体收集与垃圾回收全部随模型作废 |
+| `web/src/services/webdav-sync.ts` | WebDAV 传输层，没有调用方了 |
+
+这两个文件要一次删干净，不要保留任何「本地优先 + 合并」的残留代码路径。两套数据模型并存时，一个「画布内容对不上」的报障没法判断是哪条路径写坏的。
+
+### 新增资源客户端
+
+| 路径 | 导出 |
+| --- | --- |
+| `web/src/services/api/canvas.ts` | `listCanvases`、`createCanvas`、`getCanvas`、`updateCanvas`、`patchCanvas`、`deleteCanvas` |
+| `web/src/services/api/assets.ts` | `listAssets`、`createAsset`、`getAsset`、`patchAsset`、`deleteAsset` |
+| `web/src/services/api/generations.ts` | `listGenerations`、`createGeneration`、`patchGeneration`、`getGeneration`、`deleteGeneration` |
+| `web/src/services/api/media.ts` | `headMedia`、`getMedia`、`putMedia`、`deleteMedia` |
+
+两个返回类型要在这里说清楚。`listAssets` 的返回值除了 `items`、`total`、`page`、`size`，还带一个可选的 `tags: string[]`——服务端只在 `page=1` 时下发，类型上要写成可选，调用方不能假设每页都有。`patchGeneration` 只允许传 `status`、`result`、`durationMs` 三个键，类型定义就按这三个键收窄，别直接复用 `Partial<Generation>`，否则调用处很容易顺手把 `prompt` 也传上去然后收到一个 `VALIDATION_FAILED`。
+
+全部走第一期的 `web/src/services/api/client.ts`：自动注入 token、自动静默刷新、把 `error.code` 转成类型化异常。不要在这四个文件里自己写 `fetch` 或 axios。
+
+这四个文件只负责发请求和做类型转换，**不承载缓存、不承载合并、不写业务判断**。加载时机由页面决定，缓存交给 react-query。
+
+### 数据层从全量进内存改为按需加载
+
+这是本期前端的核心改动，先看现状：
+
+- `web/src/stores/canvas/use-canvas-store.ts` 用 zustand `persist` 配一个自定义 `PersistStorage`，把 `projects: CanvasProject[]` 整体写进 localforage，每个 project 里带着完整的 `nodes`、`connections`、`chatSessions`。
+- `web/src/stores/use-asset-store.ts` 同样用 `persist` 持久化 `assets: Asset[]` 全量。
+- `web/src/pages/image/index.tsx` 与 `web/src/pages/video/index.tsx` 各自 `localforage.createInstance` 出 `image_generation_logs` / `video_generation_logs`，页面挂载时 `iterate` 出全部记录再排序。
+
+三处的共同点是「打开页面等于把该域的全部数据装进内存」。改造后：
+
+**两个 store 去掉 `persist`**，连同 `canvasStorage`、`assetStorage` 这两个自定义 `PersistStorage` 实现一起删除。数据权威在服务端，localforage 不再承担业务数据的持久化职责。
+
+**store 保留，但只放当前会话的内存态**：正在编辑的那张画布、UI 选中项、保存状态。列表数据不进 store，它属于「服务端状态」，交给 react-query。
+
+**`hydrated` 标志随之失去意义**，它表达的是「localforage 读完了」。所有依赖 `hydrated` 做加载态判断的地方（画布列表页、画布编辑页）改用 react-query 的 `isPending`。
+
+**列表与详情的请求、缓存、失效统一交给 `@tanstack/react-query`**（项目已有依赖）。约定 query key：`["canvases", params]`、`["canvas", id]`、`["assets", params]`、`["generations", kind]`。写操作成功后 `invalidateQueries` 对应前缀，不要手写「改完之后往列表数组里 splice 一下」的同步逻辑。不要自己用 `useState` 造 `loading` / `error` 再配 `useEffect` 发请求。
+
+**媒体的本地缓存层整个删除，缓存交给浏览器。** `web/src/services/image-storage.ts` 与 `file-storage.ts` 现在把二进制存进 localforage、再转成 blob URL 返回，这一层连同两个 ObjectURL 缓存 Map 一起删掉，节点直接用 `<img src="/api/media/{storageKey}">`。
+
+「那每次打开画布岂不是要重下几十张图」这个顾虑由 HTTP 缓存回答。媒体是不可变的——一个 `storageKey` 对应的内容不会变，重复 PUT 只发生在上传中断重试的场景。所以 `GET /api/media/{storageKey}` 可以直接下发 `Cache-Control: private, max-age=31536000, immutable` 加 `ETag`，第二次打开同一张画布时浏览器根本不发请求。这比自己用 IndexedDB 造一层缓存更省事，也不用操心容量上限、驱逐策略和 ObjectURL 释放。
+
+### 画布列表页
+
+`web/src/pages/canvas/index.tsx` 改为 `useQuery(["canvases", { page, size, q, sort }], listCanvases)`，渲染 `items` 里的摘要，分页用 Ant Design 的 `Pagination` 配响应里的 `total`。
+
+`web/src/components/canvas/canvas-project-card.tsx` 里的 `CanvasProjectCard` 目前接收一个完整的 `CanvasProject`，要改成接收摘要类型（`id`、`title`、`nodeCount`、`connectionCount`、`coverKey`、`updatedAt`）。卡片上「N 个节点 · N 条连线」这句文案（第 55 行）原本读的是 `project.nodes.length` 与 `project.connections.length`，改用两个计数字段。封面直接写 `<img src={"/api/media/" + coverKey}>`，`coverKey` 为空时保持现有的纯色块样式。
+
+卡片上那个单项导出按钮会失效，它现在直接把完整 `project` 交给 `web/src/lib/canvas/canvas-export.ts` 的 `exportCanvasProjects`。摘要里没有 `data`，导出必须改成先 `GET /api/canvases/{id}` 拉详情再打包。列表页的批量导出同理。
+
+顶部新增搜索框与排序选择，两者都作为查询参数交给服务端，不在前端 `filter`。搜索框要防抖再触发请求。
+
+「删除全部」按钮需要重新考虑：它现在的实现是 `projects.map((project) => project.id)` 取全量 id，分页之后前端手里根本没有全量 id。改成只对当前选中项批量删除，或者直接去掉这个入口。
+
+`mode=new` 与 `mode=recent` 的自动进入逻辑要改：`new` 调 `createCanvas` 拿到 id 再跳转，`recent` 取列表第一页的第一条、列表为空时退回创建。原来依赖 `hydrated` 的守卫改为依赖查询的 `isSuccess`，`autoOpenRef` 那个只跑一次的守卫保留。
+
+导入 zip 的流程改为两步：先把包里的媒体二进制逐个 `PUT /api/media/{storageKey}`，再 `POST /api/canvases` 建画布。顺序不能反，否则画布引用的图还没上传，另一台设备打开就是一片破图。
+
+### 画布编辑页与防抖自动保存
+
+`web/src/pages/canvas/project.tsx` 进入时 `useQuery(["canvas", id], getCanvas)`，拿到 `data` 后灌进页面本地的 `nodes`、`connections`、`chatSessions` 等 state，`revision` 存在 ref 里。
+
+`hydrateCanvasImages` 与 `hydrateAssistantImages` 这两个函数**要从异步批量解析改成同步拼 URL**。它们现在的职责是把每个 `storageKey` 查 IndexedDB 取出 Blob、创建 ObjectURL、写进 `metadata.content`；改成直连 URL 之后，这件事退化成一句 `content = "/api/media/" + storageKey`，`Promise.all` 和 `await` 全都不需要了，连带 `project.tsx` 里那个 `restore()` 的异步等待也可以去掉。
+
+**加载态必须区分三种情况，这是最容易埋雷的地方。** 现有逻辑是二态的：`hydrated` 完成后 `openProject` 找不到项目就 `navigate("/canvas", { replace: true })` 把用户送回列表页。本地读盘几乎不会失败，所以「找不到」等价于「不存在」。改成网络请求后，`isPending`、404、网络错误是三件不同的事——**照搬二态逻辑会导致用户断网时被当成「画布不存在」直接踢走，还顺手丢掉未保存的编辑**。只有明确的 404 才允许跳转，网络错误必须停在原页展示重试。
+
+现在页面里有两个 effect 在状态变化时调 `updateProject`（一个存结构、一个把 viewport 防抖 500 毫秒后存），store 再防抖 400 毫秒写 localforage。这三段防抖合并成一条保存链路：
+
+1. 任何会改变 `data` 的状态变化（`nodes`、`connections`、`chatSessions`、`activeChatId`、`backgroundMode`、`showImageInfo`、`viewport`）都把画布标记为脏。
+2. 空闲 2 秒触发一次 `PUT /api/canvases/{id}`。如果用户一直在连续操作，最多 30 秒强制保存一次，避免长时间拖拽期间一次都没落盘。
+3. **保存请求串行**：上一个 PUT 没返回之前不发下一个，返回后如果又脏了立刻补发。并发 PUT 会自己和自己制造 revision 冲突。
+4. 每次成功后用响应里的新 `revision` 覆盖本地 ref。
+5. 页面卸载、路由切走、`visibilitychange` 转 hidden 时，若仍是脏的就立刻发一次保存。
+6. 顶栏显示保存状态：保存中、已保存、保存失败可重试。失败必须可见且可手动重试，不能静默丢弃。
+
+切换画布时要确保 pending 的保存指向正确的 id，不能把 A 画布的内容 PUT 到 B 上。按项目既有约定，这些定时器与事件监听都要在 effect 的 cleanup 里成对清理。
+
+**动手前必须先补上节点缩放的写入抑制。** 拖动节点时 `handleNodeMouseDown` 会把 `historyPausedRef` 置为 true，整个拖拽过程一次 store 都不写，松手才提交一次。但**节点缩放没有这层保护**——`handleResizeMove` 每个 mousemove 都调 `setNodes`，既没有 rAF 节流也没设置任何暂停标记。现在无所谓，因为写 store 只是一次数组 `map`；接上防抖保存之后，虽然 2 秒防抖能挡住网络请求，但每次 mousemove 都会重建整个 `nodes` 数组并触发整页重渲染，拖拽会明显卡顿。缩放开始时要和拖动一样设置暂停标记，结束时统一提交一次。
+
+同理，文本节点内容、prompt 输入、config 输入这三处目前也是**每个按键写一次 state**。它们的写入要在保存链路的出口统一防抖，不要在每个 handler 里各加一个。
+
+媒体上传的时机独立于画布保存：生成或导入产生新图片时立刻 `PUT /api/media/{storageKey}`，不要攒到保存画布时再批量上传。画布的 `data` 里只存 `storageKey`，二进制还没上传成功就把引用写进去，等于生产一张必然破图的画布。
+
+重命名走 `PATCH`，不进入自动保存链路，也不改本地 `revision`。
+
+### 修订冲突的处理
+
+PUT 返回 409 `REVISION_CONFLICT` 说明另一台设备或另一个标签页在此期间保存过。**不要静默覆盖，也不要静默丢弃本地改动。**
+
+弹一个 Modal，标题写明「该画布在其他设备被修改」，给两个选项：
+
+- **用我的版本覆盖**：取 `error.revision` 作为新的 base 重发一次 PUT。
+- **重新加载**：丢弃本地未保存的改动，重新拉一次详情。
+
+按钮文案要说清后果（覆盖会丢掉对方的改动，重载会丢掉自己未保存的改动），不要用「确定 / 取消」这种看不出结果的写法。弹窗打开期间暂停自动保存，否则每 2 秒会再弹一次。
+
+不做自动合并。画布是带坐标和连线的图结构，自动合并出来的结果多半是两边都不认识的画布，还不如把选择权交给用户。
+
+### 生成记录改为游标分页
+
+`web/src/pages/image/index.tsx` 与 `web/src/pages/video/index.tsx` 现在挂载时读取全部本地记录再排序，改为 `useInfiniteQuery`，`getNextPageParam` 取响应里的 `nextCursor`，`LogPanel` 滚动到底自动加载下一页。
+
+`LogPanel` 顶部那个显示 `logs.length` 的 `Tag` 要改成「已加载 N 条」或直接去掉，列表接口不再返回总数。同理，「全选」按钮的语义变成「选中已加载的全部」，文案要跟着调整。
+
+生成完成后调 `createGeneration` 写记录，成功后 `invalidateQueries(["generations", kind])` 让新记录出现在列表顶部。生成产物本身先上传媒体、再写记录，顺序不能反。
+
+删除选中记录改为逐条 `deleteGeneration`。两个页面里的 `LOG_STORE_KEY` 常量与 `localforage.createInstance` 调用一并删除。
+
+视频页有个额外问题要处理：`resumePendingLogs` 现在从「已全量加载的历史列表」里筛出 `status` 为 pending 的记录来恢复轮询。分页之后第一页未必包含那些 pending 记录，这套恢复逻辑会静默失效，用户刷新页面后正在生成的视频就再也不会更新状态。它改为在页面挂载时单独调一次 `GET /api/generations?kind=video&status=pending`，这个查询不分页、一次返回全部，与无限滚动那份历史列表是两个独立的 query，不要混用同一个 key。
+
+配套的写入顺序也要理顺：提交视频任务时先 `createGeneration` 落一条 `status: "pending"` 的记录并把 `id` 记住，轮询结束后先上传产物媒体、再用 `patchGeneration` 把这条记录收敛成 `success` 或 `failed`，最后 `invalidateQueries(["generations", "video"])`。不要等任务成功了才补写记录——那样中途刷新页面就什么都恢复不了，`status=pending` 这个查询也就没有任何东西可查。
+
+### 素材页改为服务端筛选
+
+`web/src/pages/assets/index.tsx` 现在把全部素材读进内存，再用三层 `useMemo` 做关键字过滤、类型过滤和数组切片分页。三层全部换成查询参数：`q`、`kind`、`tag`、`page`、`size` 直接交给 `GET /api/assets`，`Pagination` 用响应里的 `total` 驱动。关键字输入防抖 300 毫秒左右再发请求。
+
+标签筛选是本期新增的能力。现有页面只有关键字和类型两个筛选条件，服务端支持 `tag` 之后，可以在筛选栏加一个标签选择器，多选之间是「同时包含」。
+
+标签选择器的候选列表需要单独的数据来源。画布侧栏现在是用 `Array.from(new Set(assets.flatMap(a => a.tags)))` 从全量素材里实时算出来的，服务端分页后这个算法拿不到全量数据。本期定为**走 facets**，不另开 `GET /api/assets/tags`：`GET /api/assets` 的第一页响应里直接带该用户的 `tags` 全集（接口定义见上面的素材一节），前端从首页结果里取，翻页时沿用不重复请求。下面提到的四个入口共用这一份候选数据。
+
+还要注意**同一套内存筛选逻辑在项目里有四份拷贝**，不止素材页：`canvas-side-panel.tsx` 的 `CanvasAssetsTab`（还额外做了按 kind 分组且完全没有分页）、`asset-picker-modal.tsx` 的 `MyAssetsTab`、以及 `agent-site-tools.ts` 的 `assets_list`。只改素材页会留下三处仍然依赖全量数据的死代码，它们会在 store 去掉全量数组后直接报错。四处都要改，三个 UI 入口的搜索框也都要补 300 毫秒防抖。
+
+`use-asset-store.ts` 里的 `cleanupImages` 要整块删除，连同它调用的两个清理函数一并删掉：`web/src/services/image-storage.ts` 的 `cleanupUnusedImages`，以及 `web/src/services/file-storage.ts:52` 的 `cleanupUnusedMedia`（`use-asset-store.ts:91-92` 一次把两个都调了）。它们的实现都依赖「同时拿到全部素材和全部画布」来判断哪些文件已经没人引用，这个前提在按需加载之后不再成立——手里只剩一页数据还去扫本地库删「没人引用的」文件，删掉的正是别的页面还在用的东西。孤儿媒体的回收改为服务端职责，留到第三期。
+
+**这是本期唯一可能直接造成数据丢失的改动，两个函数都要删，不能只删一个。** 它们的调用点有两处，删掉 store action 之后这两处会直接编译不过，正好当作检查清单：`web/src/pages/canvas/project.tsx:188` 取的 `cleanupAssetImages`（画布内删除当前项目时调用）与 `web/src/components/canvas/canvas-delete-projects-dialog.tsx:14` 取的 `cleanupImages`（列表页确认删除时调用）。两处必须和删除动作放在同一批改动里处理完，不要留下一个「本地清理还在跑、数据已经在服务端」的中间态。
+
+### 凭据接入与配置页
+
+`use-config-store` 移除 `webdav` 字段与 `WebdavSyncConfig` 类型。AI 配置改为登录后从 `/api/credentials` 拉取填充，用户修改后回写服务端，本地 localStorage 只作为离线缓存。回写要做防抖，配置页每敲一个字符就发一次请求是不可接受的。
+
+`web/src/pages/config/` 里的 WebDAV 区块整体删除。**不要用「云端同步」区块替换它。** 资源化之后不存在「手动触发一次同步」这个动作，每次编辑都会自动落到服务端；保存状态显示在画布编辑页顶栏，配置页不需要任何同步入口。原方案打算复用的 `AppSyncProgress` 进度回调也随 `app-sync.ts` 一起删除。
+
+### 容易漏掉的连带改动
+
+下面这几个文件不在上面任何一节的主线里，但都会被本期改动波及。它们的共同点是「看起来跟数据层没关系」，所以最容易被漏掉，落地时按这张表逐个确认。
+
+| 路径 | 要改什么 |
+| --- | --- |
+| `web/src/components/canvas/canvas-delete-projects-dialog.tsx` | 确认删除时依次调 `deleteProjects(ids)` 与 `cleanupImages()`（第 13-17 行）。`cleanupImages` 整个删掉；`deleteProjects` 从同步的数组过滤变成逐条 `DELETE /api/canvases/{id}`，确认按钮要加 loading、失败要给提示，删完 `invalidateQueries(["canvases"])`，不能像现在这样点完就无条件关弹窗 |
+| `web/src/components/layout/config-local-storage.tsx` | 第 13-14 行把 `image_generation_logs` 与 `video_generation_logs` 映射成展示名。这两个本地日志库本期删除，映射不跟着删，「本地存储」面板会永久显示两个 0 条记录的条目，用户会以为数据丢了 |
+| `web/src/services/local-storage-usage.ts` | 逐个 object store 统计记录数与字节数。去掉 `persist` 之后本地只剩媒体缓存，画布、素材、生成记录都不在了，面板的标题与说明文案要跟着改口径，别让用户以为业务数据仍然存在浏览器里 |
+| `web/src/components/canvas/canvas-project-card.tsx` | 见上面的画布列表页一节：改收摘要类型，统计文案改读 `nodeCount` 与 `connectionCount`，导出按钮先拉详情 |
+| `web/src/lib/canvas/canvas-export.ts` | `exportCanvasProjects` 依赖完整的 `CanvasProject`，并用 `getImageBlob` / `getMediaBlob` 从 IndexedDB 取二进制打包。这两个取数函数随媒体缓存层一起删除，导出改成按 `storageKey` 逐个 `GET /api/media/{storageKey}` 拿 Blob；`exportCanvasNodes` 同理 |
+| `web/src/stores/canvas/use-canvas-ui-store.ts` | 本身不持久化，可以保留，但 `selectedProjectIds` 现在是跨页累积的：翻页后它仍然存着上一页的 id，而当前页拿不到那些数据。批量删除与「删除全部」的语义要基于当前页重新界定，切换页码或筛选条件时清空选中 |
+| `web/src/stores/use-workbench-agent-store.ts` | `tasks` 只存内存、上限 30 条，是 Agent 面板的任务态，与服务端 `generations` 是两套东西。它的 `status` 枚举是 `queued` / `running` / `succeeded` / `failed`，和服务端的 `pending` / `success` / `failed` 不是一套，接生成记录时不要混用，也不要拿它当历史列表的数据源 |
+
+## 数据迁移
+
+不做迁移。项目尚未上线，没有需要保留的线上数据，后端只要 `AutoMigrate` 建表即可，不需要迁移脚本。
+
+用户浏览器里已有的 IndexedDB 数据（画布、素材、生成记录与媒体二进制）**不做自动上传**。自动上传需要写一套一次性的搬运逻辑，还要处理部分失败、重复导入和 `storageKey` 冲突，而这些代码跑完一次之后就是死代码。需要保留旧内容的用户可以用现有的画布导出功能导出 zip，登录后再通过导入入口带上去。
+
+这一点要在发布说明里写清楚，避免用户升级后以为数据丢了。
+
+## 旧同步链路移除清单
+
+原来的清单要求「等云端同步验收通过后再执行」，本期不适用：`app-sync.ts` 与 `webdav-sync.ts` 是同一套模型的两半，资源化改造落地时它们已经没有调用方，留着只会让人以为还存在第二条数据通路。本期内一次删干净。
+
+| 位置 | 操作 |
+| --- | --- |
+| `web/src/services/webdav-sync.ts` | 整个文件删除 |
+| `web/src/services/app-sync.ts` | 整个文件删除 |
+| `web/src/stores/use-config-store.ts` | 一共五处，漏任何一处不是 TS 报错就是界面残留：`WebdavSyncConfig` 类型（56 行）与 `ConfigTabKey` 里的 `"webdav"` 成员（63 行）、`defaultWebdavSyncConfig` 常量（114 行）、store 里的 `webdav` 字段与 `updateWebdavConfig` action（124、129、193、204 行）、`partialize` 里的 `webdav`（218 行）、`merge` 里的 `persistedWebdav` 与它的回填（222、229 行） |
+| `web/src/services/config-file.ts` | 配置导出移除 `webdav` 字段，导出提示里关于 WebDAV 凭据的说明一并修改 |
+| `web/src/pages/config/` | 移除 WebDAV 表单区块与连接测试按钮，不新增同步区块 |
+| `web/src/i18n/locales/zh-CN.ts` | 删除 `config.webdav.*` 整段，以及随 `app-sync` 失效的同步进度文案 |
+| `web/src/i18n/locales/en-US.ts` | 同上，两个文件必须保持对称 |
+| `README.md`、`docs/` | 更新所有提到「可自行配置 WebDAV 同步」的说明 |
+
+删除后全局搜索 `webdav`（不区分大小写）与 `app-sync` 确认无残留，并执行一次 `bun run typecheck`。
+
+## 验收清单
+
+凭据托管：
+
+- 在 A 设备配置 AI 渠道并保存，B 设备登录同一账号后配置自动出现且可正常生图。
+- 直接查数据库，`user_credentials.payload` 是不可读的二进制，搜不到明文 API Key。
+- 每次保存后 `nonce` 都不同。
+- 主密钥配错或长度不对时后端启动失败并明确报错。
+
+画布资源：
+
+- 列表页的翻页、关键字搜索、按更新时间与标题排序都由服务端完成，浏览器网络面板里看不到一次性拉取全部画布的请求。
+- 列表接口的响应体不含 `data`，单页大小与画布内容多少无关。
+- 列表卡片上「N 个节点 · N 条连线」两个数字都有值且正确，与打开画布后数出来的实际数量一致；在画布里加一条连线再回列表，连线数跟着变。
+- 编辑画布停手 2 秒后自动保存成功，顶栏显示「已保存」；持续拖动节点不停手时，最多 30 秒也会保存一次。
+- 断网后继续编辑，保存失败有明确提示且可手动重试，恢复网络后重试成功。
+- **断网状态下打开一张画布，页面停在原地展示重试，不会被当成「画布不存在」跳回列表页。**
+- 缩放节点时界面不卡顿，松手后只发出一次保存请求；连续输入文本时同样只在停手后发一次。
+- 两台设备打开同一张画布，A 保存后 B 再保存，B 收到 409 并弹出选择框；选「用我的覆盖」后 A 刷新看到 B 的内容，选「重新加载」后 B 看到 A 的内容且本地改动被丢弃。
+- 重命名画布不会让另一台设备正在进行的编辑产生 409。
+- 删除画布后列表里消失，直接 `GET /api/canvases/{id}` 返回 404，再次 DELETE 仍返回 204。
+
+素材与生成记录：
+
+- 素材页的关键字、类型、标签筛选都命中服务端，改变筛选条件时能看到新请求发出。
+- 素材列表第一页的响应里带 `tags` 全集，标签选择器的候选项由它驱动；翻到第二页时响应不再重复返回 `tags`，而选择器的候选项不会因此变空。
+- 搜索一段只出现在文本素材正文里的关键字能命中该素材；拿一个 `storageKey` 片段或 `png` 去搜，不会把图片素材搜出来。
+- 素材数量上千时，列表页首屏时间与素材总量无关。
+- 生成记录滚动到底自动加载下一页，`nextCursor` 为 `null` 后停止请求且不重复加载。
+- 新生成一条记录后刷新列表，它出现在最前面，且列表里没有重复项。
+- 删除若干条生成记录后继续翻页，不出现空洞或重复。
+- 视频生成中途刷新页面，pending 记录仍能恢复轮询并在完成后更新状态，即使它已经不在第一页。
+- 造出几十条历史记录把 pending 那条挤到第三页之后，`GET /api/generations?kind=video&status=pending` 仍能一次性把它取回，响应里的 `nextCursor` 为 `null`。
+- 画布侧栏、素材选择弹窗、Agent 的 `assets_list` 三处也走服务端筛选，没有残留依赖全量数组的代码。
+
+媒体与安全：
+
+- 未验证邮箱的账号能创建画布、能写文本素材，但 `PUT /api/media/{storageKey}` 返回 `EMAIL_NOT_VERIFIED`，且画布本身仍能保存成功。
+- 上传超过套餐 `max_file_bytes` 的文件返回 `FILE_TOO_LARGE`。
+- 客户端传的 `X-Checksum` 与服务端算出的不一致时返回 `CHECKSUM_MISMATCH`，磁盘上不留半个文件。
+- 上传中断后用同一个 `storageKey` 重试，`media_files` 里只有一条记录。
+- 手动删除或改坏 `ic_media` cookie 后再 `GET /api/media/{storageKey}`，返回 401；用一枚 `scope` 不是 `media` 的 JWT 伪造该 cookie，同样返回 401。
+- 不带 `ic_media` cookie、只带 `Authorization: Bearer` 请求同一个媒体地址，能正常拿到文件；反过来只带 cookie 去 `PUT` 或 `DELETE`，返回 401。
+- 登出后 `ic_refresh` 与 `ic_media` 两枚 cookie 都从浏览器里消失，此时再请求媒体地址返回 401。
+- 构造一个属于其他用户的 `storageKey` 去 GET，返回 404 而不是别人的文件。
+- 构造含 `../` 或冒号异常的 `storageKey`，返回 400。
+- 用另一个账号的画布 id 去 GET、PUT、DELETE，一律返回 404 而不是 403。
+
+数据层与旧链路：
+
+- 两个 store 都不再有 `persist`，登出后浏览器 IndexedDB 里没有画布、素材、生成记录的业务数据，只剩媒体缓存。
+- 列表与详情的加载态、错误态由 react-query 提供，页面里没有手写的 `loading` / `error` useState。
+- 画布里的图片由 `<img src="/api/media/...">` 直接加载，DOM 里搜不到 `blob:` 开头的地址，`image-storage.ts` 与 `file-storage.ts` 的 ObjectURL 缓存 Map 已删除。
+- 反复切换十几张带图画布后，浏览器内存占用能回落，不再单调增长。
+- 全局搜索 `webdav` 与 `app-sync` 无残留，`bun run typecheck` 通过。
+- 全局搜索 `cleanupImages`、`cleanupUnusedImages`、`cleanupUnusedMedia` 三个名字均无残留，两个调用点也已清理，`bun run typecheck` 通过。
+- 配置页没有 WebDAV 表单，也没有留下手动同步入口，界面无空白残留。
+- 配置页的「本地存储」面板里不再出现 `image_generation_logs` 与 `video_generation_logs` 两个空条目，剩余条目的文案与实际存的内容对得上。

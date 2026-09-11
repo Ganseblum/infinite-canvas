@@ -3,6 +3,8 @@
   "root": true,
   "defaultOpen": true,
   "pages": [
+    "project-structure",
+    "fork-maintenance",
     "local-development",
     "canvas-data-structure",
     "local-codex-canvas"
