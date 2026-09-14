@@ -71,6 +71,7 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file"): Pr
 
 // 供仍走浏览器直连的 AI 调用层使用：把已保存的媒体读成 Data URL。
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ReadOptions) {
+    if (image.dataUrl?.startsWith("data:")) return image.dataUrl;
     if (image.dataUrl) return blobToDataUrl(await fetchImageBlob(image.dataUrl, options));
     if (image.storageKey) {
         const blob = await getMediaBlob(image.storageKey, options?.signal);

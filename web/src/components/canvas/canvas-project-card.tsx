@@ -31,17 +31,17 @@ export function CanvasProjectCard({ project }: { project: CanvasSummary }) {
         const agentHash = hasAgentUrlBootstrap(window.location.hash) ? window.location.hash : "";
         navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}${agentHash}`, { replace: Boolean(agentHash) });
     };
+    const renameMutation = useMutation({
+        mutationFn: (title: string) => patchCanvas(project.id, title),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["canvases"] }),
+        onError: (error) => message.error(getApiErrorMessage(error)),
+    });
     const saveTitle = () => {
         const title = editingTitle.trim();
         stopEditing();
         if (!title || title === project.title) return;
         renameMutation.mutate(title);
     };
-    const renameMutation = useMutation({
-        mutationFn: (title: string) => patchCanvas(project.id, title),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["canvases"] }),
-        onError: (error) => message.error(getApiErrorMessage(error)),
-    });
     const exportProject = async () => {
         const hide = message.loading(t("canvas.projectPage.exporting"), 0);
         try {
