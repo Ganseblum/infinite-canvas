@@ -3,6 +3,7 @@ import { BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftO
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
+import { SiteEnvBadge } from "@/components/layout/site-env-badge";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasSaveState } from "@/pages/canvas/hooks/use-canvas-autosave";
@@ -140,6 +141,7 @@ export function CanvasTopBar({
                             </button>
                         )}
                     </div>
+                    <SiteEnvBadge />
                     <SaveStatus state={saveState} onRetry={onRetrySave} />
                     <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
                 </div>

@@ -20,6 +20,12 @@ type Config struct {
 	AdminEmail    string
 	AdminPassword string
 
+	// SeedTestData 为 true 时启动过程会幂等写入固定的测试账号与示例数据。
+	// 只允许测试/预发布环境开启：测试账号密码是公开的，正式环境开启等于开了一个后门。
+	SeedTestData         bool
+	SeedTestDataEmail    string
+	SeedTestDataPassword string
+
 	CookieSecure bool
 	LogLevel     string
 
@@ -64,6 +70,9 @@ func Load() (*Config, error) {
 		CredentialKey:              os.Getenv("CREDENTIAL_MASTER_KEY"),
 		AppBaseURL:                 os.Getenv("APP_BASE_URL"),
 		AdminEmail:                 os.Getenv("ADMIN_EMAIL"),
+		SeedTestData:               getenvBool("SEED_TEST_DATA", false),
+		SeedTestDataEmail:          getenv("SEED_TEST_DATA_EMAIL", "test@example.com"),
+		SeedTestDataPassword:       getenv("SEED_TEST_DATA_PASSWORD", "test123456"),
 		AdminPassword:              os.Getenv("ADMIN_PASSWORD"),
 		CookieSecure:               getenvBool("COOKIE_SECURE", true),
 		LogLevel:                   getenv("LOG_LEVEL", "info"),

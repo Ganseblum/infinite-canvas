@@ -27,8 +27,8 @@ type RefreshToken struct {
 	TokenHash string    `gorm:"type:varchar(64);uniqueIndex;not null"`
 	ExpiresAt time.Time `gorm:"not null"`
 	RevokedAt *time.Time
-	UserAgent string    `gorm:"type:varchar(512)"`
-	IP        string    `gorm:"type:varchar(64)"`
+	UserAgent string `gorm:"type:varchar(512)"`
+	IP        string `gorm:"type:varchar(64)"`
 	CreatedAt time.Time
 }
 

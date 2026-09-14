@@ -347,6 +347,7 @@ export default {
         pricing: "Pricing",
     },
     topNav: {
+        siteEnvTest: "Test", siteEnvDev: "Local dev", siteEnvTitle: "This is not the production environment",
         openMenu: "Open navigation menu",
         menu: "Navigation menu",
         navigation: "Navigation",

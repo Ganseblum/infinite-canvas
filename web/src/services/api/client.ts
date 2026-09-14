@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api-error";
+import { API_BASE_URL as RUNTIME_API_BASE_URL } from "@/constant/runtime-config";
 import type { SessionPayload } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 
@@ -15,7 +16,8 @@ type ApiRequestOptions = {
 };
 
 // 默认空串，走同源 /api：生产由 nginx 反代，开发由 vite proxy 转发。
-export const API_BASE_URL = ((import.meta.env as Record<string, string | undefined>).VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+// 容器部署时可由入口脚本注入 API_BASE_URL，同一份镜像可指向不同环境的接口。
+export const API_BASE_URL = RUNTIME_API_BASE_URL.trim().replace(/\/+$/, "");
 
 function buildUrl(path: string, query?: ApiRequestOptions["query"]) {
     const params = new URLSearchParams();

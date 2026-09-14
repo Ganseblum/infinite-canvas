@@ -74,8 +74,28 @@ git push origin codex/account-backend-plan
 
 ## 开发与部署规则
 
-账号体系与服务端目前仍是规划，尚未实现。计划中的 Go 服务放在本仓库的 `server/` 目录，由于它会和 `web/` 共用登录态、数据分发、存储和部署决策，没有必要一开始拆成独立仓库。最终形态预计使用 Docker Compose 管理 Web、API、数据库以及对象存储的连接。
+账号体系与服务端第一期（账号与邮件）、第二期（画布、素材、生成记录与媒体）已实现，服务放在本仓库的 `server/` 目录，由于它会和 `web/` 共用登录态、数据分发、存储和部署决策，没有必要一开始拆成独立仓库。最终形态预计使用 Docker Compose 管理 Web、API、数据库以及对象存储的连接。
 
 生产环境只从经过审查和验证的 `origin/main` 提交，或从该提交创建的版本 tag 部署。不要直接部署 `upstream/main` 或 `codex/account-backend-plan`。当前仓库主要仍是静态 Web 应用，Docker 静态资源路径尚需最终验证，暂不把生产部署描述为完全验证通过。
 
 服务端开发阶段可以使用规划分支做开发或预发布预览；当对应 Phase 的门禁和用户验收全部通过后，再合并到 `main`，然后从经过验证的 `main` 提交或 tag 部署。
+
+## 环境与域名约定
+
+前后端都按「同一份代码 + 不同环境变量」区分环境，环境值只存在各自的服务器/本机上，不提交进 git。
+
+| 环境 | 前端地址 | 数据库 | 媒体 | 代码来源 |
+| --- | --- | --- | --- | --- |
+| 本地开发 | `http://localhost:3000`（vite dev） | 本机 MySQL `infinite_canvas` | 仓库下 `.local-media/` | 任意工作分支 |
+| 测试 / 预发布 | `https://sim-xxx.example.com` → 主机 `3100` | `infinite_canvas_test` | 测试环境独立目录或桶 | `codex/account-backend-plan` 或合并后的 `main` |
+| 正式 | `https://xxx.example.com` → 主机 `3000` | `infinite_canvas` | 正式环境独立目录或桶 | 经过验收的 `main` 提交或版本 tag |
+
+**部署方式**：仓库根目录提供 `deploy.sh`，测试与正式用不同 compose 项目名（`infinite-canvas-test` / `infinite-canvas-prod`），容器、网络与命名卷（数据库、媒体）自动隔离；测试环境额外用 `deploy/compose.test.yml` 把对外端口错开到 3100。环境变量文件放 `deploy/env.test`、`deploy/env.prod`（已在 `.gitignore` 中，仓库只保留 `.example` 模板），域名与证书由主机上的反向代理处理，前端与接口同源、由容器内 nginx 反代 `/api`，因此不引入 CORS。
+
+**前端环境标识**：容器入口脚本会把 `SITE_ENV` 与 `API_BASE_URL` 注入 `config.js`。`SITE_ENV` 不是 `production` 时，页面顶栏显示环境标识（如「测试环境」），避免在测试站上误当成正式站操作；`API_BASE_URL` 留空表示同源 `/api`，只有前后端分开部署时才填。
+
+**数据隔离要求**：`DATABASE_URL`、媒体目录/桶、`JWT_SECRET`、`CREDENTIAL_MASTER_KEY`、管理员账号、`APP_BASE_URL`、`MAIL_DRIVER` 每个环境必须不同。其中 `JWT_SECRET` 与 `CREDENTIAL_MASTER_KEY` **绝不能共用**：共用会让测试环境签发的令牌在正式环境通过校验，等于绕过登录。
+
+**测试数据**：固定的测试账号与示例画布/素材定义在 `server/internal/db/seed_test_data.go`，随代码进 git；任何环境把 `SEED_TEST_DATA=true` 打开、启动一次即可导入（幂等，重复执行不产生重复数据）。正式环境必须保持 `false`，测试账号的密码是公开的。
+
+**迁移与备份**：数据库结构与参考数据仍由启动时的 `AutoMigrate` 与代码内 seed 维护（项目未上线阶段）；首次对外开放注册前冻结 `AutoMigrate`，此后结构变更走版本化 migration。跨机器迁移环境时需同时搬数据库、`MEDIA_ROOT` 下的媒体与 `.env`，只搬数据库会导致画布内图片全部失效。

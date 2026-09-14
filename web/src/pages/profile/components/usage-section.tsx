@@ -7,7 +7,7 @@ import type { PlanDetail, UsageSummary } from "@/services/api/account";
 export function UsageSection({ plan, usage }: { plan: PlanDetail; usage?: UsageSummary }) {
     const { t } = useTranslation();
     const limit = plan.storageBytes;
-    const used = usage?.storageBytes;
+    const used = usage?.storageBytes ?? 0;
     const ratio = usage && limit > 0 ? used / limit : 0;
     const percent = usage ? Math.min(100, Math.round(ratio * 1000) / 10) : 0;
     const nearLimit = ratio >= 0.9;

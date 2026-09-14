@@ -609,6 +609,9 @@ function LogPanel({
     logs,
     selectedLogIds,
     activeLogId,
+    hasMore,
+    loadingMore,
+    onLoadMore,
     onSelectedLogIdsChange,
     onCreateSession,
     onDeleteSelected,
@@ -617,6 +620,9 @@ function LogPanel({
     logs: GenerationLog[];
     selectedLogIds: string[];
     activeLogId?: string;
+    hasMore: boolean;
+    loadingMore: boolean;
+    onLoadMore: () => void;
     onSelectedLogIdsChange: (ids: string[]) => void;
     onCreateSession: () => void;
     onDeleteSelected: () => void;

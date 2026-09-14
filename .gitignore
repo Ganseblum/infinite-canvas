@@ -3,6 +3,9 @@ out/
 node_modules/
 .env*
 !.env.example
+# 部署环境变量只保留 .example 模板，实际值不入库
+deploy/env.test
+deploy/env.prod
 data/
 # 只忽略仓库根目录的 data/，前端资源类型目录要入库
 !web/src/services/data/

@@ -103,3 +103,11 @@ The Chinese version contains the complete item-by-item acceptance checklist.
 - Media: images, videos, and audio in the canvas and workbenches all come from `/api/media/{storageKey}`; an unverified account gets `EMAIL_NOT_VERIFIED` on upload while the canvas itself still saves; retrying an interrupted upload with the same `storageKey` does not duplicate records.
 - Export and import: canvas and asset exports download media per `storageKey`; imports upload media before creating canvases or assets, and images are intact afterwards.
 - WebDAV and local data: the settings page no longer has a WebDAV tab and exported config files contain no WebDAV credentials; the Local storage panel only lists app state, Agent messages, and prompt cache. The browser no longer stores canvases, assets, generation records, or media binaries (existing local data is not uploaded automatically; export a canvas zip first if you need to keep it).
+
+## Test/production separation and test data
+
+- Environment badge: opening http://localhost:3000 locally should show a "Local dev" badge in the top bar (the canvas editor included); deploy with `SITE_ENV=test` to show "Test", and `production` (or unset) to show no badge.
+- Test data import: with `SEED_TEST_DATA=true` in a test environment, one startup should create the test account `test@example.com` (password `test123456`, email already verified), a "示例画布（测试数据）" canvas with two text nodes and one connection, and a sample asset tagged "测试数据". A second startup must not duplicate anything (verify row counts in Navicat).
+- Signing in as the test account should show the sample canvas in the list and the sample asset with working tag filtering. Production must keep `SEED_TEST_DATA=false`.
+- Deploy script: after copying and filling `deploy/env.test.example`, `./deploy.sh test up -d` should publish the test environment on port 3100 with `-test` container and volume names, while `./deploy.sh prod up -d` uses port 3000. The two environments must not see each other's database or media volume.
+- `JWT_SECRET` and `CREDENTIAL_MASTER_KEY` must differ between environments: a token issued in the test environment must not validate in production.

@@ -1,0 +1,6 @@
+services:
+  # 测试环境覆盖：与正式环境共用 docker-compose.yml，只把对外端口错开，
+  # 容器名、网络、数据卷由 deploy.sh 的 `-p infinite-canvas-test` 自动隔离。
+  app:
+    ports:
+      - "3100:3000"

@@ -10,6 +10,9 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    environment:
+      SITE_ENV: "${SITE_ENV:-production}"
+      API_BASE_URL: "${API_BASE_URL:-}"
 
   api:
     image: infinite-canvas-api:local
@@ -36,6 +39,10 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_SECURITY: ${SMTP_SECURITY:-ssl}
       REGISTRATION_ENABLED: "${REGISTRATION_ENABLED:-true}"
+      # 测试数据开关：只在测试/预发布环境开启，正式环境保持 false
+      SEED_TEST_DATA: "${SEED_TEST_DATA:-false}"
+      SEED_TEST_DATA_EMAIL: "${SEED_TEST_DATA_EMAIL:-test@example.com}"
+      SEED_TEST_DATA_PASSWORD: "${SEED_TEST_DATA_PASSWORD:-test123456}"
       FREE_GRANT_ENABLED: "${FREE_GRANT_ENABLED:-true}"
       # 启用赠送时以下三项必填且大于 0，无默认值；缺失会导致 api 启动失败
       FREE_GRANT_CAMPAIGN_ID: ${FREE_GRANT_CAMPAIGN_ID}

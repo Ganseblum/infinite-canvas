@@ -347,6 +347,7 @@ export default {
         pricing: "定价",
     },
     topNav: {
+        siteEnvTest: "测试环境", siteEnvDev: "本地开发", siteEnvTitle: "当前访问的不是正式环境",
         openMenu: "打开导航菜单",
         menu: "导航菜单",
         navigation: "导航",

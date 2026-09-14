@@ -59,6 +59,14 @@ func main() {
 		slog.Error("初始化管理员失败", "err", err)
 		os.Exit(1)
 	}
+	if cfg.SeedTestData {
+		// 测试数据随代码入库，开关一开就能把固定账号与示例内容导入任何环境（幂等）。
+		slog.Warn("SEED_TEST_DATA 已开启，将写入公开密码的测试账号；正式环境务必保持关闭")
+		if err := db.SeedTestData(gormDB, cfg.SeedTestDataEmail, cfg.SeedTestDataPassword); err != nil {
+			slog.Error("写入测试数据失败", "err", err)
+			os.Exit(1)
+		}
+	}
 
 	mailer := mail.New(mail.Config{
 		Driver:     cfg.MailDriver,
