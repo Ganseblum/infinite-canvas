@@ -46,6 +46,14 @@ export default defineConfig({
             "@": resolve(webDir, "src"),
         },
     },
+    server: {
+        proxy: {
+            "/api": {
+                target: "http://127.0.0.1:8080",
+                changeOrigin: true,
+            },
+        },
+    },
     define: {
         __APP_VERSION__: JSON.stringify(localVersion),
         __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),

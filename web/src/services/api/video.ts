@@ -389,7 +389,7 @@ function readAxiosError(error: unknown, fallback: string) {
 
 function statusMessage(status: number | undefined, fallback: string) {
     if (status === 401 || status === 403) return apiText("authenticationFailed");
-    if (status === 429) return apiText("rateLimited");
+    if (status === 429) return apiText("rateLimitedLater");
     return status ? `${fallback}（${status}）` : fallback;
 }
 
