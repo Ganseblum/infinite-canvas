@@ -5,7 +5,85 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
     # 统计分析（可选，默认关闭）。每家一个独立变量，填了谁就启用谁，可同时启用多家：
     # environment:
     #   ANALYTICS_GA4_ID: G-XXXXXXXXXX                    # Google Analytics 4 衡量 ID
     #   ANALYTICS_BAIDU_ID: xxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 百度统计站点 ID
+
+  api:
+    image: infinite-canvas-api:latest
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      MAIL_DRIVER: ${MAIL_DRIVER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-ssl}
+      REGISTRATION_ENABLED: "${REGISTRATION_ENABLED:-true}"
+      FREE_GRANT_ENABLED: "${FREE_GRANT_ENABLED:-true}"
+      # 启用赠送时以下三项必填且大于 0，无默认值；缺失会导致 api 启动失败
+      FREE_GRANT_CAMPAIGN_ID: ${FREE_GRANT_CAMPAIGN_ID}
+      FREE_GRANT_DAILY_BUDGET_MICROS: "${FREE_GRANT_DAILY_BUDGET_MICROS}"
+      FREE_GRANT_RISK_THRESHOLD: "${FREE_GRANT_RISK_THRESHOLD}"
+      # 媒体存储：local 用 media 卷；s3 时以下变量必填，桶必须私有
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      MEDIA_ROOT: ${MEDIA_ROOT:-/data/media}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-auto}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_FORCE_PATH_STYLE: "${S3_FORCE_PATH_STYLE:-false}"
+      # S3_PRESIGN_TTL 必须等于 2 × S3_PRESIGN_ALIGN，不满足 api 启动失败
+      S3_PRESIGN_ALIGN: ${S3_PRESIGN_ALIGN:-1h}
+      S3_PRESIGN_TTL: ${S3_PRESIGN_TTL:-2h}
+    volumes:
+      - media:/data/media
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  mysqldata:
+  media:
