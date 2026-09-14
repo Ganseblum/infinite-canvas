@@ -1,6 +1,6 @@
-import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Empty, Input, Popconfirm, Select, Spin, Tag } from "antd";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
@@ -8,12 +8,16 @@ import { useTranslation } from "react-i18next";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
+import { assetHeight, assetText, assetUrl, assetWidth } from "@/lib/asset";
+import { getApiErrorMessage } from "@/lib/api-error";
 import { cn } from "@/lib/utils";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
-import { uploadMediaFile } from "@/services/file-storage";
-import { uploadImage } from "@/services/image-storage";
-import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
+import { createAsset, deleteAsset } from "@/services/api/assets";
+import { uploadMediaFile } from "@/services/media-ingest";
+import { uploadImage } from "@/services/media-ingest";
+import { useAssetSearch } from "@/hooks/use-asset-library";
+import type { AssetItem, AssetKind } from "@/services/data/types";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -302,32 +306,35 @@ const ASSET_GROUPS: { kind: AssetKind; icon: typeof Square }[] = [
     { kind: "text", icon: FileText },
 ];
 
-function buildInsertPayload(asset: Asset): InsertAssetPayload {
-    if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title };
-    if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height };
-    return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title };
+function buildInsertPayload(asset: AssetItem): InsertAssetPayload {
+    if (asset.kind === "text") return { kind: "text", content: assetText(asset), title: asset.title };
+    if (asset.kind === "video") return { kind: "video", url: assetUrl(asset), storageKey: asset.storageKey, title: asset.title, width: assetWidth(asset), height: assetHeight(asset) };
+    return { kind: "image", dataUrl: assetUrl(asset), storageKey: asset.storageKey, title: asset.title };
 }
 
 const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
-    const assets = useAssetStore((state) => state.assets);
-    const addAsset = useAssetStore((state) => state.addAsset);
-    const removeAsset = useAssetStore((state) => state.removeAsset);
+    const queryClient = useQueryClient();
     const [keyword, setKeyword] = useState("");
+    const [query, setQuery] = useState("");
     const [tagFilter, setTagFilter] = useState<string>("all");
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const allTags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))).slice(0, 20), [assets]);
+    // 关键字停下 300 毫秒再查，筛选与标签候选都由服务端给出。
+    useEffect(() => {
+        const timer = setTimeout(() => setQuery(keyword.trim()), 300);
+        return () => clearTimeout(timer);
+    }, [keyword]);
 
-    const filtered = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return assets.filter((asset) => (tagFilter === "all" || (asset.tags || []).includes(tagFilter)) && (!query || [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query)));
-    }, [assets, keyword, tagFilter]);
+    const assetsQuery = useAssetSearch({ q: query || undefined, tag: tagFilter === "all" ? undefined : [tagFilter], page: 1, size: 50 });
+    const items = assetsQuery.data?.items || [];
+    const allTags = useMemo(() => (assetsQuery.data?.tags || []).slice(0, 20), [assetsQuery.data?.tags]);
+    const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: items.filter((asset) => asset.kind === group.kind) })).filter((group) => group.items.length > 0), [items]);
 
-    const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: filtered.filter((asset) => asset.kind === group.kind) })).filter((group) => group.items.length > 0), [filtered]);
+    const refreshAssets = () => queryClient.invalidateQueries({ queryKey: ["assets"] });
 
     const handleFiles = async (fileList: FileList | null) => {
         const files = Array.from(fileList || []);
@@ -339,16 +346,20 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
             for (const file of files) {
                 if (file.type.startsWith("image/")) {
                     const image = await uploadImage(file);
-                    addAsset({ kind: "image", title: file.name || t("assets.kinds.image"), coverUrl: image.url, tags: [], data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType } });
+                    await createAsset({ kind: "image", title: file.name || t("assets.kinds.image"), storageKey: image.storageKey, bytes: image.bytes, data: { url: image.storageKey ? undefined : image.url, width: image.width, height: image.height, mimeType: image.mimeType } });
                     added += 1;
                 } else if (file.type.startsWith("video/")) {
                     const media = await uploadMediaFile(file, "video");
-                    addAsset({ kind: "video", title: file.name || t("assets.kinds.video"), coverUrl: "", tags: [], data: { url: media.url, storageKey: media.storageKey, width: media.width || 0, height: media.height || 0, bytes: media.bytes, mimeType: media.mimeType } });
+                    await createAsset({ kind: "video", title: file.name || t("assets.kinds.video"), storageKey: media.storageKey, bytes: media.bytes, data: { url: media.storageKey ? undefined : media.url, width: media.width || 0, height: media.height || 0, mimeType: media.mimeType } });
                     added += 1;
                 }
             }
-            if (added) message.success(t("canvas.sidePanel.addedAssets", { count: added }));
-            else message.warning(t("canvas.sidePanel.mediaOnly"));
+            if (added) {
+                await refreshAssets();
+                message.success(t("canvas.sidePanel.addedAssets", { count: added }));
+            } else {
+                message.warning(t("canvas.sidePanel.mediaOnly"));
+            }
         } catch (error) {
             console.error(error);
             message.error(t("canvas.sidePanel.addFailed"));
@@ -356,6 +367,17 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
             hide();
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+    };
+
+    const removeAsset = async (id: string) => {
+        try {
+            await deleteAsset(id);
+            await refreshAssets();
+            message.success(t("canvas.sidePanel.assetRemoved"));
+        } catch (error) {
+            console.error(error);
+            message.error(getApiErrorMessage(error));
         }
     };
 
@@ -407,7 +429,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                                     {isCollapsed ? null : (
                                         <div className="grid grid-cols-2 gap-2 px-1 pb-2 pt-1">
                                             {group.items.map((asset) => (
-                                                <AssetCard key={asset.id} asset={asset} theme={theme} onInsert={() => onInsert(buildInsertPayload(asset))} onRemove={() => (removeAsset(asset.id), message.success(t("canvas.sidePanel.assetRemoved")))} />
+                                                <AssetCard key={asset.id} asset={asset} theme={theme} onInsert={() => onInsert(buildInsertPayload(asset))} onRemove={() => void removeAsset(asset.id)} />
                                             ))}
                                         </div>
                                     )}
@@ -416,14 +438,14 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                         })}
                     </div>
                 ) : (
-                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("canvas.sidePanel.noAssets")} className="pt-16" />
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={assetsQuery.isPending ? t("common.loading") : t("canvas.sidePanel.noAssets")} className="pt-16" />
                 )}
             </div>
         </div>
     );
 });
 
-function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: CanvasTheme; onInsert: () => void; onRemove: () => void }) {
+function AssetCard({ asset, theme, onInsert, onRemove }: { asset: AssetItem; theme: CanvasTheme; onInsert: () => void; onRemove: () => void }) {
     const { t } = useTranslation();
     return (
         <div className="group relative aspect-square overflow-hidden rounded-xl border transition duration-200 hover:-translate-y-0.5 hover:shadow-lg" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
@@ -451,13 +473,10 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: 
     );
 }
 
-function AssetCover({ asset }: { asset: Asset }) {
-    if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.data.content}</div>;
-    if (asset.kind === "video") {
-        if (asset.coverUrl) return <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
-        return <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
-    }
-    return <img src={asset.coverUrl || asset.data.dataUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+function AssetCover({ asset }: { asset: AssetItem }) {
+    if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{assetText(asset)}</div>;
+    if (asset.kind === "video") return <video src={`${assetUrl(asset)}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+    return <img src={assetUrl(asset)} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
 }
 
 // ---------------------------------------------------------------------------

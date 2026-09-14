@@ -9,13 +9,18 @@ import { requestEdit, requestGeneration, requestImageQuestion } from "@/services
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { uploadImage } from "@/services/image-storage";
-import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { uploadImage, uploadMediaFile, type UploadedFile } from "@/services/media-ingest";
+import { ApiError, getApiErrorMessage } from "@/lib/api-error";
+import { createAsset } from "@/services/api/assets";
+import { createCanvas, deleteCanvas, getCanvas, patchCanvas } from "@/services/api/canvas";
+import type { CanvasData, CanvasDetail } from "@/services/data/types";
+import { normalizeCanvasData } from "@/lib/canvas/canvas-data";
+import { useCanvasAutosave } from "@/pages/canvas/hooks/use-canvas-autosave";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
@@ -43,7 +48,6 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -178,11 +182,12 @@ function InfiniteCanvasPage() {
     const historyRef = useRef<{ past: CanvasHistoryEntry[]; future: CanvasHistoryEntry[] }>({ past: [], future: [] });
     const lastHistoryRef = useRef<CanvasHistoryEntry | null>(null);
     const historyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const applyingHistoryRef = useRef(false);
     const historyPausedRef = useRef(false);
     const didInitialCenterRef = useRef(false);
     const rafRef = useRef<number | null>(null);
+    const resizeRafRef = useRef<number | null>(null);
+    const resizeRef = useRef<{ nodeId: string; width: number; height: number; position?: Position } | null>(null);
     const nodeDraggingRef = useRef(false);
     const dragRef = useRef<{
         isDraggingNode: boolean;
@@ -200,17 +205,19 @@ function InfiniteCanvasPage() {
 
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
+    const queryClient = useQueryClient();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
-    const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
-    const hydrated = useCanvasStore((state) => state.hydrated);
-    const createProject = useCanvasStore((state) => state.createProject);
-    const openProject = useCanvasStore((state) => state.openProject);
-    const updateProject = useCanvasStore((state) => state.updateProject);
-    const renameProject = useCanvasStore((state) => state.renameProject);
-    const deleteProjects = useCanvasStore((state) => state.deleteProjects);
-    const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
+    const addAsset = useCallback((payload: Parameters<typeof createAsset>[0]) => {
+        createAsset(payload)
+            .then(() => message.success(t("common.addedToAssets")))
+            .catch((error) => message.error(getApiErrorMessage(error)));
+    }, [message, t]);
+    // 画布详情只按 id 拉一次；staleTime 设为无限，避免后台重取把正在编辑的本地状态冲掉。
+    const canvasQuery = useQuery({ queryKey: ["canvas", projectId], queryFn: ({ signal }) => getCanvas(projectId, signal), retry: false, staleTime: Infinity });
+    const canvasDetail = canvasQuery.data;
+    const canvasTitle = canvasDetail?.title || "";
+    const [conflictRevision, setConflictRevision] = useState<number | null>(null);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
@@ -281,13 +288,6 @@ function InfiniteCanvasPage() {
             showImageInfo,
         }),
         [activeChatId, backgroundMode, chatSessions, showImageInfo],
-    );
-
-    const cleanupCanvasFiles = useCallback(
-        (extra?: unknown) => {
-            cleanupAssetImages({ extra, history: historyRef.current, lastHistory: lastHistoryRef.current });
-        },
-        [cleanupAssetImages],
     );
 
     const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => {
@@ -423,43 +423,51 @@ function InfiniteCanvasPage() {
         [modal, stopGenerationByRunningId, t],
     );
 
-    useEffect(() => {
-        if (!hydrated) return;
-        setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            navigate("/canvas", { replace: true });
-            return;
-        }
+    const readCanvasData = useCallback(
+        (): CanvasData => ({ nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo, viewport }),
+        [activeChatId, backgroundMode, chatSessions, connections, nodes, showImageInfo, viewport],
+    );
+    const autosave = useCanvasAutosave({ canvasId: projectId, readData: readCanvasData, onConflict: setConflictRevision });
+    // saveState 每次变化都会换掉 autosave 对象身份，effect 里只依赖这两个稳定函数。
+    const loadCanvasBaseline = autosave.load;
+    const markCanvasDirty = autosave.markDirty;
 
-        const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
-            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
-            setNodes(restoredNodes);
-            setConnections(project.connections);
-            setChatSessions(restoredSessions);
-            setActiveChatId(project.activeChatId || null);
-            setBackgroundMode(project.backgroundMode);
-            setShowImageInfo(project.showImageInfo || false);
-            setViewport(project.viewport);
-            historyRef.current = { past: [], future: [] };
-            if (historyCommitTimerRef.current) {
-                clearTimeout(historyCommitTimerRef.current);
-                historyCommitTimerRef.current = null;
-            }
-            lastHistoryRef.current = {
-                nodes: restoredNodes,
-                connections: project.connections,
-                chatSessions: restoredSessions,
-                activeChatId: project.activeChatId || null,
-                backgroundMode: project.backgroundMode,
-                showImageInfo: project.showImageInfo || false,
-            };
-            setHistoryState({ canUndo: false, canRedo: false });
-            setProjectLoaded(true);
+    useEffect(() => {
+        if (!canvasDetail) return;
+        setProjectLoaded(false);
+        const data = normalizeCanvasData(canvasDetail.data);
+        const restoredNodes = hydrateCanvasImages(resetInterruptedGeneration(data.nodes));
+        const restoredSessions = hydrateAssistantImages(data.chatSessions);
+
+        setNodes(restoredNodes);
+        setConnections(data.connections);
+        setChatSessions(restoredSessions);
+        setActiveChatId(data.activeChatId);
+        setBackgroundMode(data.backgroundMode);
+        setShowImageInfo(data.showImageInfo);
+        setViewport(data.viewport);
+        historyRef.current = { past: [], future: [] };
+        if (historyCommitTimerRef.current) {
+            clearTimeout(historyCommitTimerRef.current);
+            historyCommitTimerRef.current = null;
+        }
+        lastHistoryRef.current = {
+            nodes: restoredNodes,
+            connections: data.connections,
+            chatSessions: restoredSessions,
+            activeChatId: data.activeChatId,
+            backgroundMode: data.backgroundMode,
+            showImageInfo: data.showImageInfo,
         };
-        void restore();
-    }, [hydrated, navigate, openProject, projectId]);
+        setHistoryState({ canUndo: false, canRedo: false });
+        setProjectLoaded(true);
+        loadCanvasBaseline(canvasDetail.revision, data);
+    }, [canvasDetail, loadCanvasBaseline]);
+
+    // 只有明确的 404 才跳回列表页：网络错误必须停在原页展示重试，否则会顺带丢掉未保存的编辑。
+    useEffect(() => {
+        if (canvasQuery.error instanceof ApiError && canvasQuery.error.code === "NOT_FOUND") navigate("/canvas", { replace: true });
+    }, [canvasQuery.error, navigate]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -507,26 +515,15 @@ function InfiniteCanvasPage() {
         };
     }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
 
+    // 任何会改变 data 的状态变化都标记为脏，由自动保存链路统一防抖落盘。
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
-        updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
-    }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+        markCanvasDirty();
+    }, [activeChatId, backgroundMode, chatSessions, connections, markCanvasDirty, nodes, projectLoaded, showImageInfo, viewport]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
-
-    useEffect(() => {
-        if (!projectLoaded) return;
-        if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        viewportSaveTimerRef.current = setTimeout(() => {
-            updateProject(projectId, { viewport: viewportRef.current });
-            viewportSaveTimerRef.current = null;
-        }, 500);
-        return () => {
-            if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        };
-    }, [projectId, projectLoaded, updateProject, viewport]);
 
     useLayoutEffect(() => {
         nodesRef.current = nodes;
@@ -766,7 +763,7 @@ function InfiniteCanvasPage() {
     const referenceConnectedNodeIds = useMemo(() => new Set([referencePickerNodeId, ...(referencePickerNodeId ? connectedNodesByNodeId.get(referencePickerNodeId)?.flatMap((node) => node.type === CanvasNodeType.Group ? [node.id, ...getGroupResourceNodes(node.id, nodes).map((child) => child.id)] : [node.id]) || [] : [])].filter((id): id is string => Boolean(id))), [connectedNodesByNodeId, nodes, referencePickerNodeId]);
     const { applyAgentOps } = useAgentBridge({
         projectId,
-        title: currentProject?.title,
+        title: canvasTitle,
         nodes,
         connections,
         selectedNodeIds,
@@ -855,9 +852,8 @@ function InfiniteCanvasPage() {
             setReferencePickerNodeId((current) => (current && allIds.has(current) ? null : current));
             setExpandedBatchNodeIds((current) => new Set([...current].filter((nodeId) => !allIds.has(nodeId))));
             setContextMenu((current) => (current?.type === "node" && allIds.has(current.nodeId) ? null : current));
-            cleanupCanvasFiles({ projectId, nodes: nodesRef.current.filter((node) => !allIds.has(node.id)), chatSessions });
         },
-        [chatSessions, cleanupCanvasFiles, projectId],
+        [projectId],
     );
 
     const groupSelection = useCallback(() => {
@@ -954,8 +950,7 @@ function InfiniteCanvasPage() {
         setRunningNodeId(null);
         deselectCanvas();
         setClearConfirmOpen(false);
-        cleanupCanvasFiles({ projectId, nodes: [], chatSessions: [] });
-    }, [cleanupCanvasFiles, deselectCanvas, projectId]);
+    }, [deselectCanvas]);
 
     const duplicateNode = useCallback((nodeId: string) => {
         const source = nodesRef.current.find((node) => node.id === nodeId);
@@ -1143,23 +1138,32 @@ function InfiniteCanvasPage() {
         applyHistory(next);
     }, [applyHistory]);
 
-    const createAndOpenProject = useCallback(() => {
-        const id = createProject(t("canvas.defaultTitle", { count: useCanvasStore.getState().projects.length + 1 }));
-        navigate(`/canvas/${id}`);
-    }, [createProject, navigate, t]);
+    const createAndOpenProject = useCallback(async () => {
+        try {
+            const canvas = await createCanvas({ title: t("canvas.project.untitled") });
+            await queryClient.invalidateQueries({ queryKey: ["canvases"] });
+            navigate(`/canvas/${canvas.id}`);
+        } catch (error) {
+            message.error(getApiErrorMessage(error));
+        }
+    }, [message, navigate, queryClient, t]);
 
-    const deleteCurrentProject = useCallback(() => {
-        deleteProjects([projectId]);
-        cleanupAssetImages();
-        navigate("/canvas");
-    }, [cleanupAssetImages, deleteProjects, navigate, projectId]);
+    const deleteCurrentProject = useCallback(async () => {
+        try {
+            await deleteCanvas(projectId);
+            await queryClient.invalidateQueries({ queryKey: ["canvases"] });
+            navigate("/canvas");
+        } catch (error) {
+            message.error(getApiErrorMessage(error));
+        }
+    }, [message, navigate, projectId, queryClient]);
 
     const exportCurrentProject = useCallback(async () => {
-        const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
-        if (!project) return message.error(t("canvas.projectPage.notFound"));
+        if (!canvasDetail) return message.error(t("canvas.projectPage.notFound"));
         const hide = message.loading(t("canvas.projectPage.exporting"), 0);
         try {
-            await exportCanvasProjects([project], project.title || t("canvas.title"));
+            // 导出当前编辑内容而不是服务端快照：用户可能还没等到自动保存。
+            await exportCanvasProjects([{ ...canvasDetail, title: canvasTitle || canvasDetail.title, data: readCanvasData() }], canvasTitle || t("canvas.title"));
             message.success(t("canvas.projectPage.exported"));
         } catch (error) {
             console.error(error);
@@ -1167,7 +1171,7 @@ function InfiniteCanvasPage() {
         } finally {
             hide();
         }
-    }, [message, projectId, t]);
+    }, [canvasDetail, canvasTitle, message, readCanvasData, t]);
 
     const handleCanvasMouseDown = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1630,14 +1634,36 @@ function InfiniteCanvasPage() {
         [screenToCanvas, setConnecting],
     );
 
-    const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
+    // 缩放和拖动一样要抑制写入：每个 mousemove 重建整个 nodes 数组会让整页重渲染。
+    const applyNodeResize = useCallback(() => {
+        resizeRafRef.current = null;
+        const pending = resizeRef.current;
+        if (!pending) return;
+        setNodes((prev) => prev.map((node) => (node.id === pending.nodeId ? { ...node, width: pending.width, height: pending.height, position: pending.position || node.position } : node)));
     }, []);
 
+    const handleNodeResize = useCallback(
+        (nodeId: string, width: number, height: number, position?: Position) => {
+            resizeRef.current = { nodeId, width, height, position };
+            if (resizeRafRef.current === null) resizeRafRef.current = requestAnimationFrame(applyNodeResize);
+        },
+        [applyNodeResize],
+    );
+
     const handleNodeResizeStart = useCallback(() => {
+        historyPausedRef.current = true;
         setIsNodeResizing(true);
     }, []);
-    const handleNodeResizeEnd = useCallback(() => setIsNodeResizing(false), []);
+    const handleNodeResizeEnd = useCallback(() => {
+        if (resizeRafRef.current !== null) {
+            cancelAnimationFrame(resizeRafRef.current);
+            resizeRafRef.current = null;
+        }
+        applyNodeResize();
+        resizeRef.current = null;
+        historyPausedRef.current = false;
+        setIsNodeResizing(false);
+    }, [applyNodeResize]);
 
     const toggleNodeFreeResize = useCallback((nodeId: string) => {
         setNodes((prev) =>
@@ -1799,8 +1825,7 @@ function InfiniteCanvasPage() {
             if (node.type === CanvasNodeType.Text) {
                 const content = node.metadata?.content?.trim();
                 if (!content) return message.error(t("canvas.projectPage.noTextToSave"));
-                addAsset({ kind: "text", title: node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasText"), coverUrl: "", tags: [], source: "Canvas", data: { content }, metadata: { source: "canvas", nodeId: node.id } });
-                message.success(t("common.addedToAssets"));
+                addAsset({ kind: "text", title: node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasText"), data: { content, source: "Canvas", nodeId: node.id } });
                 return;
             }
             if (node.type === CanvasNodeType.Video) {
@@ -1808,34 +1833,28 @@ function InfiniteCanvasPage() {
                 addAsset({
                     kind: "video",
                     title: node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasVideo"),
-                    coverUrl: "",
-                    tags: [],
-                    source: "Canvas",
-                    data: { url: node.metadata.content, storageKey: node.metadata.storageKey, width: node.width, height: node.height, bytes: node.metadata.bytes || 0, mimeType: node.metadata.mimeType || "video/mp4" },
-                    metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
+                    storageKey: node.metadata.storageKey,
+                    bytes: node.metadata.bytes || 0,
+                    data: { url: node.metadata.storageKey ? undefined : node.metadata.content, width: node.width, height: node.height, mimeType: node.metadata.mimeType || "video/mp4", source: "Canvas", nodeId: node.id, prompt: node.metadata?.prompt },
                 });
-                message.success(t("common.addedToAssets"));
                 return;
             }
             if (!node.metadata?.content) return message.error(t("canvas.projectPage.noImageToSave"));
-            const dataUrl = node.metadata.storageKey ? "" : node.metadata.content;
             addAsset({
                 kind: "image",
                 title: node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasImage"),
-                coverUrl: node.metadata.content,
-                tags: [],
-                source: "Canvas",
+                storageKey: node.metadata.storageKey,
+                bytes: node.metadata.bytes || getDataUrlByteSize(node.metadata.content),
                 data: {
-                    dataUrl,
-                    storageKey: node.metadata.storageKey,
+                    url: node.metadata.storageKey ? undefined : node.metadata.content,
                     width: node.metadata.naturalWidth || node.width,
                     height: node.metadata.naturalHeight || node.height,
-                    bytes: node.metadata.bytes || getDataUrlByteSize(dataUrl),
                     mimeType: node.metadata.mimeType || "image/png",
+                    source: "Canvas",
+                    nodeId: node.id,
+                    prompt: node.metadata?.prompt,
                 },
-                metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
             });
-            message.success(t("common.addedToAssets"));
         },
         [addAsset, message, t],
     );
@@ -2258,15 +2277,35 @@ function InfiniteCanvasPage() {
     );
 
     const startTitleEditing = useCallback(() => {
-        setTitleDraft(currentProject?.title || t("canvas.projectPage.untitledCanvas"));
+        setTitleDraft(canvasTitle || t("canvas.projectPage.untitledCanvas"));
         setTitleEditing(true);
-    }, [currentProject?.title, t]);
+    }, [canvasTitle, t]);
 
+    // 重命名走 PATCH，不进入自动保存链路，也不递增 revision，另一台设备的编辑不会因此冲突。
     const finishTitleEditing = useCallback(() => {
         const nextTitle = titleDraft.trim();
-        if (nextTitle) renameProject(projectId, nextTitle);
         setTitleEditing(false);
-    }, [projectId, renameProject, titleDraft]);
+        if (!nextTitle || nextTitle === canvasTitle) return;
+        patchCanvas(projectId, nextTitle)
+            .then(async () => {
+                queryClient.setQueryData<CanvasDetail>(["canvas", projectId], (current) => (current ? { ...current, title: nextTitle } : current));
+                await queryClient.invalidateQueries({ queryKey: ["canvases"] });
+            })
+            .catch((error: unknown) => message.error(getApiErrorMessage(error)));
+    }, [canvasTitle, message, projectId, queryClient, titleDraft]);
+
+    const resolveConflictWithLocal = useCallback(() => {
+        const revision = conflictRevision;
+        setConflictRevision(null);
+        if (revision !== null) autosave.overwrite(revision);
+    }, [autosave, conflictRevision]);
+
+    const reloadCanvasFromServer = useCallback(async () => {
+        setConflictRevision(null);
+        // staleTime 0 强制回源：本地缓存拿不到另一台设备刚写入的内容。
+        const fresh = await queryClient.fetchQuery({ queryKey: ["canvas", projectId], queryFn: ({ signal }) => getCanvas(projectId, signal), staleTime: 0 });
+        queryClient.setQueryData(["canvas", projectId], fresh);
+    }, [projectId, queryClient]);
 
     const preventCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
         if ((event.target as HTMLElement).closest("[data-node-id]")) return;
@@ -3075,6 +3114,14 @@ function InfiniteCanvasPage() {
         [configInputsById, confirmStopGeneration, handleConfigNodeChange, handleGenerateNode, runningNodeId],
     );
 
+    if (canvasQuery.isPending) return <CanvasRefreshShell />;
+    if (canvasQuery.isError && !(canvasQuery.error instanceof ApiError && canvasQuery.error.code === "NOT_FOUND"))
+        return (
+            <main className="flex h-full flex-col items-center justify-center gap-4 bg-background text-sm text-stone-500">
+                <p>{getApiErrorMessage(canvasQuery.error)}</p>
+                <Button onClick={() => void canvasQuery.refetch()}>{t("common.retry")}</Button>
+            </main>
+        );
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
@@ -3082,7 +3129,7 @@ function InfiniteCanvasPage() {
             <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
-                    title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
+                    title={canvasTitle || t("canvas.projectPage.untitledCanvas")}
                     titleDraft={titleDraft}
                     isTitleEditing={titleEditing}
                     onTitleDraftChange={setTitleDraft}
@@ -3103,7 +3150,27 @@ function InfiniteCanvasPage() {
                     agentOpen={agentPanelOpen}
                     compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
                     onToggleAgent={toggleAgentPanel}
+                    saveState={autosave.saveState}
+                    onRetrySave={autosave.retry}
                 />
+
+                <Modal
+                    open={conflictRevision !== null}
+                    centered
+                    maskClosable={false}
+                    keyboard={false}
+                    title={t("canvas.conflict.title")}
+                    footer={
+                        <>
+                            <Button onClick={() => void reloadCanvasFromServer()}>{t("canvas.conflict.reload")}</Button>
+                            <Button danger type="primary" onClick={resolveConflictWithLocal}>
+                                {t("canvas.conflict.overwrite")}
+                            </Button>
+                        </>
+                    }
+                >
+                    <p className="text-sm text-stone-500">{t("canvas.conflict.description")}</p>
+                </Modal>
 
                 <InfiniteCanvas
                     containerRef={containerRef}

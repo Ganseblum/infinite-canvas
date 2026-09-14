@@ -6,12 +6,9 @@ import { useTranslation } from "react-i18next";
 
 import { readLocalStorageUsage, type LocalStorageUsage } from "@/services/local-storage-usage";
 
+// 画布、素材与生成记录已迁到服务端，本机只剩界面上传/缓存与 Agent 消息。
 const storeLabelKeys: Record<string, string> = {
     app_state: "appState",
-    image_files: "images",
-    media_files: "media",
-    image_generation_logs: "imageLogs",
-    video_generation_logs: "videoLogs",
     agent_chat_messages: "agentMessages",
     prompt_cache: "promptCache",
 };

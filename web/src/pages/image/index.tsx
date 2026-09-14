@@ -1,7 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
-import localforage from "localforage";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -16,8 +15,12 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration } from "@/services/api/image";
-import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { uploadImage } from "@/services/media-ingest";
+import { useAddAsset } from "@/hooks/use-asset-library";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { deleteGeneration, listGenerations } from "@/services/api/generations";
+import { mediaUrl } from "@/services/api/media";
+import type { GenerationItem } from "@/services/data/types";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
@@ -64,9 +67,7 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
 export default function ImagePage() {
     const { message } = App.useApp();
@@ -78,11 +79,10 @@ export default function ImagePage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const addAsset = useAddAsset();
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
-    const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -101,6 +101,15 @@ export default function ImagePage() {
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
+    // 生成记录只读服务端：游标分页，滚动到底加载下一页。
+    const logsQuery = useInfiniteQuery({
+        queryKey: ["generations", { kind: "image" }],
+        queryFn: ({ pageParam, signal }) => listGenerations({ kind: "image", cursor: pageParam, size: 20 }, signal),
+        initialPageParam: undefined as string | undefined,
+        getNextPageParam: (last) => last.nextCursor ?? undefined,
+    });
+    const logs = useMemo(() => logsQuery.data?.pages.flatMap((page) => page.items.map(toGenerationLog)) || [], [logsQuery.data]);
+
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
@@ -110,10 +119,6 @@ export default function ImagePage() {
         const timer = window.setInterval(() => setElapsedMs(performance.now() - startedAt), 1000);
         return () => window.clearInterval(timer);
     }, [running, startedAt]);
-
-    useEffect(() => {
-        void refreshLogs();
-    }, []);
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -188,19 +193,7 @@ export default function ImagePage() {
         if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
 
         try {
-            saveLog(
-                buildLog({
-                    prompt: text,
-                    model,
-                    config: { ...snapshot.config, count: String(generationCount) },
-                    references: snapshot.references,
-                    durationMs: performance.now() - batchStartedAt,
-                    successCount,
-                    failCount,
-                    status: successCount ? "success" : "failed",
-                    images: successImages,
-                }),
-            );
+            // 生成记录只由服务端在第四期接力写入，这里不再本地落库。
             successCount ? message.success(t("imageWorkbench.generated")) : message.error(failed?.reason instanceof Error ? failed.reason.message : t("workbench.generationFailed"));
         } finally {
             setRunning(false);
@@ -241,16 +234,13 @@ export default function ImagePage() {
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
         const stored = await uploadImage(image.dataUrl);
-        addAsset({
+        addAsset.mutate({
             kind: "image",
             title: t("imageWorkbench.resultTitle", { count: index + 1 }),
-            coverUrl: stored.url,
-            tags: [],
-            source: t("imageWorkbench.source"),
-            data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
-            metadata: { source: "image-page", prompt },
+            storageKey: stored.storageKey,
+            bytes: stored.bytes,
+            data: { url: stored.storageKey ? undefined : stored.url, width: stored.width, height: stored.height, mimeType: stored.mimeType, source: t("imageWorkbench.source"), prompt },
         });
-        message.success(t("common.addedToAssets"));
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
@@ -276,8 +266,7 @@ export default function ImagePage() {
     };
 
     const deleteSelectedLogs = () => {
-        const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+        void Promise.all(selectedLogIds.map((id) => deleteGeneration(id))).then(() => logsQuery.refetch());
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -285,12 +274,6 @@ export default function ImagePage() {
         setSelectedLogIds([]);
         setDeleteConfirmOpen(false);
     };
-
-    const saveLog = (log: GenerationLog) => {
-        void logStore.setItem(log.id, serializeLog(log)).then(refreshLogs);
-    };
-
-    const refreshLogs = async () => setLogs(await readStoredLogs());
 
     const previewGenerationLog = async (log: GenerationLog) => {
         setPreviewLog(log);
@@ -339,22 +322,8 @@ export default function ImagePage() {
         if (!snapshot) return;
         setPreviewLog(null);
         setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
-        const retryStartedAt = performance.now();
         try {
-            const image = await runGenerationSlot(index, snapshot);
-            saveLog(
-                buildLog({
-                    prompt: snapshot.text,
-                    model,
-                    config: { ...snapshot.config, count: "1" },
-                    references: snapshot.references,
-                    durationMs: performance.now() - retryStartedAt,
-                    successCount: 1,
-                    failCount: 0,
-                    status: "success",
-                    images: [image],
-                }),
-            );
+            await runGenerationSlot(index, snapshot);
             message.success(t("workbench.retrySuccess"));
         } catch {
             // runGenerationSlot has already marked the result as failed.
@@ -367,6 +336,9 @@ export default function ImagePage() {
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
                         logs={logs}
+                        hasMore={Boolean(logsQuery.hasNextPage)}
+                        loadingMore={logsQuery.isFetchingNextPage}
+                        onLoadMore={() => void logsQuery.fetchNextPage()}
                         selectedLogIds={selectedLogIds}
                         activeLogId={previewLog?.id}
                         onSelectedLogIdsChange={setSelectedLogIds}
@@ -532,6 +504,9 @@ export default function ImagePage() {
             <Drawer title={t("workbench.logs")} placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
                 <LogPanel
                     logs={logs}
+                    hasMore={Boolean(logsQuery.hasNextPage)}
+                    loadingMore={logsQuery.isFetchingNextPage}
+                    onLoadMore={() => void logsQuery.fetchNextPage()}
                     selectedLogIds={selectedLogIds}
                     activeLogId={previewLog?.id}
                     onSelectedLogIdsChange={setSelectedLogIds}
@@ -664,6 +639,9 @@ function LogPanel({
     logs,
     selectedLogIds,
     activeLogId,
+    hasMore,
+    loadingMore,
+    onLoadMore,
     onSelectedLogIdsChange,
     onCreateSession,
     onDeleteSelected,
@@ -672,14 +650,32 @@ function LogPanel({
     logs: GenerationLog[];
     selectedLogIds: string[];
     activeLogId?: string;
+    hasMore: boolean;
+    loadingMore: boolean;
+    onLoadMore: () => void;
     onSelectedLogIdsChange: (ids: string[]) => void;
     onCreateSession: () => void;
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
 }) {
     const { t } = useTranslation();
+    const loadMoreRef = useRef<HTMLDivElement>(null);
+    // 全选只针对已加载的这几十条，服务端还有下一页时不代表全部历史。
     const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
     const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
+
+    useEffect(() => {
+        const target = loadMoreRef.current;
+        if (!target || !hasMore || loadingMore) return;
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0]?.isIntersecting) onLoadMore();
+            },
+            { rootMargin: "120px" },
+        );
+        observer.observe(target);
+        return () => observer.disconnect();
+    }, [hasMore, loadingMore, onLoadMore]);
 
     return (
         <>
@@ -687,7 +683,7 @@ function LogPanel({
                 <div>
                     <h2 className="text-base font-semibold">{t("workbench.logs")}</h2>
                 </div>
-                <Tag className="m-0">{logs.length}</Tag>
+                <Tag className="m-0">{t("workbench.loadedCount", { count: logs.length })}</Tag>
             </div>
             <div className="mb-4 flex flex-wrap gap-2">
                 <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>
@@ -712,6 +708,13 @@ function LogPanel({
                     />
                 ))}
                 {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">{t("workbench.noLogs")}</div> : null}
+                <div ref={loadMoreRef} />
+                {loadingMore ? (
+                    <div className="flex items-center justify-center py-3 text-xs text-stone-500">
+                        <LoaderCircle className="mr-1 size-3.5 animate-spin" />
+                        {t("common.loading")}
+                    </div>
+                ) : null}
             </div>
         </>
     );
@@ -767,74 +770,6 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function readStoredLogs() {
-    if (typeof window === "undefined") return [];
-    try {
-        const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            values.push(value);
-        });
-        const logs = await Promise.all(values.map(normalizeLog));
-        return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
-}
-
-async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
-    const references = await Promise.all(
-        (log.references || []).map(async (item) => ({
-            ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl),
-        })),
-    );
-    const images = await Promise.all(
-        (log.images || []).map(async (item) => ({
-            ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl),
-        })),
-    );
-    const config = normalizeLogConfig(log);
-    return {
-        id: log.id || nanoid(),
-        createdAt: log.createdAt || Date.now(),
-        title: log.title || log.model || i18n.t("workbench.untitled"),
-        prompt: log.prompt || log.title || "",
-        time: log.time || new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
-        model: log.model || config.imageModel || "",
-        config,
-        references,
-        durationMs: log.durationMs || 0,
-        successCount: log.successCount ?? log.imageCount ?? 0,
-        failCount: log.failCount || 0,
-        imageCount: log.imageCount || log.successCount || 0,
-        size: log.size || config.size || "",
-        quality: log.quality || config.quality || "",
-        status: log.status || "success",
-        images,
-        thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
-    };
-}
-
-function serializeLog(log: GenerationLog): GenerationLog {
-    return {
-        ...log,
-        references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
-        images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : image.dataUrl })),
-        thumbnails: [],
-    };
-}
-
-function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
-    return {
-        model: log.config?.model || log.model || "",
-        imageModel: log.config?.imageModel || log.model || "",
-        quality: log.config?.quality || log.quality || "",
-        size: log.config?.size || log.size || "",
-        count: log.config?.count || String(log.imageCount || log.successCount || 1),
-    };
-}
-
 function moveListItem<T>(items: T[], index: number, offset: number) {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= items.length) return items;
@@ -853,50 +788,28 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
     );
 }
 
-function buildLog({
-    prompt,
-    model,
-    config,
-    references,
-    durationMs,
-    successCount,
-    failCount,
-    status,
-    images,
-}: {
-    prompt: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    status: GenerationLog["status"];
-    images: GeneratedImage[];
-}): GenerationLog {
-    const logConfig = {
-        model: config.model,
-        imageModel: config.imageModel,
-        quality: config.quality,
-        size: config.size,
-        count: config.count,
-    };
+
+function toGenerationLog(item: GenerationItem): GenerationLog {
+    const result = (item.result || {}) as Partial<Pick<GenerationLog, "title" | "time" | "references" | "successCount" | "failCount" | "imageCount" | "size" | "quality" | "images">>;
+    const config = (item.config || {}) as Partial<GenerationLogConfig>;
+    const images = (result.images || []).map((image) => ({ ...image, dataUrl: mediaUrl(image.storageKey) || image.dataUrl }));
+    const references = (result.references || []).map((item) => ({ ...item, dataUrl: mediaUrl(item.storageKey) || item.dataUrl }));
     return {
-        id: nanoid(),
-        createdAt: Date.now(),
-        title: prompt.slice(0, 12) || i18n.t("workbench.untitled"),
-        prompt,
-        time: new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
-        model,
-        config: logConfig,
+        id: item.id,
+        createdAt: new Date(item.createdAt).getTime(),
+        title: result.title || item.prompt.slice(0, 12) || i18n.t("workbench.untitled"),
+        prompt: item.prompt,
+        time: result.time || new Date(item.createdAt).toLocaleString(i18n.resolvedLanguage, { hour12: false }),
+        model: item.model,
+        config: { model: config.model || item.model, imageModel: config.imageModel || item.model, quality: config.quality || "", size: config.size || "", count: config.count || String(images.length || 1) },
         references,
-        durationMs,
-        successCount,
-        failCount,
-        imageCount: Number(logConfig.count) || successCount,
-        size: logConfig.size,
-        quality: logConfig.quality,
-        status,
+        durationMs: item.durationMs,
+        successCount: result.successCount ?? images.length,
+        failCount: result.failCount || 0,
+        imageCount: result.imageCount || images.length,
+        size: result.size || config.size || "",
+        quality: result.quality || config.quality || "",
+        status: item.status === "success" ? "success" : "failed",
         images,
         thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
     };

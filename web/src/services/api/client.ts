@@ -4,11 +4,13 @@ import { useAuthStore } from "@/stores/use-auth-store";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
 
+type QueryValue = string | number | boolean | undefined | null;
 type ApiRequestOptions = {
     method?: HttpMethod;
     body?: unknown;
     headers?: Record<string, string>;
-    query?: Record<string, string | number | boolean | undefined | null>;
+    // 数组按重复参数发送（tag=a&tag=b），与后端 QueryArray 的取值方式一致。
+    query?: Record<string, QueryValue | QueryValue[]>;
     signal?: AbortSignal;
 };
 
@@ -19,6 +21,13 @@ function buildUrl(path: string, query?: ApiRequestOptions["query"]) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query || {})) {
         if (value === undefined || value === null) continue;
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                if (item === undefined || item === null) continue;
+                params.append(key, String(item));
+            }
+            continue;
+        }
         params.set(key, String(value));
     }
     const search = params.toString();

@@ -89,3 +89,17 @@ The Chinese version contains the complete item-by-item acceptance checklist.
 - 所有 4K 预设提交时均不应触发本地总像素或最长边限制；生成和编辑请求、调用脚本应收到所选像素尺寸。
 - 分辨率为自动时保留比例选择，比例为自动时禁用 W/H；手动输入 W/H 后，对齐开关仍应按原有方式工作。
 - Gemini 在质量为自动时，应将表中尺寸识别为对应的 1K / 2K / 4K；显式选择质量时维持原有优先级。视频尺寸设置应保持原有行为。
+
+## Canvas and asset resource migration (phase 2, frontend)
+
+- Canvas list: paging, keyword search, and sorting all run on the server; the network panel shows no request that loads every canvas at once. List responses contain no `data`, and the "N nodes · N connections" numbers match the counts after opening a canvas.
+- Autosave: editing stops for about two seconds and the top bar shows "Saved"; continuous dragging still saves at most every 30 seconds; a failed save (offline) is visible and can be retried.
+- Opening a canvas offline: the page stays put and offers a retry instead of treating the canvas as missing and jumping back to the list.
+- Conflicts: with the same canvas open on two devices, B gets a conflict dialog after A saves; "Overwrite with my version" makes A see B's content after a refresh, and "Reload" discards B's local edits; renaming a canvas does not create conflicts for the other device.
+- Resize and typing: resizing a node stays smooth and sends a single save after release; typing text behaves the same after the user stops.
+- Assets: keyword (including text bodies), kind, and tag filters all hit the server, and tag candidates come from the first page response; selecting several tags requires all of them. The canvas side panel, asset picker, and the Agent `assets_list` tool also filter on the server.
+- Generation history: the workbench history loads the next page on scroll and stops once `nextCursor` is null; deleting records and paging on shows no gaps. An empty history is expected until phase 4 adds the server-side writer.
+- Video resume: refreshing the video page issues one `GET /api/generations?kind=video&status=pending` query to resume polling, separate from the paginated history.
+- Media: images, videos, and audio in the canvas and workbenches all come from `/api/media/{storageKey}`; an unverified account gets `EMAIL_NOT_VERIFIED` on upload while the canvas itself still saves; retrying an interrupted upload with the same `storageKey` does not duplicate records.
+- Export and import: canvas and asset exports download media per `storageKey`; imports upload media before creating canvases or assets, and images are intact afterwards.
+- WebDAV and local data: the settings page no longer has a WebDAV tab and exported config files contain no WebDAV credentials; the Local storage panel only lists app state, Agent messages, and prompt cache. The browser no longer stores canvases, assets, generation records, or media binaries (existing local data is not uploaded automatically; export a canvas zip first if you need to keep it).

@@ -26,8 +26,8 @@ const queryClient = new QueryClient({
 });
 
 // 与账号绑定的查询键前缀。这些查询的 key 已带上 userId，身份变化时按前缀整体移除，
-// 避免 A 登出后 B 登录仍看到 A 的邮箱、点数与订单。只清这些键，公共数据（档位、模型、提示词等）缓存不受影响。
-const USER_SCOPED_QUERY_KEY_PREFIXES = [["me"], ["credits"], ["orders"], ["order"]];
+// 避免 A 登出后 B 登录仍看到 A 的邮箱、点数、订单、画布与素材。只清这些键，公共数据（档位、模型、提示词等）缓存不受影响。
+const USER_SCOPED_QUERY_KEY_PREFIXES = [["me"], ["credits"], ["orders"], ["order"], ["canvases"], ["canvas"], ["assets"], ["generations"]];
 
 export function AppProviders({ children }: { children: ReactNode }) {
     const { i18n, t } = useTranslation();

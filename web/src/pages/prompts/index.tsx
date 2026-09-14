@@ -8,7 +8,7 @@ import { usePromptList } from "@/components/prompts/use-prompt-list";
 import { PromptDetailDialog } from "./components/prompt-detail-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { cn } from "@/lib/utils";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { useAddAsset } from "@/hooks/use-asset-library";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 
 export default function PromptsPage() {
@@ -18,7 +18,7 @@ export default function PromptsPage() {
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [selectedCategory, setSelectedCategory] = useState(ALL_PROMPTS_OPTION);
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const addAsset = useAddAsset();
     const copyText = useCopyText();
     const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
 
@@ -32,8 +32,7 @@ export default function PromptsPage() {
     };
 
     const savePromptAsset = (item: Prompt) => {
-        addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
-        message.success(t("common.addedToAssets"));
+        addAsset.mutate({ kind: "text", title: item.title, tags: item.tags, data: { content: item.prompt, source: item.category, promptId: item.id, githubUrl: item.githubUrl } });
     };
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {

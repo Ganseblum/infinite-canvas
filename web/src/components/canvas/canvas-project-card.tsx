@@ -1,18 +1,22 @@
 import { Check, Download, Pencil, Trash2, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button, Input } from "antd";
+import { App, Button, Input } from "antd";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
-import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { getApiErrorMessage } from "@/lib/api-error";
+import { getCanvas, patchCanvas } from "@/services/api/canvas";
+import type { CanvasSummary } from "@/services/data/types";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
-export function CanvasProjectCard({ project }: { project: CanvasProject }) {
+export function CanvasProjectCard({ project }: { project: CanvasSummary }) {
     const { i18n, t } = useTranslation();
+    const { message } = App.useApp();
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
     const [searchParams] = useSearchParams();
-    const renameProject = useCanvasStore((state) => state.renameProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const editingId = useCanvasUiStore((state) => state.editingProjectId);
     const editingTitle = useCanvasUiStore((state) => state.editingProjectTitle);
@@ -28,8 +32,28 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
         navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}${agentHash}`, { replace: Boolean(agentHash) });
     };
     const saveTitle = () => {
-        renameProject(project.id, editingTitle);
+        const title = editingTitle.trim();
         stopEditing();
+        if (!title || title === project.title) return;
+        renameMutation.mutate(title);
+    };
+    const renameMutation = useMutation({
+        mutationFn: (title: string) => patchCanvas(project.id, title),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["canvases"] }),
+        onError: (error) => message.error(getApiErrorMessage(error)),
+    });
+    const exportProject = async () => {
+        const hide = message.loading(t("canvas.projectPage.exporting"), 0);
+        try {
+            // 摘要里没有 data，导出前先拉一次详情。
+            await exportCanvasProjects([await getCanvas(project.id)], project.title || t("canvas.title"));
+            message.success(t("canvas.projectPage.exported"));
+        } catch (error) {
+            console.error(error);
+            message.error(t("canvas.sidePanel.exportFailed"));
+        } finally {
+            hide();
+        }
     };
 
     return (
@@ -56,7 +80,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                     >
                         <h2 className="truncate text-xl font-semibold">{project.title}</h2>
                         <p className="mt-3 text-sm leading-6 text-stone-600 dark:text-stone-400">
-                            {t("canvas.project.stats", { nodes: project.nodes.length, connections: project.connections.length })}
+                            {t("canvas.project.stats", { nodes: project.nodeCount, connections: project.connectionCount })}
                         </p>
                     </button>
                 )}
@@ -71,7 +95,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                         </>
                     ) : (
                         <>
-                            <Button type="text" size="small" shape="circle" icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects([project], project.title || t("canvas.title"))} aria-label={t("canvas.project.export")} />
+                            <Button type="text" size="small" shape="circle" icon={<Download className="size-4" />} onClick={() => void exportProject()} aria-label={t("canvas.project.export")} />
                             <Button type="text" size="small" shape="circle" icon={<Pencil className="size-4" />} onClick={() => startEditing(project.id, project.title)} aria-label={t("canvas.project.rename")} />
                             <Button type="text" size="small" shape="circle" icon={<Trash2 className="size-4" />} onClick={() => setDeleteIds([project.id])} aria-label={t("canvas.project.delete")} />
                         </>

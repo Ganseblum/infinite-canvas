@@ -4,8 +4,8 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
-import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { imageToDataUrl } from "@/services/image-storage";
+import { getMediaBlob, mediaUrl } from "@/services/api/media";
+import { imageToDataUrl, uploadMediaFile, type UploadedFile } from "@/services/media-ingest";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
@@ -292,7 +292,7 @@ async function fileToGeminiInline(file: File): Promise<GeminiInlineData> {
 async function referenceMediaToFile(item: { name: string; type?: string; url?: string; storageKey?: string }, fallbackName: string, errorKey: "invalidReferenceVideo" | "invalidReferenceAudio", options?: RequestOptions) {
     let blob = item.storageKey ? await getMediaBlob(item.storageKey) : null;
     if (!blob) {
-        const url = item.storageKey ? await resolveMediaUrl(item.storageKey, item.url || "") : item.url || "";
+        const url = item.storageKey ? mediaUrl(item.storageKey) : item.url || "";
         if (!url) throw new Error(apiText(errorKey));
         try {
             blob = await (await fetch(url, { signal: options?.signal })).blob();

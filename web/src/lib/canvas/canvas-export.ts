@@ -2,27 +2,27 @@ import { saveAs } from "file-saver";
 
 import i18n from "@/i18n";
 import { createZip } from "@/lib/zip";
-import { getMediaBlob } from "@/services/file-storage";
-import { getImageBlob } from "@/services/image-storage";
+import { getMediaBlob } from "@/services/api/media";
+import type { CanvasDetail } from "@/services/data/types";
 import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
-import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
-export async function exportCanvasProjects(projects: CanvasProject[], fileName = i18n.t("canvas.export.defaultProjectName")) {
+// 导出需要完整 data，列表摘要里没有，调用方先 GET 详情再传进来。
+export async function exportCanvasProjects(canvases: CanvasDetail[], fileName = i18n.t("canvas.export.defaultProjectName")) {
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const exportedProjects = await Promise.all(
-        projects.map(async (project) => {
+        canvases.map(async (canvas) => {
             const files: CanvasExportAsset[] = [];
             await Promise.all(
-                collectStorageKeys(project).map(async (storageKey) => {
-                    const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+                collectStorageKeys(canvas.data).map(async (storageKey) => {
+                    const blob = await getMediaBlob(storageKey).catch(() => null);
                     if (!blob) return;
-                    const path = `projects/${project.id}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
+                    const path = `projects/${canvas.id}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
                     files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
                     zipFiles.push({ name: path, data: blob });
                 }),
             );
-            return { project, files };
+            return { project: canvas, files };
         }),
     );
 
@@ -47,7 +47,7 @@ export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = i18n
             const title = node.title || node.type;
             const storageKey = node.metadata?.storageKey || "";
             if (storageKey) {
-                const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+                const blob = await getMediaBlob(storageKey).catch(() => null);
                 if (blob) return void zipFiles.push({ name: uniqueName(title, fileExtension(blob.type, storageKey)), data: blob });
             }
             if (node.type === CanvasNodeType.Text) return void zipFiles.push({ name: uniqueName(title, "txt"), data: node.metadata?.content || node.metadata?.prompt || "" });

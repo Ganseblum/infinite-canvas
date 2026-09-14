@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
+import type { CanvasSaveState } from "@/pages/canvas/hooks/use-canvas-autosave";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
@@ -31,6 +32,8 @@ export function CanvasTopBar({
     agentOpen,
     compactAgentStatus,
     onToggleAgent,
+    saveState,
+    onRetrySave,
 }: {
     title: string;
     titleDraft: string;
@@ -53,6 +56,8 @@ export function CanvasTopBar({
     agentOpen: boolean;
     compactAgentStatus: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
+    saveState: CanvasSaveState;
+    onRetrySave: () => void;
 }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const { t } = useTranslation();
@@ -135,6 +140,7 @@ export function CanvasTopBar({
                             </button>
                         )}
                     </div>
+                    <SaveStatus state={saveState} onRetry={onRetrySave} />
                     <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
                 </div>
 
@@ -195,6 +201,25 @@ function CompactAgentStatus({ status, onClick }: { status: { connected: boolean;
             <span className="size-2 rounded-full" style={{ background: dotColor }} />
             <span className="max-w-[140px] truncate">{label}</span>
         </button>
+    );
+}
+
+function SaveStatus({ state, onRetry }: { state: CanvasSaveState; onRetry: () => void }) {
+    const colorTheme = useThemeStore((state) => state.theme);
+    const theme = canvasThemes[colorTheme];
+    const { t } = useTranslation();
+    if (state === "idle") return null;
+    if (state === "error") {
+        return (
+            <button type="button" className="text-xs text-red-500 transition hover:opacity-75" onClick={onRetry} title={t("canvas.save.retryHint")}>
+                {t("canvas.save.failed")}
+            </button>
+        );
+    }
+    return (
+        <span className="text-xs" style={{ color: theme.node.muted }}>
+            {state === "saving" ? t("canvas.save.saving") : t("canvas.save.saved")}
+        </span>
     );
 }
 

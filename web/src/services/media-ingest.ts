@@ -1,9 +1,11 @@
-import localforage from "localforage";
-
 import { nanoid } from "nanoid";
+
 import i18n from "@/i18n";
+import { getMediaBlob, mediaUrl, putMedia } from "@/services/api/media";
 import { withLocalProxy } from "@/stores/use-config-store";
 
+// 媒体写入统一入口：远端下载或本地文件先变成 Blob，再 PUT /api/media/{storageKey}，
+// 返回的 url 就是可直接用于 <img>/<video> 的同源地址，浏览器负责缓存。
 export type UploadedImage = {
     url: string;
     storageKey?: string;
@@ -13,25 +15,24 @@ export type UploadedImage = {
     mimeType: string;
 };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
-const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
-const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
-const objectUrls = new Map<string, string>();
+export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
+
+type ReadOptions = { signal?: AbortSignal };
+
 const IMAGE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_REMOTE_LOAD_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 const IMAGE_RESPONSE_ERROR = "ImageResponseError";
 const IMAGE_TIMEOUT_ERROR = "ImageTimeoutError";
 
-type ImageReadOptions = { signal?: AbortSignal };
-
-export async function uploadImage(input: string | Blob, options?: ImageReadOptions): Promise<UploadedImage> {
+export async function uploadImage(input: string | Blob, options?: ReadOptions): Promise<UploadedImage> {
     if (typeof input !== "string") return storeImage(input, options);
 
     let blob: Blob;
     try {
         blob = await fetchImageBlob(input, options);
     } catch (error) {
+        // 下载不到但浏览器能显示的远端图保持原地址，不写空 storageKey。
         if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR) || !/^https?:\/\//i.test(input)) throw error;
         const meta = await loadImageMeta(input, options, IMAGE_REMOTE_LOAD_TIMEOUT_MS);
         if (!meta) throw error;
@@ -40,25 +41,48 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
     return storeImage(blob, options);
 }
 
-async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<UploadedImage> {
-    const storageKey = `image:${nanoid()}`;
-    const url = URL.createObjectURL(blob);
+async function storeImage(blob: Blob, options?: ReadOptions): Promise<UploadedImage> {
+    const objectUrl = URL.createObjectURL(blob);
     try {
-        const meta = await loadImageMeta(url, options);
+        const meta = await loadImageMeta(objectUrl, options);
         if (!meta) throw new Error(i18n.t("common.imageReadFailed"));
         throwIfAborted(options?.signal);
-        await store.setItem(storageKey, blob);
+        const storageKey = `image:${nanoid()}`;
+        await putMedia(storageKey, blob);
         throwIfAborted(options?.signal);
-        objectUrls.set(storageKey, url);
-        return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
-    } catch (error) {
-        URL.revokeObjectURL(url);
-        await store.removeItem(storageKey).catch(() => undefined);
-        throw error;
+        return { url: mediaUrl(storageKey), storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
+    } finally {
+        URL.revokeObjectURL(objectUrl);
     }
 }
 
-async function fetchImageBlob(url: string, options?: ImageReadOptions) {
+export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
+    const blob = typeof input === "string" ? await (await fetch(withLocalProxy(input))).blob() : input;
+    const storageKey = `${prefix}:${nanoid()}`;
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+        const meta = blob.type.startsWith("video/") ? await readVideoMeta(objectUrl) : blob.type.startsWith("audio/") ? await readAudioMeta(objectUrl) : {};
+        await putMedia(storageKey, blob);
+        return { url: mediaUrl(storageKey), storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+    } finally {
+        URL.revokeObjectURL(objectUrl);
+    }
+}
+
+// 供仍走浏览器直连的 AI 调用层使用：把已保存的媒体读成 Data URL。
+export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ReadOptions) {
+    if (image.dataUrl) return blobToDataUrl(await fetchImageBlob(image.dataUrl, options));
+    if (image.storageKey) {
+        const blob = await getMediaBlob(image.storageKey, options?.signal);
+        if (blob) return blobToDataUrl(blob);
+    }
+    const url = image.url || "";
+    if (!url || url.startsWith("data:")) return url;
+    return blobToDataUrl(await fetchImageBlob(url, options));
+}
+
+async function fetchImageBlob(url: string, options?: ReadOptions) {
+    if (url.startsWith("data:")) return (await fetch(url)).blob();
     const controller = new AbortController();
     let timedOut = false;
     const abort = () => controller.abort();
@@ -69,7 +93,7 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
         controller.abort();
     }, IMAGE_DOWNLOAD_TIMEOUT_MS);
     try {
-        const response = await fetch(withLocalProxy(url), { signal: controller.signal });
+        const response = await fetch(withLocalProxy(url), { signal: controller.signal, credentials: "include" });
         if (!response.ok) throw namedError(IMAGE_RESPONSE_ERROR);
         return await response.blob();
     } catch (error) {
@@ -82,7 +106,7 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
     }
 }
 
-function loadImageMeta(url: string, options?: ImageReadOptions, timeoutMs = IMAGE_DECODE_TIMEOUT_MS) {
+function loadImageMeta(url: string, options?: ReadOptions, timeoutMs = IMAGE_DECODE_TIMEOUT_MS) {
     return new Promise<{ width: number; height: number } | null>((resolve, reject) => {
         if (options?.signal?.aborted) return reject(abortReason(options.signal));
         const image = new Image();
@@ -130,74 +154,31 @@ function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw abortReason(signal);
 }
 
-export async function resolveImageUrl(storageKey?: string, fallback = "") {
-    if (!storageKey) return fallback;
-    const cached = objectUrls.get(storageKey);
-    if (cached) return cached;
-    const blob = await store.getItem<Blob>(storageKey);
-    if (!blob) return fallback;
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    return url;
-}
-
-export async function getImageBlob(storageKey: string) {
-    return store.getItem<Blob>(storageKey);
-}
-
-export async function setImageBlob(storageKey: string, blob: Blob) {
-    await store.setItem(storageKey, blob);
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    return url;
-}
-
-export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ImageReadOptions) {
-    const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
-    if (!url || url.startsWith("data:")) return url;
-    return blobToDataUrl(await fetchImageBlob(url, options));
-}
-
-export async function deleteStoredImages(keys: Iterable<string>) {
-    await Promise.all(
-        Array.from(new Set(keys)).map(async (key) => {
-            const url = objectUrls.get(key);
-            if (url) URL.revokeObjectURL(url);
-            objectUrls.delete(key);
-            await store.removeItem(key);
-        }),
-    );
-}
-
-export async function cleanupUnusedImages(usedData: unknown) {
-    const usedKeys = collectImageStorageKeys(usedData);
-    await Promise.all([
-        imageLogStore.iterate((value) => {
-            collectImageStorageKeys(value, usedKeys);
-        }),
-        videoLogStore.iterate((value) => {
-            collectImageStorageKeys(value, usedKeys);
-        }),
-    ]);
-    const unused: string[] = [];
-    await store.iterate((_value, key) => {
-        if (!usedKeys.has(key)) unused.push(key);
-    });
-    await deleteStoredImages(unused);
-}
-
-export function collectImageStorageKeys(value: unknown, keys = new Set<string>()) {
-    if (!value || typeof value !== "object") return keys;
-    if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.startsWith("image:")) keys.add(value.storageKey);
-    Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectImageStorageKeys(child, keys)) : collectImageStorageKeys(item, keys)));
-    return keys;
-}
-
 function blobToDataUrl(blob: Blob) {
     return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ""));
         reader.onerror = () => reject(new Error(i18n.t("common.imageReadFailed")));
         reader.readAsDataURL(blob);
+    });
+}
+
+function readVideoMeta(url: string) {
+    return new Promise<{ width: number; height: number; durationMs?: number }>((resolve) => {
+        const video = document.createElement("video");
+        const done = () => resolve({ width: video.videoWidth || 1280, height: video.videoHeight || 720, durationMs: Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : undefined });
+        video.onloadedmetadata = done;
+        video.onerror = done;
+        video.src = url;
+    });
+}
+
+function readAudioMeta(url: string) {
+    return new Promise<{ durationMs?: number }>((resolve) => {
+        const audio = document.createElement("audio");
+        const done = () => resolve({ durationMs: Number.isFinite(audio.duration) ? Math.round(audio.duration * 1000) : undefined });
+        audio.onloadedmetadata = done;
+        audio.onerror = done;
+        audio.src = url;
     });
 }

@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { useAddAsset } from "@/hooks/use-asset-library";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -16,7 +16,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
     const [loading, setLoading] = useState(false);
     const [detail, setDetail] = useState<Prompt | null>(null);
     const copyText = useCopyText();
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const addAsset = useAddAsset();
 
     const load = useCallback(
         async (force: boolean) => {
@@ -39,8 +39,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
     }, [source, load]);
 
     const saveAsset = (item: Prompt) => {
-        addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
-        message.success(t("common.addedToAssets"));
+        addAsset.mutate({ kind: "text", title: item.title, tags: item.tags, data: { content: item.prompt, source: item.category, promptId: item.id, githubUrl: item.githubUrl } });
     };
 
     return (

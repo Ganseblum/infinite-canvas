@@ -1,19 +1,20 @@
 import type { NavigateFunction } from "react-router-dom";
 
 import i18n from "@/i18n";
+import { assetText, assetUrl } from "@/lib/asset";
+import { createAsset, listAssets as listAssetItems } from "@/services/api/assets";
+import { listCanvases } from "@/services/api/canvas";
 import { fetchPrompts } from "@/services/api/prompts";
-import { uploadImage } from "@/services/image-storage";
+import { uploadImage } from "@/services/media-ingest";
 import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
 import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { clampVideoSeconds } from "@/lib/media-size";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
-// Execute site-level Agent tools in the browser, including canvas lists, workbench generation, prompt search, and asset operations.
-// Their data lives locally in the browser through localforage and Zustand, so this module accesses the relevant stores directly.
+// Execute site-level Agent tools in the browser: canvas lists, workbench generation, prompt search, and asset operations.
+// Canvas and asset data now live on the server, so these tools call the resource clients directly.
 
 export const SITE_TOOL_NAMES = [
     "canvas_list_projects",
@@ -129,21 +130,18 @@ function compactPrompt(prompt: unknown) {
     return value ? `${value.slice(0, 200)}${value.length > 200 ? "..." : ""}` : undefined;
 }
 
-function listCanvasProjects(input: SiteToolInput) {
-    const { projects, hydrated } = useCanvasStore.getState();
-    if (!hydrated) throw new Error(siteText("canvasLoading"));
-    const keyword = String(input.keyword || "").trim().toLowerCase();
-    const filtered = keyword ? projects.filter((project) => project.title.toLowerCase().includes(keyword)) : projects;
-    const { page, pageSize, start, end } = paginate(input, filtered.length, 20);
-    const items = filtered.slice(start, end).map((project) => ({
-        id: project.id,
-        title: project.title,
-        createdAt: project.createdAt,
-        updatedAt: project.updatedAt,
-        nodeCount: project.nodes.length,
-        connectionCount: project.connections.length,
-    }));
-    return { total: filtered.length, page, pageSize, items, hint: siteText("canvasHint") };
+async function listCanvasProjects(input: SiteToolInput) {
+    const keyword = String(input.keyword || "").trim();
+    const size = Math.max(1, Math.min(100, Math.floor(Number(input.pageSize)) || 20));
+    const page = Math.max(1, Math.floor(Number(input.page)) || 1);
+    const result = await listCanvases({ q: keyword || undefined, page, size });
+    return {
+        total: result.total,
+        page: result.page,
+        pageSize: result.size,
+        items: result.items.map((canvas) => ({ id: canvas.id, title: canvas.title, updatedAt: canvas.updatedAt, nodeCount: canvas.nodeCount, connectionCount: canvas.connectionCount })),
+        hint: siteText("canvasHint"),
+    };
 }
 
 function getImageConfig() {
@@ -267,30 +265,23 @@ async function searchPrompts(input: SiteToolInput) {
     };
 }
 
-function listAssets(input: SiteToolInput) {
-    const { assets, hydrated } = useAssetStore.getState();
-    if (!hydrated) throw new Error(siteText("assetsLoading"));
-    const kind = input.kind === "text" || input.kind === "image" || input.kind === "video" ? input.kind : "all";
-    const keyword = String(input.keyword || "").trim().toLowerCase();
-    const filtered = assets.filter((asset) => {
-        if (kind !== "all" && asset.kind !== kind) return false;
-        if (!keyword) return true;
-        return [asset.title, asset.note, asset.source, ...asset.tags].filter(Boolean).join(" ").toLowerCase().includes(keyword);
-    });
-    const { page, pageSize, start, end } = paginate(input, filtered.length, 20);
-    const items = filtered.slice(start, end).map((asset) => ({
+async function listAssets(input: SiteToolInput) {
+    const kind = input.kind === "text" || input.kind === "image" || input.kind === "video" ? input.kind : undefined;
+    const keyword = String(input.keyword || "").trim();
+    const size = Math.max(1, Math.min(100, Math.floor(Number(input.pageSize)) || 20));
+    const page = Math.max(1, Math.floor(Number(input.page)) || 1);
+    const result = await listAssetItems({ kind, q: keyword || undefined, page, size });
+    const items = result.items.map((asset) => ({
         id: asset.id,
         kind: asset.kind,
         title: asset.title,
         tags: asset.tags,
-        source: asset.source,
-        note: asset.note,
         createdAt: asset.createdAt,
         updatedAt: asset.updatedAt,
-        coverUrl: asset.coverUrl || undefined,
-        content: asset.kind === "text" ? asset.data.content : undefined,
+        mediaUrl: asset.kind === "text" ? undefined : assetUrl(asset),
+        content: asset.kind === "text" ? assetText(asset) : undefined,
     }));
-    return { total: filtered.length, page, pageSize, items };
+    return { total: result.total, page: result.page, pageSize: result.size, items };
 }
 
 async function addAsset(input: SiteToolInput) {
@@ -299,13 +290,11 @@ async function addAsset(input: SiteToolInput) {
     if (!title) throw new Error(siteText("assetTitleRequired"));
     const tags = Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === "string") : [];
     const source = typeof input.source === "string" ? input.source : "Agent";
-    const note = typeof input.note === "string" ? input.note : undefined;
-    const store = useAssetStore.getState();
     if (kind === "text") {
         const content = String(input.content || "").trim();
         if (!content) throw new Error(siteText("textContentRequired"));
-        const id = store.addAsset({ kind: "text", title, coverUrl: "", tags, source, note, data: { content } });
-        return { ok: true, id, kind: "text" };
+        const asset = await createAsset({ kind: "text", title, tags, data: { content, source } });
+        return { ok: true, id: asset.id, kind: "text" };
     }
     if (kind === "image") {
         const imageUrl = String(input.imageUrl || "").trim();
@@ -316,8 +305,8 @@ async function addAsset(input: SiteToolInput) {
         } catch {
             throw new Error(siteText("imageReadFailed"));
         }
-        const id = store.addAsset({ kind: "image", title, coverUrl: stored.url, tags, source, note, data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType } });
-        return { ok: true, id, kind: "image" };
+        const asset = await createAsset({ kind: "image", title, tags, storageKey: stored.storageKey, bytes: stored.bytes, data: { url: stored.storageKey ? undefined : stored.url, width: stored.width, height: stored.height, mimeType: stored.mimeType, source } });
+        return { ok: true, id: asset.id, kind: "image" };
     }
     throw new Error(siteText("assetKindUnsupported"));
 }

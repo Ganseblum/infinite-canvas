@@ -1,8 +1,7 @@
 import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
-import { resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { resolveMediaUrl } from "@/services/file-storage";
-import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
+import { mediaUrl } from "@/services/api/media";
+import { referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
@@ -30,53 +29,37 @@ export function generationReferenceUrls(context: { referenceImages: ReferenceIma
     ];
 }
 
-export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
+export function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     if (metadata.generationType !== "edit") return [];
     if (!metadata.references?.length) return null;
-    const references = await Promise.all(
-        metadata.references.map(async (url, index) => {
-            const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
-            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
-        }),
-    );
+    const references = metadata.references.map((url, index) => {
+        const resolved = url.startsWith("image:") ? mediaUrl(url) : url;
+        return resolved ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl: resolved, storageKey: url.startsWith("image:") ? url : undefined } : null;
+    });
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
-export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
-    return Promise.all(
-        nodes.map(async (node) => {
-            const metadata = node.metadata;
-            const content = metadata?.content;
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && metadata?.storageKey) return { ...node, metadata: { ...metadata, content: await resolveMediaUrl(metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image || !metadata || !content) return node;
-            const images = await Promise.all((metadata.images || []).map(async (image) => (image.content ? { ...image, content: await resolveImageUrl(image.storageKey, image.content) } : image)));
-            if (metadata.storageKey) return { ...node, metadata: { ...metadata, content: await resolveImageUrl(metadata.storageKey, content), images } };
-            if (!content.startsWith("data:image/")) return node;
-            return { ...node, metadata: { ...metadata, ...imageMetadata(await uploadImage(content)) } };
-        }),
-    );
+// 二进制都在服务端，还原画布只是把 storageKey 拼成可直接引用的地址，不再需要异步取 Blob。
+export function hydrateCanvasImages(nodes: CanvasNodeData[]) {
+    return nodes.map((node) => {
+        const metadata = node.metadata;
+        const content = metadata?.content;
+        if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && metadata?.storageKey) return { ...node, metadata: { ...metadata, content: mediaUrl(metadata.storageKey) } };
+        if (node.type !== CanvasNodeType.Image || !metadata || !content) return node;
+        const images = (metadata.images || []).map((image) => (image.content && image.storageKey ? { ...image, content: mediaUrl(image.storageKey) } : image));
+        if (metadata.storageKey) return { ...node, metadata: { ...metadata, content: mediaUrl(metadata.storageKey), images } };
+        return images.some((image, index) => image !== metadata.images?.[index]) ? { ...node, metadata: { ...metadata, images } } : node;
+    });
 }
 
-export async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
-    const hydrateItem = async <T extends { dataUrl?: string; storageKey?: string }>(item: T) => {
-        if (item.storageKey) return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
-        if (item.dataUrl?.startsWith("data:image/")) {
-            const image = await uploadImage(item.dataUrl);
-            return { ...item, dataUrl: image.url, storageKey: image.storageKey };
-        }
-        return item;
-    };
-    return Promise.all(
-        sessions.map(async (session) => ({
-            ...session,
-            messages: await Promise.all(
-                session.messages.map(async (message) => ({
-                    ...message,
-                    references: await Promise.all((message.references || []).map(hydrateItem)),
-                })),
-            ),
+export function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
+    return sessions.map((session) => ({
+        ...session,
+        messages: session.messages.map((message) => ({
+            ...message,
+            references: (message.references || []).map((item) => (item.storageKey ? { ...item, dataUrl: mediaUrl(item.storageKey) } : item)),
         })),
-    );
+    }));
 }
 
 export function getGenerationCount(count: string) {

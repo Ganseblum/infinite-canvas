@@ -9,6 +9,8 @@ type CanvasUiStore = {
     setEditingProjectTitle: (title: string) => void;
     stopEditingProject: () => void;
     toggleSelectedProjectId: (id: string, selected: boolean) => void;
+    // 选中集合是跨页累积的，翻页或换筛选条件时当前页拿不到这些 id，必须整体清空。
+    clearSelectedProjectIds: () => void;
     setDeleteProjectIds: (ids: string[]) => void;
     removeSelectedProjectIds: (ids: string[]) => void;
 };
@@ -22,6 +24,7 @@ export const useCanvasUiStore = create<CanvasUiStore>((set) => ({
     setEditingProjectTitle: (editingProjectTitle) => set({ editingProjectTitle }),
     stopEditingProject: () => set({ editingProjectId: null }),
     toggleSelectedProjectId: (id, selected) => set((state) => ({ selectedProjectIds: selected ? [...new Set([...state.selectedProjectIds, id])] : state.selectedProjectIds.filter((item) => item !== id) })),
+    clearSelectedProjectIds: () => set({ selectedProjectIds: [] }),
     setDeleteProjectIds: (deleteProjectIds) => set({ deleteProjectIds }),
     removeSelectedProjectIds: (ids) => set((state) => ({ selectedProjectIds: state.selectedProjectIds.filter((id) => !ids.includes(id)) })),
 }));
