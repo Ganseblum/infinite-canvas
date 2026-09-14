@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "无限画布",
-        description: "一个无限画布创作工具",
+        title: "优刻",
+        description: "优刻 AI 创作画布",
     },
     theme: { toggle: "切换主题" },
     common: {
@@ -46,7 +46,7 @@ export default {
         returns: { image: "文生图（images 为空）和图生图（images 有参考图）接口不同，脚本需自行区分；返回图片 URL 或 dataURL 字符串，也可返回它们的数组，或 [{ dataUrl }] / [{ url }] / [{ b64_json }]", video: "脚本内部完成轮询，返回 { url } 或 { blob } 或视频 URL 字符串", audio: "返回 Blob，或 base64 / dataURL 字符串，或 { b64_json } / { data } / { url }", text: "用 onDelta(text) 推送流式，最终 return 完整文本字符串" },
         templates: { openai: "OpenAI 规范", gemini: "Gemini 规范" },
         authoring: {
-            intro: "请为 Infinite Canvas 编写一段模型调用脚本。能力类型：{{capability}}。目标模型：{{model}}。",
+            intro: "请为优刻编写一段模型调用脚本。能力类型：{{capability}}。目标模型：{{model}}。",
             shape: "请写成一个 async function，把用到的变量写在参数列表里，并把 params 拆成 size、quality、count 等字段，方便对照。不要 import，不要 Markdown 代码围栏。函数内发请求并 return 结果；因为运行时会注入同名局部变量，最后需要 return await 函数名({ 同样的参数 })。",
             returnTitle: "返回要求",
             variablesTitle: "可用变量",
@@ -219,9 +219,9 @@ export default {
         empty: "还没有生成视频",
     },
     canvas: {
-        defaultTitle: "无限画布 {{count}}",
+        defaultTitle: "优刻 {{count}}",
         library: "画布库",
-        title: "无限画布",
+        title: "优刻",
         imported: "已导入 {{count}} 个画布",
         importFailed: "导入失败，请选择有效的画布压缩包",
         opening: "正在打开画布...",
@@ -274,7 +274,7 @@ export default {
             select: "选择 {{name}}", stats: "{{nodes}} 个节点 · {{connections}} 条连线", updated: "更新于 {{date}}", saveName: "保存名称", cancelRename: "取消重命名", export: "导出", rename: "重命名", delete: "删除",
             deleteTitle: "删除画布？", deleteDescription: "将删除 {{count}} 个画布，里面的节点和连线也会一起移除。",
         },
-        export: { defaultProjectName: "无限画布", defaultNodesName: "画布元素", item: "元素" },
+        export: { defaultProjectName: "优刻", defaultNodesName: "画布元素", item: "元素" },
         createMenu: {
             fromNode: "引用该节点生成", close: "关闭", text: "文本生成", textDescription: "脚本、广告词、品牌文案", image: "图片生成", video: "视频生成", audio: "音频参考", config: "配置节点", configDescription: "模型、尺寸、数量和输入顺序", select: "选择节点",
         },
@@ -372,7 +372,7 @@ export default {
             registerPoint1: "邮箱验证账号",
             registerPoint2: "免费体验额度",
             registerPoint3: "随时升级解锁更多模型",
-            copyright: "© 2026 无限画布",
+            copyright: "© 2026 优刻",
         },
         login: {
             title: "登录",
@@ -461,7 +461,7 @@ export default {
     },
     home: {
         promptError: "获取提示词失败",
-        description: "在 <canvas>无限画布</canvas> 中生成、连接和重组 <content>图片、文字与图形</content>，让创作从单次生成变成连续推演。",
+        description: "在 <canvas>优刻</canvas> 中生成、连接和重组 <content>图片、文字与图形</content>，让创作从单次生成变成连续推演。",
         start: "开始使用",
         openCanvas: "打开画布",
         showcaseTitle: "沉淀每一次好结果",
