@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 配置页设计稿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] active:scale-[0.98] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18]; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .field-input { @apply h-10 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:text-stone-100 dark:focus:border-stone-500; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .switch { @apply relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full bg-stone-200 transition dark:bg-stone-700; }
+  .switch::after { content: ""; @apply absolute left-0.5 size-4 rounded-full bg-white shadow transition-transform dark:bg-stone-300; }
+  .switch.on { @apply bg-stone-900 dark:bg-stone-100; }
+  .switch.on::after { @apply translate-x-4 bg-white dark:bg-stone-900; }
+  .side-item { @apply flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-item.active { @apply bg-black/5 font-medium text-stone-950 dark:bg-white/10 dark:text-stone-50; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<div class="flex h-dvh flex-col overflow-hidden">
+  <!-- ========== 顶部导航 ========== -->
+  <header class="flex h-14 shrink-0 items-center justify-between border-b border-stone-200 px-4 sm:px-6 dark:border-stone-800">
+    <a href="home.html" class="flex items-center gap-2 text-sm font-semibold tracking-tight">
+      <span class="size-5 rounded bg-current"></span>
+      <span class="text-base font-medium">配置</span>
+    </a>
+    <button class="icon-btn" onclick="toggleTheme()" title="切换主题">
+      <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+      <i data-lucide="moon" class="size-4 dark:hidden"></i>
+    </button>
+  </header>
+
+  <div class="mx-auto flex w-full max-w-5xl min-h-0 flex-1 gap-8 px-4 py-8 sm:px-6">
+    <!-- ========== 左侧导航 ========== -->
+    <aside class="hidden w-52 shrink-0 md:block">
+      <nav class="flex flex-col gap-1" id="side-nav">
+        <button class="side-item active" data-tab="general" onclick="switchTab('general')"><i data-lucide="settings-2" class="size-4"></i>通用偏好</button>
+        <button class="side-item" data-tab="data" onclick="switchTab('data')"><i data-lucide="database" class="size-4"></i>数据与存储</button>
+      </nav>
+    </aside>
+    <!-- 移动端 tab -->
+    <div class="flex gap-1 overflow-x-auto md:hidden" id="m-tabs">
+      <button class="side-item active" data-tab="general" onclick="switchTab('general')">通用偏好</button>
+      <button class="side-item" data-tab="data" onclick="switchTab('data')">数据与存储</button>
+    </div>
+
+    <!-- ========== 右侧内容 ========== -->
+    <div class="min-w-0 flex-1 overflow-y-auto thin-scrollbar">
+
+      <!-- 通用偏好 -->
+      <section id="tab-general" class="tab-panel">
+        <h2 class="text-lg font-semibold">通用偏好</h2>
+        <div class="card mt-4 divide-y divide-stone-100 dark:divide-stone-800/60">
+          <label class="flex cursor-pointer items-center justify-between px-6 py-4" onclick="this.querySelector('.switch').classList.toggle('on')">
+            <div><p class="text-sm font-medium">自动保存画布</p><p class="mt-1 text-xs text-stone-500 dark:text-stone-400">每次修改后自动保存到本地</p></div>
+            <span class="switch on"></span>
+          </label>
+          <label class="flex cursor-pointer items-center justify-between px-6 py-4" onclick="this.querySelector('.switch').classList.toggle('on')">
+            <div><p class="text-sm font-medium">生成完成通知</p><p class="mt-1 text-xs text-stone-500 dark:text-stone-400">任务完成后显示桌面通知</p></div>
+            <span class="switch"></span>
+          </label>
+          <div class="flex items-center justify-between px-6 py-4">
+            <div><p class="text-sm font-medium">界面语言</p><p class="mt-1 text-xs text-stone-500 dark:text-stone-400">跟随系统或手动指定</p></div>
+            <div class="inline-flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800">
+              <button class="rounded-lg bg-black/5 px-3 py-1 text-xs font-medium dark:bg-white/10">中文</button>
+              <button class="rounded-lg px-3 py-1 text-xs text-stone-500">English</button>
+            </div>
+          </div>
+          <div class="flex items-center justify-between px-6 py-4">
+            <div><p class="text-sm font-medium">主题</p><p class="mt-1 text-xs text-stone-500 dark:text-stone-400">浅色 / 深色 / 跟随系统</p></div>
+            <div class="inline-flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800">
+              <button class="rounded-lg bg-black/5 px-3 py-1 text-xs font-medium dark:bg-white/10">跟随系统</button>
+              <button class="rounded-lg px-3 py-1 text-xs text-stone-500">浅色</button>
+              <button class="rounded-lg px-3 py-1 text-xs text-stone-500">深色</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 数据与存储 -->
+      <section id="tab-data" class="tab-panel hidden">
+        <h2 class="text-lg font-semibold">数据与存储</h2>
+        <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">本地数据保存在浏览器中，可导出备份或清除</p>
+        <div class="card mt-4 p-6">
+          <div class="flex items-baseline justify-between text-sm"><span class="text-stone-500 dark:text-stone-400">本地存储占用</span><span><b>1.8GB</b> / 5GB 建议</span></div>
+          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-white/10"><div class="h-full w-[36%] rounded-full bg-stone-900 dark:bg-stone-100"></div></div>
+          <div class="mt-6 grid gap-3 sm:grid-cols-3">
+            <button class="btn-secondary">导出全部数据</button>
+            <button class="btn-secondary">导入备份</button>
+            <button class="btn-secondary !text-red-600 !border-red-200 hover:!bg-red-50 dark:!text-red-400 dark:!border-red-900/60 dark:hover:!bg-red-950/40">清除本地数据</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function switchTab(name) {
+    document.querySelectorAll('.tab-panel').forEach((el) => el.classList.toggle('hidden', el.id !== `tab-${name}`));
+    document.querySelectorAll('#side-nav .side-item, #m-tabs .side-item').forEach((el) => el.classList.toggle('active', el.dataset.tab === name));
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

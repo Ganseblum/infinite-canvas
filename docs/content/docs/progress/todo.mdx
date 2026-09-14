@@ -7,3 +7,5 @@ description: Planned follow-up work
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.
+- Account system and backend services: build the MySQL 8.0 + Go backend per the master plan and phase 1–5 documents under `我的规划/` at the repo root; all features require login and all AI channels are server-configured.
+- Design-to-API gaps: per the [Design-to-API Coverage](/docs/progress/design-api-coverage) review, the three conflicting mockups are fixed (user keys removed from the config page, pricing switched from subscriptions to credit packages, refunds removed from admin orders) and content-moderation (NSFW) states are now presented; community, operations activities, site settings, admin management, OAuth, 2FA, device management, and the docs CMS still need scope decisions before their APIs are planned.

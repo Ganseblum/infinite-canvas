@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>404 · 无限画布</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .dot-grid { background-image: radial-gradient(#e5e7eb 1px, transparent 1px); background-size: 16px 16px; }
+  .dark .dot-grid { background-image: radial-gradient(rgba(245,245,244,.18) 1px, transparent 1px); }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<main class="dot-grid flex h-dvh flex-col items-center justify-center px-6 text-center">
+  <div class="pointer-events-none absolute left-[20%] top-[28%] size-20 rounded-full border border-dashed border-stone-200 dark:border-stone-800"></div>
+  <div class="pointer-events-none absolute right-[22%] bottom-[30%] size-14 rounded-full border border-dashed border-stone-200 dark:border-stone-800"></div>
+
+  <p class="text-8xl font-semibold tracking-tight text-stone-200 sm:text-9xl dark:text-stone-800">404</p>
+  <h1 class="mt-2 text-xl font-semibold sm:text-2xl">这个页面飘出了画布</h1>
+  <p class="mt-3 max-w-md text-sm leading-6 text-stone-500 dark:text-stone-400">你要找的页面不存在，或者已经被移动。回到画布继续创作吧。</p>
+  <div class="mt-8 flex flex-wrap justify-center gap-3">
+    <a href="home.html" class="btn-primary"><i data-lucide="arrow-left" class="size-4"></i>返回首页</a>
+    <a href="#" class="btn-secondary">打开画布</a>
+  </div>
+  <button class="absolute right-4 top-4 inline-flex size-8 items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="toggleTheme()" title="切换主题">
+    <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+    <i data-lucide="moon" class="size-4 dark:hidden"></i>
+  </button>
+</main>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

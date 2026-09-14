@@ -1,31 +1,31 @@
 ---
 title: 第四期执行计划：AI 请求后端转发与点数计量
-description: 账号体系与后端服务规划第四期的中文执行计划，涵盖平台模型转发、双路径分流、点数一致性、偏离纠正与验收
+description: 账号体系与后端服务规划第四期的中文执行计划，涵盖 AI 请求后端转发、点数一致性、直连路径移除、偏离纠正与验收
 ---
 
 # 第四期执行计划：AI 请求后端转发与点数计量
 
-本文档是[账号体系与后端服务规划](/zh-CN/docs/progress/account-backend-plan)第四期的中文执行计划。前置条件是[第三期](/zh-CN/docs/progress/account-backend-phase3)已交付并通过验收，`model_catalog` 与双桶点数流水已经可用。
+本文档是[账号后端总规划](账号后端总规划.md)第四期的中文执行计划。前置条件是[第三期](第三期-点数计费与管理后台.md)已交付并通过验收，`model_catalog` 与双桶点数流水已经可用。
 
 ## 范围界定
 
 ### 本期要做
 
-**只针对平台预设模型**的图像、视频、语音、文本四类 AI 请求后端转发接口，按 `model_catalog.credit_cost` 的先扣后生成与失败退还，文本对话的 SSE 流式透传，平台渠道 Key 的加密托管与故障转移，按 `model_catalog.constraints` 的参数校验，生成结果的服务端转存，单用户并发限制，以及前端按模型标识在「平台模型调本地 `/api/ai/*`」和「用户渠道继续浏览器直连」之间分流。
+图像、视频、语音、文本四类 AI 请求的后端转发接口——这也是全站**唯一**的 AI 调用路径——按 `model_catalog.credit_cost` 的先扣后生成与失败退还，文本对话的 SSE 流式透传，平台渠道 Key 的加密托管与故障转移，按 `model_catalog.constraints` 的参数校验，生成结果的服务端转存，单用户并发限制，以及前端生成入口从直连实现整体切换到 `/api/ai/*`。
 
 ### 本期不做
 
-**不做用户自定义渠道的后端转发。** 用户自己配置的渠道保持现有的浏览器直连不变，`image.ts`、`video.ts`、`audio.ts` 里那套直连第三方的实现原样保留，理由见下面的「为什么用户渠道不走后端」。
+**不保留用户自定义渠道的任何形态。** 用户自带 Key 的浏览器直连路径随本期一起移除：`image.ts`、`video.ts`、`audio.ts` 里的直连协议实现、渠道编解码与配置界面全部删除，理由见下面的「为什么不允许用户自带 Key」。
 
 **本期不新增支付相关改动，充值链路已经在第三期交付。** `GET /api/credit-packages`、`POST /api/orders`、`POST /api/orders/{id}/cancel` 与 `POST /api/payments/webhook/{provider}` 连同前端的充值页都已经可用，本期既不改这几个接口，也不新增充值入口，只是让第三期建好的账本真正开始被消费。
 
-也不做**服务端执行用户自定义脚本**。`model-plugin.ts` 那套用户脚本继续留在浏览器里跑，只对用户自己的渠道生效，本期这个文件一行都不改，理由见下面的「用户自定义脚本只保留给用户渠道」。
+**用户自定义脚本一并移除。** `model-plugin.ts` 允许用户为任意模型写自定义调用方式，它依赖用户自配的 Key 与 baseUrl，随自定义渠道一起删除，见下面的「自定义脚本整体移除」一节。
 
 不做多实例部署下的分布式并发计数与任务调度。本期的并发槽位和视频任务轮询都在单进程内完成，沿用第一期「进程内计数，横向扩展时再换 Redis」的结论。
 
 ## 阶段目标与完成定义
 
-本期目标是把“平台模型产生真实上游成本”这条链路收到服务端，并使报价、免费额度、扣点、退还、结果落盘和生成记录成为一个可追踪闭环。用户自配渠道仍然浏览器直连，不因统一代码的诱惑而改走服务端。
+本期目标是把“生成产生真实上游成本”这条链路收到服务端，并使报价、免费额度、扣点、退还、结果落盘和生成记录成为一个可追踪闭环。同时把前端收敛到单一调用路径，删除直连与自定义渠道的全部残留。
 
 | 目标 | 完成定义 | 主要证据 |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 | 统一报价计量 | `/api/ai/quote` 与实际请求调用同一基础价格和折扣解析器，免费额度、原价、折后价和实扣一致 | 参数矩阵、活动时间边界测试与账本对账 |
 | 扣点可恢复 | 跨桶扣减原子完成，失败按原桶退还且同一消费只退一次 | 故障注入与逐桶 SQL 对账 |
 | 多能力可用 | 图片、视频、语音、对话分别按同步、异步或 SSE 特性正确处理 | 四类端到端用例 |
-| 两条路径不串台 | 裸平台模型走本站，带渠道身份的用户模型直连上游且不扣点 | 浏览器网络面板和流水检查 |
+| 单一路径 | 全部生成请求只指向本站 `/api/ai/*`，浏览器不存在任何上游直连与 API Key | 浏览器网络面板与全局代码搜索 |
 | 结果服务端落地 | 平台产物不依赖临时第三方 URL，生成记录由服务端写入 | URL 过期与页面重开测试 |
 
 ## 实施任务与顺序
@@ -42,10 +42,10 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 | --- | --- | --- | --- | --- |
 | 1 | 固定目录与报价 | model/promotion service、`/api/models`、`/api/ai/quote`、前端动态表单 | 能力、约束、基础价格、折扣优先级、活动时钟和免费资格共用服务端判定 | 参数矩阵、活动重叠与时间边界测试通过 |
 | 2 | 完成平台渠道托管 | `platform_channels`、admin channel handler、`internal/provider/` | 加密 Key、优先级、健康状态、协议适配 | 管理接口不返回明文，错误日志不泄密 |
-| 3 | 跑通图片纵向切片 | image handler、upstream service、credit service、media/generation service、前端 image 分流 | 校验、报价、额度或扣点、上游、落盘、记录、失败处理 | 成功扣点一次，失败原桶退还一次 |
+| 3 | 跑通图片纵向切片 | image handler、upstream service、credit service、media/generation service、前端 image 入口切换 | 校验、报价、额度或扣点、上游、落盘、记录、失败处理 | 成功扣点一次，失败原桶退还一次 |
 | 4 | 扩展异步视频 | video task model/service/handler、轮询恢复 | 创建时扣点和写 pending，后台完成落盘，失败幂等退还 | 关闭页面后任务仍能完成或正确失败 |
 | 5 | 扩展语音与流式对话 | audio/chat handler、SSE 转发、nginx | 固定价、首字节失败退款、流开始后不退款、取消传播和心跳 | nginx 后逐字输出，停止后槽位释放 |
-| 6 | 完成前端双路径 | `web/src/services/api/ai.ts`、既有 image/video/audio、模型选择器 | 平台模型调本站；用户模型保留原直连与脚本 | 同名模型不串台，用户路径无点数流水 |
+| 6 | 完成前端单路径切换 | `web/src/services/api/ai.ts`、既有 image/video/audio、模型选择器与配置页 | 全部生成入口调本站；删除直连实现、渠道配置与自定义脚本 | 网络面板无第三方直连，全局搜索无渠道残留 |
 | 7 | 故障注入与对账 | 后端测试、验收脚本、监控配置 | 覆盖超时、5xx、断连、重复提交、存储失败、并发上限 | 两桶余额与流水逐桶相等，无重复结果 |
 
 ## 阶段检查与纠偏
@@ -53,15 +53,15 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 | 偏离信号 | 说明 | 立即纠偏 |
 | --- | --- | --- |
 | 报价和实扣各有一套价格或折扣计算 | 用户会看到 A、被扣 B | 收口为同一解析器，先补基础价、折扣优先级和时间边界测试再恢复联调 |
-| 用户渠道请求进入后端 | 引入任意 `baseUrl` SSRF | 删除代理分支，恢复浏览器直连并补含 `::` 拒绝测试 |
+| 用户自带 Key、自定义渠道或脚本重新出现 | 直连路径不可计量也不可审核，破坏单一计费口径 | 删除相关代码与入口；确有需求时回到总规划重新决策，不做中间形态 |
 | 上游调用早于额度/余额预留 | 成功生成可能无法扣费 | 调整顺序为校验、预留、上游；失败走统一 Refund |
 | 退款直接改余额或退到错误桶 | 账本无法解释 | 只允许 credit service 按消费流水逐桶冲正 |
-| 前端写平台生成记录 | 刷新或重试会重复记账 | 平台记录只由服务端创建，前端只查询和展示 |
+| 前端写生成记录 | 刷新或重试会重复记账 | 生成记录只由服务端创建，前端只查询和展示 |
 | 平台响应透传第三方 URL 或原始体 | 协议和临时链接泄漏到前端 | provider 归一化并由服务端下载落盘，只返回 `storageKey` |
 | SSE 直连正常、nginx 后整段返回 | 反代缓冲未关闭 | 暂停对话验收，修 nginx 并只在完整链路复验 |
 | 为多实例提前上队列和分布式锁 | 超出当前单实例范围 | 回退进程内任务和槽位，记录扩容触发指标 |
 
-出现账本偏离时必须立即关闭平台模型入口和免费额度开关，保留用户自配渠道；先按 `ref_id` 对账、修复和复验，再恢复平台流量。不能用手工改余额掩盖差异。
+出现账本偏离时必须立即关闭平台模型入口和免费额度开关，保留数据查询与导出；先按 `ref_id` 对账、修复和复验，再恢复生成流量。不能用手工改余额掩盖差异。
 
 ## 阶段门禁
 
@@ -75,51 +75,43 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 
 第三期引入了点数收费，但点数目前扣不准，因为生成行为压根不经过本项目的服务端。这件事在早期方案里是被当成「软约束」接受的：浏览器直连用户自己配置的第三方渠道，服务端只能依赖前端在生成完成后主动上报一条生成记录来计数，改几行前端代码就能绕过。当计数只用于「每天最多生成 50 张」这类礼貌性限制时，软约束是可接受的；一旦点数变成要花钱买的东西，软约束就等于卖一个无法计量的商品——用户付了钱，我们不知道他用了多少；用户没付钱，我们也拦不住他用。
 
-**要让点数变成硬约束，唯一的办法是让密钥只存在于服务端。** 只要浏览器持有可用的 API Key，任何前端侧的计费都只是提示。这不是补丁能解决的问题，只能改架构，而这正是当初选择凭据托管方案时被推迟的第三个选项。本期只把这条结论用在平台模型上：平台的 Key 从头到尾不出服务端，所以平台模型的点数是硬约束；用户渠道的 Key 本来就在用户手里，而那条路径压根不扣点，也就不需要硬约束。
+**要让点数变成硬约束，唯一的办法是让密钥只存在于服务端。** 只要浏览器持有可用的 API Key，任何前端侧的计费都只是提示。这不是补丁能解决的问题，只能改架构。本期把这条结论用在全部生成链路上：平台渠道的 Key 从头到尾不出服务端，浏览器里不再存在任何可用的 API Key，点数因此成为硬约束。
 
-**有一件事本期做不到，需要提前说清楚：第二期留下的凭据明文下发不会消失。** 第二期的 `GET /api/credentials` 返回的是**完整明文** API Key，理由是前端必须拿着它直连第三方渠道；本期用户渠道继续直连，这个理由依然成立，所以这个接口继续返回明文，早期方案里「第四期会把它关掉」的设想不会兑现。它的直接后果是任何拿到用户 access token 的人仍然能读走该用户全部厂商密钥，因此第一期定下的「access token 只存内存、refresh token 走 httpOnly cookie」这条防线必须长期维持，不能因为平台模型有了后端转发就放松。本期真正消掉的暴露面只有一个：平台自己的渠道 Key 从头到尾不进浏览器。
+**本期的另一项收尾是删除用户自带 Key 的直连路径，包括它背后的凭据托管设想。** 早期方案曾让 `GET /api/credentials` 返回明文 Key 供前端直连，那意味着任何拿到 access token 的人都能读走该用户的全部厂商密钥，只能靠「令牌不落 localStorage」一条防线硬扛。现在那条路径不复存在，这个暴露面被整体消灭：服务端只保管平台自己的渠道密钥，「access token 只存内存、refresh token 走 httpOnly cookie」的令牌策略继续执行，但不再需要承担「防止用户密钥被读走」的全部压力。
 
-还有一项顺带的收益，但要说清楚它的边界。**平台模型这条路径上的错误处理和厂商差异都退到了服务端**：平台请求的失败统一按第一期的 `error.code` 约定返回，前端不用再靠猜 HTTP 状态码、翻找 `msg` / `message` / `error.message` / `detail` 拼文案，Gemini 与 Seedance 那类协议适配也由服务端的 provider 承担。但 `image.ts` 里的 Gemini 分支、`video.ts` 里的 Seedance 分支、以及三个文件里各自那份 `readApiErrorMessage` 与 `readAxiosError` **不能删**，用户渠道仍然要靠它们直连上游。收敛的是新增的平台路径，不是存量代码。
+还有一项顺带的收益，这次是完整的。**全部生成链路上的错误处理和厂商差异都退到了服务端**：请求失败统一按第一期的 `error.code` 约定返回，前端不用再靠猜 HTTP 状态码、翻找 `msg` / `message` / `error.message` / `detail` 拼文案，Gemini 与 Seedance 那类协议适配也由服务端的 provider 承担。`image.ts` 里的 Gemini 分支、`video.ts` 里的 Seedance 分支、以及三个文件里各自那份 `readApiErrorMessage` 与 `readAxiosError` 在本期**整体删除**——没有直连路径需要它们兜底。
 
 ## 核心商业规则
 
-### 平台模型与用户渠道的两条路径
+### 只有平台一条路径
 
-这条规则是整个收费模型的地基，实现前必须先对齐，否则会做出「平台替用户付了上游成本却没扣点」或者「用户自带 Key 还被扣点」这两类错误。
+这条规则是整个收费模型的地基，实现前必须先对齐：**不存在用户自定义渠道，不存在浏览器直连上游，所有生成都走 `model_catalog` 与服务端托管的平台渠道。**
 
-| 维度 | 平台预设模型 | 用户自定义渠道 |
-| --- | --- | --- |
-| 请求路径 | 浏览器 → 本站后端 → 上游 | 浏览器 → 上游，不经过本站 |
-| 模型来源 | 第三期的 `model_catalog` 表 | 用户在配置页填的 `channels[]` |
-| 用谁的 Key | 平台自己的渠道 Key，存在服务端 | 用户托管在 `user_credentials` 里的 Key |
-| 上游成本承担方 | 平台 | 用户 |
-| 是否扣点 | 按 `model_catalog.credit_cost` 扣 | 不扣 |
-| 参数校验 | 按 `model_catalog.constraints` 白名单严格校验 | 沿用现有前端校验，服务端不参与 |
-| 自定义脚本 | 不允许 | 允许，且继续在浏览器里执行 |
-| 存储配额与保留期 | 受约束 | 同样受约束 |
-| 并发与频次限流 | 服务端在 `/api/ai/*` 上强制 | 生成请求不经过本站，只有媒体上传受第二期限流约束 |
+| 维度 | 唯一路径（平台渠道） |
+| --- | --- |
+| 请求路径 | 浏览器 → 本站后端 → 上游 |
+| 模型来源 | 第三期的 `model_catalog` 表，也是前端唯一能选到的模型列表 |
+| 用谁的 Key | 平台自己的渠道 Key，加密存在服务端，浏览器拿不到 |
+| 上游成本承担方 | 平台 |
+| 是否扣点 | 按 `model_catalog.credit_cost` 扣，或消耗免费额度 |
+| 参数校验 | 按 `model_catalog.constraints` 白名单严格校验 |
+| 自定义脚本 | 不存在 |
+| 存储配额与保留期 | 受约束 |
+| 并发与频次限流 | 服务端在 `/api/ai/*` 上强制 |
 
-**点数对应的是平台真实付出的上游成本。** 用户用自己的 Key 时平台没有成本，就不应该收费；折腾型用户愿意自己搞定渠道，让他免费用，这部分人反而是最可能帮忙发现问题的用户。反过来，存储配额和保留期两条约束对两条路径一视同仁，因为生成结果最终都落在平台的磁盘上，这部分成本与 Key 是谁的无关——用户渠道虽然不经过后端，但产物仍然要通过第二期的 `PUT /api/media/{storageKey}` 存进来，配额在那一步就卡得住。
+**为什么不再允许用户自带 Key。** 早期方案曾保留「用户自配渠道浏览器直连、不扣点」的第二路径，结论是弊大于利：直连请求服务端看不见，点数与用量的口径在两条链路之间永远说不清；服务端看不到的生成无法审核，与第五期的合规目标直接冲突；同时维护两套前端调用、两套错误处理、两套参数约束的复杂度远超收益，还伴随「托管明文 Key」这个安全暴露面。愿意自带 Key 的折腾型用户不再是本产品的服务对象——这是产品边界的收缩，不是实现上的妥协。
 
-**用哪条路径由用户在界面上自己选。** 模型选择器里两类模型并列展示，选平台模型时显示这次预计消耗多少点数，选自己渠道的模型时显示「使用你自己的 API Key，不消耗点数」。不做隐式切换，也不做「余额不足时自动降级到用户渠道」这种自作聪明的行为——用户按下生成之前就应该知道这一次会不会花钱。
+**服务端不替用户转发自填 `baseUrl` 的请求**在旧方案里是拒绝用户渠道走后端的理由，现在这个理由反过来成了删除用户渠道的理由之一：只要不存在用户自填的 `baseUrl`，服务端主动出站的目标就只剩平台自己配置的上游和上游返回的结果 URL，SSRF 防护面收敛到最小。
 
-### 为什么用户渠道不走后端
+**模型选择器只有平台目录。** 不存在「平台模型与用户模型并列展示」「余额不足自动降级到用户渠道」这些设计——用户按下生成之前不需要判断这一次走哪条路，因为只有一条路。
 
-早期方案是让两条路径都经过 `/api/ai/*`：服务端按模型标识判断，用户渠道的请求由服务端拿用户托管的 Key 去打用户填写的 `baseUrl`，好处是前端只剩一个出口，错误处理与计量都收敛到一处。**这条路线被否决了**，理由是攻击面与收益完全不成比例。
+### 后端仍做防御性校验
 
-`baseUrl` 是用户在配置页自由填写的任意地址，让服务器替他去打这个地址，等于给每一个注册账号发了一个 SSRF 原语：填 `http://127.0.0.1:8080/api/admin/users` 就是拿服务端的身份打自己的内网接口，填云厂商的实例元数据地址就是去捞机器凭据。要防住它得配一整套出站校验——协议白名单、每一跳重定向重新解析、回环与私有网段拒绝、`net.Dialer.Control` 防 DNS rebinding——而这类校验只要有一个分支写漏，就是一次真实的内网穿透。付出这些换来的收益仅仅是「两条链路的代码长得一样」。
+**`/api/ai/*` 只认 `model_catalog` 里的裸模型名。** 四种情况一律返回 400 `MODEL_NOT_SUPPORTED`：模型不在目录里、`enabled` 为假、能力与接口不匹配（例如拿一个视频模型去调 `/api/ai/images/generations`）、以及任何带自定义渠道前缀痕迹的标识。
 
-保持浏览器直连则根本没有这个问题。浏览器打不到服务器的内网，用户把 `baseUrl` 填成什么都只是在坑自己；更实际的是，这条链路的代码在项目里已经跑通很久了，`requestGeneration`、`requestEdit`、`requestVideoGeneration`、`requestAudioGeneration` 连同它们的厂商适配分支一行都不用动，本期的改动量因此小了一大截。**用户渠道的成本由用户自己承担，风险也由用户自己承担，平台没有理由站在中间替他转发。**
+不能因为「前端只会发合法请求」就省掉这道校验。接口是公开的，任何人都可以拿着自己的 access token 直接往 `/api/ai/images/generations` 里塞任意字符串。后端如果不校验而是把整串当模型名去查目录或拼上游请求，最好的结果是查不到，最坏的结果是撞上一个同名的平台模型，用平台的 Key 白生成一次。
 
-### 分流发生在前端，后端只做防御性校验
-
-**分流点在前端。** 前端拿到用户选中的模型标识后自己判断走哪条路：`use-config-store.ts` 里的 `encodeChannelModel` 把用户渠道的模型编成 `channelId::modelName`，`CHANNEL_MODEL_SEPARATOR` 就是 `::`，`decodeChannelModel` 负责拆开；平台目录里的模型是**裸模型名**，不带任何前缀。规则因此只有一句话：标识含 `::` 说明是用户渠道的模型，走现有的浏览器直连代码；裸模型名说明是平台目录里的模型，调 `/api/ai/*`。
-
-**后端仍然要校验模型标识，但方向和前端那条规则相反。** `/api/ai/*` 收到含 `::` 的模型标识时一律返回 400 `MODEL_NOT_SUPPORTED`，因为平台不替用户渠道转发——这不是分流逻辑，是拒绝一个本来就不该出现在这个接口上的输入。同样返回 400 `MODEL_NOT_SUPPORTED` 的还有三种情况：模型不在 `model_catalog` 里、`enabled` 为假、能力与接口不匹配（例如拿一个视频模型去调 `/api/ai/images/generations`）。
-
-不能因为「前端已经分好流了」就省掉后端这道校验。接口是公开的，前端的判断只是一个约定，任何人都可以拿着自己的 access token 直接往 `/api/ai/images/generations` 里塞一个 `chan_1::whatever`。后端如果不认这个前缀而是把整串当裸模型名去查目录，最好的结果是查不到，最坏的结果是撞上一个同名的平台模型，然后用平台的 Key 白生成一次。
-
-**响应里没有 `source` 字段。** 早期方案需要它是因为两条路径共用一个接口，前端得知道这次到底扣没扣点；现在能走到 `/api/ai/*` 的请求必然是平台路径、必然扣点，一个恒为 `platform` 的字段只会让前端多一个永远走不进去的分支。用户渠道扣没扣点这个问题也不存在了，那条链路根本不产生点数流水。
+**响应里没有 `source` 字段。** 全部请求都走同一条路径、都按同一种规则计费，一个恒为 `platform` 的字段只会让前端多一个永远走不进去的分支。
 
 ## 统一约定
 
@@ -129,7 +121,7 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 
 | HTTP | code | 触发场景 |
 | --- | --- | --- |
-| 400 | `MODEL_NOT_SUPPORTED` | 模型不在 `model_catalog` 中、已禁用、能力与接口不匹配，或者传了含 `::` 的用户渠道模型 |
+| 400 | `MODEL_NOT_SUPPORTED` | 模型不在 `model_catalog` 中、已禁用，或能力与接口不匹配 |
 | 400 | `PARAM_NOT_SUPPORTED` | 参数不在该模型 `constraints` 允许的范围内，`error` 里带 `param` 与 `allowed` |
 | 402 | `INSUFFICIENT_CREDITS` | 点数不足，带 `requiredMicros`、`availableMicros` 与 `shortfallMicros` |
 | 409 | `QUOTE_STALE` | 报价过期、参数不匹配、价格版本变化或免费资格已被占用，必须重新报价 |
@@ -147,7 +139,7 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 
 六个接口全部需要登录，全部挂在 `/api/ai` 下，全部由第一期的 `RequireAuth` 中间件保护，并且只服务平台目录里的模型。
 
-请求体统一带 `model`、`quoteToken` 与 `idempotencyKey`。报价凭证固定模型、参数哈希、计费模式、原价、折后价、基础价格版本、促销版本和全局促销开关状态；幂等 key 避免重试和双击重复预扣。
+请求体统一带 `model`、`quoteToken` 与 `idempotencyKey`。报价凭证固定模型、参数哈希、计费模式、原价、折后价、基础价格版本、促销版本和全局促销开关状态；幂等 key 避免重试和双击重复预扣。**四个生成接口（图片、视频、语音、对话）的 `idempotencyKey` 一律必填**，由 `ai.ts` 统一生成 UUID，调用方不感知——花钱的接口不能容忍「响应丢失后重试变成两次真实扣费」，必填的成本只是客户端一个 UUID。
 
 响应统一包含计费快照与产物。计费快照固定返回 `baseCostMicros`、`finalCostMicros`、`finalCostYuan`、命中的折扣或 null、`remainingMicros`；产物一律以 `storageKey` 形式给出。不透传上游原始响应体。
 
@@ -214,7 +206,7 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `model` | 是 | 平台目录里的裸模型名；含 `::` 的用户渠道模型一律拒绝 |
+| `model` | 是 | 平台目录里的模型名；目录外、已禁用或能力不匹配一律拒绝 |
 | `prompt` | 是 | **系统提示词由前端拼好**，沿用现有 `withSystemPrompt` 的做法，服务端不再拼一次 |
 | `n` | 否 | 缺省 1，上限取 `constraints` 与 15 的较小值，与现有前端的 clamp 对齐 |
 | `size` | 否 | `1024x1024` 形式的像素尺寸，或 `16:9` 形式的比例 |
@@ -225,7 +217,7 @@ description: 账号体系与后端服务规划第四期的中文执行计划，�
 
 **参考图传 `storageKey` 而不是 base64。** 现有代码用 `imageToDataUrl` 把参考图转成 dataURL 再塞进请求体，base64 会让请求体膨胀三分之一以上，服务端还要重新解码、校验大小、防住内存放大攻击。第二期之后参考图本来就存在媒体存储里，直接传 key、服务端自己去读要省得多，还能顺带校验归属——传别人的 `storageKey` 一律当作不存在处理，与第二期「跨用户返回 404」的约定一致。
 
-代价是画布里刚粘贴、还没保存的临时图必须先 `PUT /api/media/{storageKey}` 再发起生成。这与第二期定下的「生成产物先传媒体再写记录」是同一个顺序约定，前端已经有这条路径。
+代价是画布里刚粘贴、还没保存的临时图必须先 `PUT /api/media/{storageKey}` 再发起生成。这与第二期「媒体先落盘、业务引用后落库」的顺序约定一致，前端已经有这条路径。
 
 成功 200：
 
@@ -391,11 +383,11 @@ data: {"credits":{"baseCostMicros":20000,"finalCostMicros":20000,"finalCostYuan"
 
 数组型的字段做白名单精确匹配，对象型的做范围判断。命中失败返回 400 `PARAM_NOT_SUPPORTED`，`error` 里带 `param` 和 `allowed`，前端可以直接把 `allowed` 渲染成可选项让用户重选，不用再猜哪里不对。
 
-**服务端不做「自动纠正」。** 现有前端积累了一批模糊映射：`normalizeVideoResolution` 把 `high` 映射成 `720p`，`normalizeSeedanceRatio` 在找不到精确匹配时挑一个最接近的比例，`closestGeminiAspectRatio` 在 14 个 Gemini 支持的比例里选最近的，`resolveSize` 还会按质量档和比例反算出一个像素尺寸再对齐到 16 的倍数。这些映射的存在是因为「前端的固定选项」和「厂商实际接受的取值」对不上，只能靠猜。平台路径上这个前提反过来了：选项由 `constraints` 驱动，前端只可能选出合法值，服务端遇到非法值就该直接拒绝。继续猜只会掩盖前端的 bug，而且用户会拿到一个自己没选过的尺寸。注意这里说的是「服务端不猜」，不是「删掉这些函数」——它们在用户渠道那条路上仍然要继续工作。
+**服务端不做「自动纠正」。** 现有前端积累了一批模糊映射：`normalizeVideoResolution` 把 `high` 映射成 `720p`，`normalizeSeedanceRatio` 在找不到精确匹配时挑一个最接近的比例，`closestGeminiAspectRatio` 在 14 个 Gemini 支持的比例里选最近的，`resolveSize` 还会按质量档和比例反算出一个像素尺寸再对齐到 16 的倍数。这些映射的存在是因为「前端的固定选项」和「厂商实际接受的取值」对不上，只能靠猜。唯一路径上这个前提反过来了：选项由 `constraints` 驱动，前端只可能选出合法值，服务端遇到非法值就该直接拒绝。继续猜只会掩盖前端的 bug，而且用户会拿到一个自己没选过的尺寸。这批映射函数连同它们服务的直连实现在本期一起删除。
 
 需要区分的是**厂商格式改写**：同一个「16:9、720p」在 OpenAI 兼容接口里是 `size=1280x720`，在 Ark 里是 `ratio=16:9` 加 `resolution=720p`。这类改写是 provider 适配器的正当职责，与「纠正用户输入」是两回事，要放在 `internal/provider/` 下而不是校验层。
 
-**服务端不需要为用户渠道准备一套宽松校验**，因为用户渠道的请求根本到不了这里。那条链路上参数由浏览器按现有逻辑组装后直接发给上游，不合法就让上游自己报错——用户自带 Key，这次浪费的调用成本由他自己承担，我们既没有必要也没有能力替所有第三方渠道维护一份参数表。这也是「服务端不做自动纠正」这条规则只适用于平台路径的原因：前端那批模糊映射不会被删掉，它们要继续为用户渠道服务，只是不再介入平台模型的请求。
+服务端同样**不需要维护多套宽松校验**。参数约束的唯一事实来源是 `model_catalog.constraints`，前端选项、`/api/ai/quote` 与真实转发三处共用它，不存在「另一个来源的参数需要另一套规则」的情况。
 
 ## 流式转发
 
@@ -476,7 +468,7 @@ nginx 默认开启 `proxy_buffering`，会先把上游响应攒进缓冲区再�
 
 前端要保证同一次用户操作用同一个 key，重试时复用而不是重新生成。key 用 `nanoid` 即可，项目已有依赖。
 
-不带 `idempotencyKey` 的请求照常处理，不强制要求——Agent 的工具调用循环里每一轮本来就是不同的请求，强制传 key 反而要在调用链里多传一个参数。
+缺失 `idempotencyKey` 的请求返回 400 `VALIDATION_FAILED`。key 由 `ai.ts` 在请求出口统一生成，Agent 的工具调用循环走同一个出口，不需要在调用链里逐层传参；绕过 `ai.ts` 手工拼请求的调用方必须自己带 key，这正是要拦住的对象。
 
 ## 超时与重试
 
@@ -518,11 +510,19 @@ nginx 默认开启 `proxy_buffering`，会先把上游响应攒进缓冲区再�
 
 视频任务的轮询失败要单独对待：单次查询失败不算任务失败，累计连续失败 5 次才判定失败并退还。上游抖动一下就退款并丢掉结果，比多等一会儿糟糕得多。
 
+### 进程重启后的 `ai_requests` 收敛
+
+`ai_requests.status = running` 不是稳态，进程重启会让同步能力（图片、语音、对话）的请求永远停在那里：请求上下文随进程一起消失，没有任何代码路径会再把它置成终态，而它身上可能还挂着已预扣、未退还的点数。视频能力没有这个问题——`ai_tasks` 的启动恢复流程会把任务收敛到终态，收敛时顺手把对应的 `ai_requests` 一并处理。同步能力必须显式补上这条路径：
+
+服务启动时（`/readyz` 通过之前）扫描 `status = 'running'` 且 `updated_at` 早于「该能力整体超时的两倍」的请求，全部置为 `failed`；每条被置失败的请求检查是否存在已预扣且尚无退款流水的消费，有就走幂等 Refund——`refund_of_transaction_id` 的唯一索引保证并发或重复扫描不会双退。扫描不做的代价是三类事故叠加：账上永远挂着一笔无法解释的预扣、`/api/admin/stats` 的进行中请求数虚高、该用户的并发槽位在重启后少一个。
+
+「两倍超时」而不是「一倍」是给时钟偏移和慢请求留余量：重启瞬间可能恰好有一个合法的慢请求还在跑，按一倍超时误杀它，用户会看到「明明成功了却提示失败还退了款」的怪现象；两倍超时下，真正卡死的请求最多多挂一个超时周期，可以接受。
+
 ## 平台渠道与 Key 管理
 
 ### 表结构与加密
 
-平台自己的渠道单独一张表，**复用第二期的 AES-256-GCM 与 `CREDENTIAL_MASTER_KEY`**，不要再引入第二把密钥。多一把密钥就多一处配置、多一处泄漏面、多一处「换机器时忘了带过去」的故障。
+平台自己的渠道单独一张表，用本期引入的 AES-256-GCM 与 `CREDENTIAL_MASTER_KEY` 加密。全服务只有这一把加密主密钥，以后其他需要加密落库的敏感字段也复用它——多一把密钥就多一处配置、多一处泄漏面、多一处「换机器时忘了带过去」的故障。
 
 ```go
 type PlatformChannel struct {
@@ -542,7 +542,7 @@ type PlatformChannel struct {
 
 `APIFormat` 的取值与前端 `ApiCallFormat` 完全一致（`openai`、`gemini`、`ark`），因为服务端的 provider 就是把前端现有的三套适配逻辑搬过去，没有理由换一套命名。
 
-`model_catalog` 需要一个字段把模型指向渠道。如果第三期没有建，本期补一个有序的 `channel_ids`，数组顺序就是故障转移顺序。不单独建一张绑定表：本期的关系简单到一个数组就能表达，多一张表只会让每次查目录都多一次 join。
+`model_catalog` 本期补一个有序的 `channel_ids` JSON 列——第三期建目录时刻意不含渠道指向（当时还没有 `platform_channels`），现在补上，数组顺序就是故障转移顺序。不单独建一张绑定表：本期的关系简单到一个数组就能表达，多一张表只会让每次查目录都多一次 join。
 
 平台 Key 的读取只发生在发起上游请求的那一刻，解密后的明文不进任何缓存、不进日志、不出现在任何响应里。第一期的 `middleware/logger.go` 已经会脱敏密码与令牌字段，本期把 `Authorization`、`x-goog-api-key`、`apiKey` 一并加进脱敏列表。
 
@@ -558,27 +558,27 @@ type PlatformChannel struct {
 
 上游返回产物只有三种形态：base64（`b64_json`）、URL、以及直接的二进制流（语音）。**服务端一律转存到第二期的媒体存储，只把 `storageKey` 给前端。**
 
-不能把第三方 URL 直接交给前端，理由有三条。**这类 URL 通常是几十分钟到几小时就过期的签名地址**，用户把生成结果放进画布，第二天打开就是一片破图，而画布是要长期保存的。**第三方 URL 会让浏览器直连外部域**，绕过了第二期设计的同源与媒体 cookie 权限模型（用户渠道那条路确实也要连外部域，但那是用户自己配置的结果，和平台把外部 URL 塞给每一个用户是两回事）。**结果不落库就没有存储用量记账**，第三期的存储配额直接被绕过。
+不能把第三方 URL 直接交给前端，理由有三条。**这类 URL 通常是几十分钟到几小时就过期的签名地址**，用户把生成结果放进画布，第二天打开就是一片破图，而画布是要长期保存的。**第三方 URL 会让浏览器直连外部域**，绕过了第二期设计的同源与媒体 cookie 权限模型——单一路径方案下浏览器不与任何外部域通信，这是要守住的性质。**结果不落库就没有存储用量记账**，第三期的存储配额直接被绕过。
 
 转存流程是：拿到 base64 就解码，拿到 URL 就下载，然后走第二期的 `Storage.Put` 写盘、写 `media_files`、更新存储用量计数，最后返回 `storageKey`。这几步与 `PUT /api/media/{storageKey}` 走的是同一套代码，不要另写一份。
 
 下载外部 URL 必须做出站防护，这是本期新引入的攻击面：只允许 http 与 https，跟随重定向时每一跳都要重新校验，解析出的 IP 落在回环、私有网段、链路本地地址一律拒绝，并且要在建立连接时校验实际 IP（用 `net.Dialer.Control`）以防 DNS rebinding。下载还要限制最大字节数（按套餐 `max_file_bytes`）和超时（图片 60 秒、视频 300 秒）。虽然这些 URL 来自平台自己配置的上游，但 URL 的内容是上游生成的，仍然属于外部输入，一个被攻陷或行为异常的上游返回一个内网地址是完全可能的。
 
-**本期只有这一处出站攻击面，这正是选择「用户渠道保持直连」的理由之一。** 如果按被否决的那条路线让服务端替用户去打用户填写的 `baseUrl`，那么除了结果 URL 之外还会多出一个由用户完全控制的目标地址，防护强度就取决于这套校验有没有写漏。保持直连之后这个面根本不存在，服务端主动发起的外部请求只有两类：打平台自己配置的上游，以及下载平台上游返回的结果 URL。校验逻辑集中在 `service/upstream.go` 一处。
+**服务端主动发起的外部请求只有两类：打平台自己配置的上游，以及下载平台上游返回的结果 URL。** 不存在用户自填的 `baseUrl`，也就不存在由用户完全控制的目标地址，出站防护面收敛到最小，校验逻辑集中在 `service/upstream.go` 一处。
 
 落盘失败等同生成失败，全额退还点数。用户拿不到产物却被扣了钱，无论技术上是哪一步出的问题，对他来说都是一样的。
 
 **生成记录由服务端写，不由前端补。** 第三期把 `generations` 定成了生成历史的权威来源，`/api/me` 的 `usage.imageGenerateToday` 与管理后台 `/api/admin/stats` 的今日生成量都直接从它 `count(*)` 数出来，所以平台路径的每一次生成都必须在这张表里留下、且只留下一条记录。**这条记录由服务端在结果落盘的同一个事务里写**：`kind`、`model`、`prompt`、`config`、`result`、`durationMs` 这些字段服务端在那一刻全都有，写 `media_files` 与更新存储用量计数本来就在同一个数据库事务里，顺手多写一条生成记录不引入任何新的一致性风险。
 
-**前端的平台分支不再调 `POST /api/generations`。** 第二期那个接口从本期起只服务用户渠道分支——用户渠道的生成不经过服务端，服务端无从知晓，只能由前端在生成完成后补写。责任必须唯一：两边都写「今日生成量」会翻倍，两边都不写它就恒为 0。所以规则是裸模型名的记录由服务端写，含 `::` 的记录由前端写。为了让前端拿到服务端刚写的那条记录（预览、删除、列表定位都要用 `id`），图像与视频接口的响应体里回一个 `generationId`。
+**前端完全不写生成记录。** 第二期的 `/api/generations` 资源从一开始就没有写接口，生成记录由服务端在结果落盘的同一个事务里创建，责任唯一：今日生成量从这张表数出来，没有「两边都写会翻倍」的问题。为了让前端拿到服务端刚写的这条记录（预览、删除、列表定位都要用 `id`），图像与视频接口的响应体里回一个 `generationId`。
 
 **语音与文本两个接口不写 `generations`，也不返回 `generationId`。** 第二期的 `kind` 只有 `image` 与 `video` 两个取值，语音合成与文本对话本来就不进生成历史，本期也不为它们新增 `kind`。这两条链路的计量依据是 `credit_transactions` 的消费流水，与生成历史是两回事。
 
-**视频任务的记录由服务端管完整个生命周期。** `POST /api/ai/videos/generations` 在扣点、写 `ai_tasks` 的同一个事务里落一条 `status=pending` 的生成记录，`generationId` 随 202 一起返回；后台轮询拿到终态后，由服务端在结果落盘的同一个事务里把这条记录收敛成 `success` 或 `failed`。`GET /api/ai/videos/tasks/{id}` 是纯查询，不写任何记录，**前端也不再调第二期的 `PATCH /api/generations/{id}`**，那个接口同样只留给用户渠道的视频任务。理由与「上游轮询由服务端主动做」是同一条：用户关掉页面之后没有任何前端在跑，把终态收敛交给前端等于让记录永远停在 `pending`。
+**视频任务的记录由服务端管完整个生命周期。** `POST /api/ai/videos/generations` 在扣点、写 `ai_tasks` 的同一个事务里落一条 `status=pending` 的生成记录，`generationId` 随 202 一起返回；后台轮询拿到终态后，由服务端在结果落盘的同一个事务里把这条记录收敛成 `success` 或 `failed`。`GET /api/ai/videos/tasks/{id}` 是纯查询，不写任何记录，**前端也不再调任何生成记录写接口**——那个接口本来就不存在。理由与「上游轮询由服务端主动做」是同一条：用户关掉页面之后没有任何前端在跑，把终态收敛交给前端等于让记录永远停在 `pending`。
 
 ## 限流与并发控制
 
-点数本身不是限流手段。余额充足的用户完全可能同时发起几十个生成请求，把上游的并发额度打满，导致所有人都拿到 502。所以除了点数，还要有并发和频次两道闸。这两道闸只作用在 `/api/ai/*` 上，用户渠道的生成请求不经过本站，本站也管不到——那是用户和他自己上游之间的事。
+点数本身不是限流手段。余额充足的用户完全可能同时发起几十个生成请求，把上游的并发额度打满，导致所有人都拿到 502。所以除了点数，还要有并发和频次两道闸。既然全部生成请求都走 `/api/ai/*`，这两道闸就能覆盖全部生成行为，不存在绕过本站的路径。
 
 | 维度 | 阈值 | 超出时 |
 | --- | --- | --- |
@@ -595,22 +595,17 @@ type PlatformChannel struct {
 
 计数放在进程内内存，与第一期的限流实现保持一致。全局上限触发时直接返回 429 而不是排队——排队会让请求挂住，用户看到的是「转圈半天最后失败」，还不如立刻告诉他稍后再试。
 
-## 用户自定义脚本只保留给用户渠道
+## 自定义脚本整体移除
 
-现有的 `model-plugin.ts` 允许用户为任意模型写一段 JavaScript 自定义调用方式，`runModelPlugin` 用 `new Function` 把它编译成一个异步函数，注入 `prompt`、`images`、`model`、`baseUrl`、`apiKey`、`http`、`request`、`poll` 等变量后执行。这套能力在浏览器里是合理的：跑的是用户自己的代码、用的是用户自己的 Key、出了问题影响的是用户自己的标签页。
+现有的 `model-plugin.ts` 允许用户为任意模型写一段 JavaScript 自定义调用方式，`runModelPlugin` 用 `new Function` 把它编译成一个异步函数，注入 `prompt`、`images`、`model`、`baseUrl`、`apiKey`、`http`、`request`、`poll` 等变量后执行。这套能力的前提是「用户自己的 Key、用户自己的 baseUrl」——两个前提都随自定义渠道一起消失，脚本没有可以注入的凭据，也没有可以直连的地址。
 
-**平台模型不允许自定义脚本。** 理由不是「脚本在服务端执行有风险」——用户渠道压根不经过服务端，脚本从来就只在浏览器里跑，本期也不会变。真正的理由是职责划分：平台模型的调用方式应当由平台保证正确，参数取值由 `constraints` 约束、协议适配由服务端的 provider 负责、出错了由平台排查，用户改不了也不需要改。允许脚本介入等于把「这个模型该怎么调」的责任推回给用户，而这次调用花的是平台的 Key 和用户的点数，出了问题双方都说不清。
-
-**用户渠道保留脚本能力，并且继续在浏览器里执行，`model-plugin.ts` 本期完全不改动。** 判定条件仍然是「模型标识含 `::` 且该渠道模型配了 `script`」，用现有的 `resolveModelScript` 就能得到；`createPluginHttp` 与 `createPluginRequest` 继续直连用户填的 `baseUrl`，`apiKey` 继续从 `config` 里取。这也是 `use-config-store.ts` 里 `buildApiUrl` 与 `resolveModelRequestConfig` 必须留着的原因之一。
-
-脚本要跑就必须拿到明文 `apiKey`，而整条链路都在浏览器里，所以 `GET /api/credentials` 继续返回明文，不改成打码。这一点在「为什么必须做这一期」里已经点明：第二期那个「拿到 access token 就能读走全部厂商密钥」的暴露面在本期不会消失，缓解手段只能是第一期定下的令牌存放策略，而不是靠本期收窄下发范围。
-
-配置页要在脚本编辑器上写清楚：脚本只对自定义渠道生效，平台目录模型忽略脚本设置。平台模型在 UI 上直接不提供脚本入口，别让用户写完一段代码才发现不生效。
+因此 `model-plugin.ts` 在本期**整个文件删除**，连同配置页的脚本编辑器 UI、`resolveModelScript` 与渠道模型编解码（`encodeChannelModel` / `decodeChannelModel` / `CHANNEL_MODEL_SEPARATOR`）一起清掉，不留开关或隐藏入口。模型调用方式由平台保证正确：参数取值由 `constraints` 约束、协议适配由服务端的 provider 负责、出错了由平台排查，用户改不了也不需要改。如果某个模型需要特殊调用逻辑，正确做法是在服务端 `internal/provider/` 里写适配，而不是把责任推回给用户。
 
 ## 后端新增文件
 
 | 路径 | 职责 |
 | --- | --- |
+| `internal/crypto/crypto.go` | AES-256-GCM 加解密与 `CREDENTIAL_MASTER_KEY` 装载校验；凭据托管取消后，这层随 `platform_channels` 在本期首次引入 |
 | `internal/handler/ai.go` | 报价与五个生成/查询接口的入口：模型、参数、报价、配额、预扣、provider 与结果落地 |
 | `internal/handler/ai_stream.go` | SSE 的响应头、事件写入、心跳、断开处理 |
 | `internal/handler/admin_channel.go` | 平台渠道的管理接口，Key 只写不读 |
@@ -689,91 +684,84 @@ type AITask struct {
 
 ## 前端改造
 
-本期前端的核心动作是**在每个生成入口加一次分流判断**，而不是把整条链路搬到后端。判断依据只有一条：模型标识含 `::` 就走现有的浏览器直连代码，裸模型名就走新增的 `ai.ts`。下面每一节都要分清「新增的平台分支」和「原样保留的用户渠道分支」，凡是没有明确写「删除」的一律默认保留。
+本期前端的核心动作是**把每个生成入口整体切换到 `ai.ts`，并删除全部直连实现**。切换完成后，浏览器里不存在任何 API Key、baseUrl、上游域名与自定义脚本；除 SSE 外的所有请求都走第一期的统一 client。凡是本节没有明确写「保留」的直连相关代码，一律默认删除。
 
 ### 新增 `web/src/services/api/ai.ts`
 
-导出 `quoteGeneration`、`generateImages`、`createVideoTask`、`getVideoTask`、`generateSpeech`、`streamChat` 六个函数，只在平台模型分支被调用。除 SSE 外都走第一期的统一 client。
+导出 `quoteGeneration`、`generateImages`、`createVideoTask`、`getVideoTask`、`generateSpeech`、`streamChat` 六个函数，是全部生成行为的唯一调用方。除 SSE 外都走第一期的统一 client。
 
 `streamChat` 需要读 SSE，如果 `client.ts` 只封装了 JSON 响应，就在这里单独用 `fetch`，但**必须复用 `client.ts` 的 token 获取与刷新重试逻辑**，把那部分抽成 `client.ts` 的导出函数再调用。绝对不要在 `ai.ts` 里重写一遍「单飞刷新 + 请求排队」，第一期文档已经点名那是最容易写出 bug 的地方，写两遍就是两份 bug。
 
 ### 生图链路 `web/src/services/api/image.ts`
 
-`requestGeneration`、`requestEdit`、`requestImageQuestion` 三个导出函数保留、签名不变，**在函数体开头按模型标识分流**：裸模型名调 `ai.ts` 的 `generateImages` 或 `streamChat`，含 `::` 的落进这个文件里现有的实现。返回值统一成带 `storageKey` 的结构，用户渠道分支在拿到 dataURL 之后补一次 `uploadMediaFile`（`web/src/services/file-storage.ts`）转存即可——这一步原本就在调用方做，只是往前挪了一层，好处是两条分支给出同一种形状，六处调用方不用各写一套。
+`requestGeneration`、`requestEdit`、`requestImageQuestion` 三个导出函数保留、签名不变，**函数体全部改写为调用 `ai.ts`**。返回值统一成带 `storageKey` 的结构——服务端已经落盘，不再有「拿到 dataURL 再补一次转存」这一步，调用方无需感知差异。
 
-因此这个文件里**什么都不删**。直连第三方的整套协议适配全部保留：`aiApiUrl`、`aiHeaders`、`geminiBaseUrl`、`geminiApiUrl`、`geminiHeaders`、`geminiModelName`、`toGeminiBody`、`toGeminiContents`、`toGeminiParts`、`toGeminiImagePart`、`toGeminiToolOptions`、`requestGeminiImages`、`requestGeminiImagesOnce`、`parseGeminiImagePayload`、`parseGeminiToolResponse`、`validateGeminiPayload`、`consumeGeminiStreamText`、`consumeGeminiStreamBlock`、`requestGeminiStreamingResponse`、`resolveGeminiImageConfig`、`closestGeminiAspectRatio`、`resolveGeminiImageSize`、`supportsGeminiImageSize`、`requestStreamingResponse`、`consumeResponseStreamText`、`consumeResponseStreamBlock`、`parseToolResponse`、`toResponseInput`、`toResponseContent`、`toResponseTool`、`validateResponsePayload`、`parseImagePayload`、`resolveImageDataUrl`、`readFetchError`、`readAxiosError`、`readStatusError`、`readApiErrorMessage`，以及 `GEMINI_SUPPORTED_RATIOS`、`GEMINI_IMAGE_SIZE_BY_QUALITY`、`defaultGeminiConfig` 这几个常量。它们是用户渠道唯一的调用路径，删一个那条路就断一截。
+因此这个文件里的直连协议适配**整体删除**：`aiApiUrl`、`aiHeaders`、`geminiBaseUrl`、`geminiApiUrl`、`geminiHeaders`、`geminiModelName`、`toGeminiBody`、`toGeminiContents`、`toGeminiParts`、`toGeminiImagePart`、`toGeminiToolOptions`、`requestGeminiImages`、`requestGeminiImagesOnce`、`parseGeminiImagePayload`、`parseGeminiToolResponse`、`validateGeminiPayload`、`consumeGeminiStreamText`、`consumeGeminiStreamBlock`、`requestGeminiStreamingResponse`、`resolveGeminiImageConfig`、`closestGeminiAspectRatio`、`resolveGeminiImageSize`、`supportsGeminiImageSize`、`requestStreamingResponse`、`consumeResponseStreamText`、`consumeResponseStreamBlock`、`parseToolResponse`、`toResponseInput`、`toResponseContent`、`toResponseTool`、`validateResponsePayload`、`parseImagePayload`、`resolveImageDataUrl`、`readFetchError`、`readAxiosError`、`readStatusError`、`readApiErrorMessage`，以及 `GEMINI_SUPPORTED_RATIOS`、`GEMINI_IMAGE_SIZE_BY_QUALITY`、`defaultGeminiConfig` 这几个常量。它们唯一的调用方是已删除的直连路径。
 
-尺寸推导那一组——`resolveSize`、`resolveRequestSize`、`validateImageSize`、`parseImageRatio`、`parseImageDimensions`、`normalizeQuality`、`normalizeBackground` 以及 `QUALITY_BASE`、`IMAGE_SIZE_STEP`、`IMAGE_MIN_PIXELS`、`IMAGE_MAX_PIXELS`、`IMAGE_MAX_EDGE`、`IMAGE_MAX_RATIO` 这些常量——同样保留，继续为用户渠道服务。服务端会为平台模型实现一套等价的尺寸解析，两边各管各的，不共享也不需要共享：平台侧以 `constraints` 为准，用户渠道侧维持现状。
+尺寸推导那一组——`resolveSize`、`resolveRequestSize`、`validateImageSize`、`parseImageRatio`、`parseImageDimensions`、`normalizeQuality`、`normalizeBackground` 以及 `QUALITY_BASE`、`IMAGE_SIZE_STEP`、`IMAGE_MIN_PIXELS`、`IMAGE_MAX_PIXELS`、`IMAGE_MAX_EDGE`、`IMAGE_MAX_RATIO` 这些常量——**同样删除**。参数约束的唯一事实来源是模型目录的 `constraints`，服务端已经按它校验并实现等价解析，前端不再维护第二套尺寸算法。
 
-`fetchImageModels` 与 `fetchChannelModels` 保留，配置页「拉取渠道模型列表」的功能只对用户自己的渠道有意义，仍然由浏览器直连。
+`fetchImageModels` 与 `fetchChannelModels` 删除，渠道模型列表这个概念不复存在。
 
-`withSystemPrompt` 与 `withSystemMessage` 保留，系统提示词继续在前端拼进 prompt，两条分支一视同仁，服务端不感知。两边都拼会导致系统提示词出现两次。
+`withSystemPrompt` 与 `withSystemMessage` 保留，系统提示词继续在前端拼进 prompt，服务端不感知。
 
 ### 视频链路 `web/src/services/api/video.ts`
 
-`requestVideoGeneration` 在入口分流。平台模型走「`createVideoTask` 拿 `taskId`，按响应里的 `pollAfterMs` 轮询 `getVideoTask`」，轮询循环、终态判定、超时上限都由服务端的任务状态驱动；用户渠道继续走现有的 `createOpenAIVideoTask` / `pollOpenAIVideoTask` 与 `createSeedanceTask` / `pollSeedanceTask`，包括那套最多 120 次、间隔 2.5 秒或 5 秒的本地轮询。
+`requestVideoGeneration` 保留签名，内部改为「`createVideoTask` 拿 `taskId`，按响应里的 `pollAfterMs` 轮询 `getVideoTask`」，轮询循环、终态判定、超时上限全部由服务端的任务状态驱动。
 
-同样**什么都不删**：`seedanceApiUrl`、`buildSeedanceContent`、`resolveSeedanceImageUrl`、`resolveSeedanceVideoUrl`、`resolveSeedanceAudioUrl`、`assertSeedanceVideoReferences`、`assertSeedanceAudioReferences`、`unwrapEnvelope`、`unwrapVideoResponse`、`unwrapSeedanceTask`、`videoResultUrl`、`videoResultFromUrl`、`assertVideoBlob`、`assertVideoConfig`、`normalizeVideoSeconds`、`normalizeVideoSize`、`normalizeVideoResolution`、`aiApiUrl`、`aiHeaders`，以及这个文件里那份 `readApiErrorMessage` / `readAxiosError` / `statusMessage` 全部保留。
+**直连实现整体删除**：`createOpenAIVideoTask` / `pollOpenAIVideoTask`、`createSeedanceTask` / `pollSeedanceTask`、那套最多 120 次、间隔 2.5 秒或 5 秒的本地轮询，以及 `seedanceApiUrl`、`buildSeedanceContent`、`resolveSeedanceImageUrl`、`resolveSeedanceVideoUrl`、`resolveSeedanceAudioUrl`、`assertSeedanceVideoReferences`、`assertSeedanceAudioReferences`、`unwrapEnvelope`、`unwrapVideoResponse`、`unwrapSeedanceTask`、`videoResultUrl`、`videoResultFromUrl`、`assertVideoBlob`、`assertVideoConfig`、`normalizeVideoSeconds`、`normalizeVideoSize`、`normalizeVideoResolution`、`aiApiUrl`、`aiHeaders` 和本文件的 `readApiErrorMessage` / `readAxiosError` / `statusMessage`。`web/src/lib/seedance-video.ts` 整个文件删除，UI 选项改由 `constraints` 渲染，服务端的 Ark provider 独立实现等价换算。
 
-`VideoGenerationTask.provider` 现在的取值是 `"openai" | "seedance" | "plugin"`，加一个 `"backend"` 表示平台路径，变成四种。`pluginVideoResults` 这个模块级 Map 保留。
+`VideoGenerationTask.provider` 的取值收敛为 `"backend"` 一种（或直接删掉该字段）。`pluginVideoResults` 这个模块级 Map 删除。`VideoGenerationResult` 扩成带可选 `storageKey` 的结构，`storeGeneratedVideo` 删除——服务端已经转存，前端不再经手视频二进制。
 
-`VideoGenerationResult` 现在是 `{ blob?, url?, mimeType? }`，扩成可选带 `storageKey`：平台路径直接给 `storageKey`，用户渠道路径仍然给 `blob` 或 `url` 再由 `storeGeneratedVideo` 转存。`storeGeneratedVideo` 保留，只是平台路径不再调用它。
-
-第二期遗留的 `resumePendingLogs` 问题只在平台路径上顺带解决：平台任务的权威状态在服务端，前端刷新页面后拿 `taskId` 调一次查询接口就能续上。用户渠道的任务状态仍然只活在那个标签页里，关掉页面就丢，这是直连模式的固有代价，本期不处理，也不要为它单独设计一套本地持久化。
-
-`web/src/lib/seedance-video.ts` 整个文件保留，`normalizeSeedanceRatio`、`normalizeSeedanceResolution`、`normalizeSeedanceDuration`、`isSeedanceVideoConfig` 继续给用户渠道构造请求，`seedanceRatioOptions`、`seedanceResolutionOptions`、`seedanceDurationOptions`、`seedancePixelLabel`、`SEEDANCE_REFERENCE_LIMITS`、`seedanceVideoReferenceError`、`buildSeedancePromptText` 继续给 UI 用。服务端的 Ark provider 会独立实现一份等价的换算逻辑。
+第二期遗留的 `resumePendingLogs` 问题在此顺带解决：任务的权威状态在服务端，前端刷新页面后按 `generationId`/`taskId` 调一次查询接口就能续上。
 
 ### 语音链路 `web/src/services/api/audio.ts`
 
-`requestAudioGeneration` 在入口分流：平台模型调 `generateSpeech` 直接拿 `storageKey`，用户渠道走现有实现拿 Blob 再由 `storeGeneratedAudio` 转存。`aiApiUrl`、`aiHeaders`、`assertAudioConfig`、`assertAudioBlob` 以及这个文件里那份 `readApiErrorMessage` / `readAxiosError` / `statusMessage` 全部保留，`storeGeneratedAudio` 也保留。
+`requestAudioGeneration` 保留签名，内部改为调用 `generateSpeech` 直接拿 `storageKey`。`aiApiUrl`、`aiHeaders`、`assertAudioConfig`、`assertAudioBlob`、`readApiErrorMessage`、`readAxiosError`、`statusMessage` 与 `storeGeneratedAudio` 删除。
 
-`web/src/lib/audio-generation.ts` 里的 `normalizeAudioFormatValue`、`normalizeAudioSpeedValue`、`normalizeAudioVoiceValue`、`audioMimeType` 继续在前端用来约束 UI 取值；平台路径上服务端再按 `constraints` 校验一次，两边不冲突。
+`web/src/lib/audio-generation.ts` 里的 `normalizeAudioFormatValue`、`normalizeAudioSpeedValue`、`normalizeAudioVoiceValue` 保留——选项本身改由 `constraints` 渲染后，这些归一化函数仍可用于把历史取值映射到合法集合；`audioMimeType` 视 `constraints` 是否覆盖格式字段决定去留。
 
-### 自定义脚本 `web/src/services/api/model-plugin.ts`（不改动）
+### 自定义脚本删除 `web/src/services/api/model-plugin.ts`
 
-这个文件本期一行都不改。`runModelPlugin`、`createPluginHttp`、`createPluginRequest`、`createPoll`、`getPluginVariables`、`getPluginTemplates`、`normalizePluginImages` 全部保持原样，`apiKey` 继续从 `config` 里读常驻明文，`createPluginHttp` 继续直连用户填的 `baseUrl`。
+整个文件删除，理由见「自定义脚本整体移除」一节。全局搜索 `runModelPlugin`、`createPluginHttp`、`createPluginRequest`、`createPoll`、`getPluginVariables`、`getPluginTemplates`、`normalizePluginImages` 确认连同调用点一起清干净。
 
-之所以特地列出来，是因为按被否决的那条路线它必须改两处：一处是给脚本判定加平台模型的短路，另一处是把 `apiKey` 改成执行前去后端取一次。现在两处都不需要了——分流判断发生在生成入口，平台模型根本不会走到脚本这条分支上，UI 层也不给平台模型提供脚本入口。
+### 配置 store 与模型来源 `web/src/stores/use-config-store.ts`
 
-### 配置 store 与渠道解析 `web/src/stores/use-config-store.ts`
+AI 渠道相关成员**整体删除**：`AiConfig` 及其 `baseUrl`、`apiKey`、`channels`、`channelMode` 字段，`buildApiUrl`、`resolveModelChannel`、`resolveModelRequestConfig`、`resolveModelScript`、`encodeChannelModel`、`decodeChannelModel`、`findChannelModel`、`normalizeChannels`、`createModelChannel`、`normalizeChannelModels`、`guessCapability`，以及 `fetchImageModels`、`fetchChannelModels` 的调用面。`isAiConfigReady` 一并删除——模型来自平台目录，不存在「渠道没配好」这种状态，生成入口的就绪条件只剩「已登录且目录已加载」。
 
-`buildApiUrl`、`resolveModelChannel`、`resolveModelRequestConfig`、`resolveModelScript` 全部保留，调用面也不收窄——用户渠道的每一次生成都还要走它们。顺带澄清一个位置：`aiHeaders` 并不在这个 store 里，而是 `image.ts`、`video.ts`、`audio.ts` 各自私有的一份，三份实现几乎一样，本期同样原样保留。
+`config.models` 与 `selectableModelsByCapability` 的唯一来源是 `/api/models` 拉到的平台目录，目录项自带 `capability` 与 `constraints`。`modelOptionLabel` 保留，用于展示模型名与点数信息。
 
-**`isAiConfigReady` 的语义必须改，这是漏掉就会让新用户什么都点不动的一处。** 它现在的判断是 `Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim())`，平台模型没有对应的用户渠道，`baseUrl` 与 `apiKey` 都是空，会被判成未就绪，生成入口就被 `openConfigDialog` 挡住了。改成：模型标识不含 `::` 时永远就绪，含 `::` 时维持现有判断。
-
-`AiConfig.apiKey` 与 `channels[].apiKey` **继续存明文**，因为用户渠道要靠它直连上游；`GET /api/credentials` 也继续返回明文，本期不做打码改造。`normalizeChannels`、`createModelChannel`、`normalizeChannelModels` 的结构不变。
-
-`config.models` 与 `selectableModelsByCapability` 的候选来源要从「只有用户渠道」扩成「平台目录 + 用户渠道」。平台目录项没有 `::` 前缀，天然与用户渠道项区分开，不需要额外的标记字段。`modelOptionLabel` 要给平台项加上来源标记和点数信息。
-
-**有一处容易踩的坑：`findChannelModel` 拿到裸模型名时会退化成「在所有渠道里找同名模型」。** 用户如果在自己的渠道里也配了一个 `gpt-image-2`，平台目录里的 `gpt-image-2` 会被它匹配到那个用户渠道上，`modelCapabilityOf`、`resolveModelChannel`、`resolveModelScript` 跟着全部指错，最后表现为「选了平台模型却拿用户的 Key 直连出去」。解法是让分流判断站在这些函数之前：确认是平台目录项之后就不再进 `findChannelModel`，改查平台目录本身。
-
-`defaultConfig.channels` 里那条内置的 `default` 渠道（预置了 `gpt-image-2`、`grok-imagine-video`、`gpt-5.5`、`gpt-4o-mini-tts` 四个模型但没有 Key）要去掉。它在直连时代的作用是给新用户一个填 Key 的起点，现在平台目录才是默认来源，留着只会让新用户看到一个永远用不了的假渠道。
+**登录前的生成入口不需要单独处理**：全站业务路由在第一期就包了 `RequireAuth`，能进入生成页的用户必然已登录。
 
 ### 模型选择器与参数面板
 
-`web/src/components/model-picker.tsx` 的 `options` 现在来自 `selectableModelsByCapability(config, capability)`，改为把 `/api/models` 拉到的平台目录合并进来，**两类模型并列展示**，用户随时可以在同一个下拉里切换。平台项标注这次预计消耗多少点数，用户渠道项标注「使用你自己的 API Key，不消耗点数」，让「这一次要不要花钱」在点生成之前就是明确的。`emptyModelLabel` 的三种空态文案要重写——平台目录非空时不该提示「先去添加渠道」。
+`web/src/components/model-picker.tsx` 的 `options` 直接来自 `selectableModelsByCapability`（平台目录），不再合并任何用户渠道来源。模型项展示预估点数；`emptyModelLabel` 的空态文案重写——目录为空时提示「管理员尚未上架模型」，而不是「先去添加渠道」。
 
-尺寸、比例、时长这些选项现在全是硬编码常量，分散在四个文件里：`web/src/components/image-settings-panel.tsx` 的 `qualityOptions` 与 `aspectOptions`（对外导出为 `imageQualityOptions`、`imageAspectOptions`）、`web/src/components/video-settings-panel.tsx` 的 `resolutionOptions`、`sizeOptions`、`secondOptions`（导出为 `videoResolutionOptions`、`videoSizeOptions`、`videoSecondOptions`）、`web/src/components/audio-settings-panel.tsx` 的 `speedOptions`、`web/src/components/canvas/canvas-size-picker.tsx` 的 `sizeOptions`。
+尺寸、比例、时长这些硬编码选项**全部退役**：`web/src/components/image-settings-panel.tsx` 的 `qualityOptions` 与 `aspectOptions`（对外导出为 `imageQualityOptions`、`imageAspectOptions`）、`web/src/components/video-settings-panel.tsx` 的 `resolutionOptions`、`sizeOptions`、`secondOptions`（导出为 `videoResolutionOptions`、`videoSizeOptions`、`videoSecondOptions`）、`web/src/components/audio-settings-panel.tsx` 的 `speedOptions`、`web/src/components/canvas/canvas-size-picker.tsx` 的 `sizeOptions`，全部改为从当前选中模型的 `constraints` 动态渲染。
 
-改造规则统一：**选中平台模型时，选项从该模型的 `constraints` 动态渲染；选中用户渠道模型时，原样沿用现有的硬编码列表和那套全局约束**（`QUALITY_BASE`、`IMAGE_MAX_EDGE` 那一批）。这不是偷懒——平台确实不知道用户渠道模型的能力：那个模型支持哪些尺寸、吃不吃参考图、能不能生成透明背景，全都藏在用户自己填的渠道配置和第三方文档里，我们手上没有任何可校验的依据，只能维持现在这套「给一批通用选项，不合法交给上游报错」的做法。
-
-切换模型时如果当前取值不在新模型的 `constraints` 里，要自动落回该模型的第一个合法值。留着一个必然被 400 拒绝的取值，用户点了生成才报错，体验很差。从平台模型切到用户渠道模型时不需要重置，那条路径不校验取值。
+切换模型时如果当前取值不在新模型的 `constraints` 里，自动落回该模型的第一个合法值。留着一个必然被 400 拒绝的取值，用户点了生成才报错，体验很差。
 
 画布侧的 `canvas-image-settings-popover.tsx`、`canvas-video-settings-popover.tsx`、`canvas-audio-settings-popover.tsx`、`canvas-image-toolbar-settings-modal.tsx`、`canvas-config-node-panel.tsx`、`canvas-node-prompt-panel.tsx` 复用的是同一批导出常量，改导出源即可覆盖，但要逐个确认没有各自维护的副本。
 
 ### 调用方与错误处理
 
-六处调用方需要跟着改：`web/src/pages/image/index.tsx`、`web/src/pages/video/index.tsx`、`web/src/pages/canvas/project.tsx`、`web/src/pages/canvas/hooks/use-plugin-host.tsx`、`web/src/components/canvas/canvas-node-generation.ts`、`web/src/lib/agent/agent-site-tools.ts`。改动集中在返回值形状（平台路径拿到的是 `storageKey`，用户渠道路径仍然是 Blob 或 dataURL，由 `image.ts` / `video.ts` / `audio.ts` 在内部抹平）和错误处理上。
+六处调用方需要跟着改：`web/src/pages/image/index.tsx`、`web/src/pages/video/index.tsx`、`web/src/pages/canvas/project.tsx`、`web/src/pages/canvas/hooks/use-plugin-host.tsx`、`web/src/components/canvas/canvas-node-generation.ts`、`web/src/lib/agent/agent-site-tools.ts`。改动集中在返回值形状上：所有路径统一拿到 `storageKey`，不再有 Blob 与 dataURL 的分支。
 
-**其中生成记录的写入要从平台分支里去掉。** 全项目只有 `web/src/pages/image/index.tsx` 与 `web/src/pages/video/index.tsx` 两个工作台页面写生成记录（现在是各自的 `saveLog` 往 localforage 里塞，第二期之后换成 `createGeneration` 与 `patchGeneration`），这两处都要按分流判断收窄：平台分支不再调 `createGeneration`，视频的终态也不再调 `patchGeneration`，服务端已经写过了，页面拿响应里的 `generationId` 直接 `invalidateQueries(["generations", kind])` 即可；用户渠道分支这两次写入原样保留。画布侧的 `canvas-node-generation.ts`、`project.tsx`、`use-plugin-host.tsx` 与 Agent 的 `agent-site-tools.ts` 本来就不写生成记录，这一条与它们无关。
+**生成记录的写入从页面里去掉。** `web/src/pages/image/index.tsx` 与 `web/src/pages/video/index.tsx` 原来的 `saveLog` 往 localforage 塞记录，第二期已改为只读服务端的生成记录（本就没有写接口），本期把页面上残留的任何「自己补一条记录」的意图全部删除：记录由服务端写，页面拿响应里的 `generationId` 直接 `invalidateQueries(["generations", kind])` 即可。画布侧的 `canvas-node-generation.ts`、`project.tsx`、`use-plugin-host.tsx` 与 Agent 的 `agent-site-tools.ts` 本来就不写生成记录，这一条与它们无关。
 
-**错误处理要同时留两套，不能只留一套。** 平台路径按第一期的约定按 `error.code` 查本地化文案；用户渠道路径的错误仍然来自第三方，仍然只能靠 `readApiErrorMessage` 那套猜测逻辑，所以 `apiErrors.*` 里那批靠猜 HTTP 状态码生成的条目（`authenticationFailed`、`badGateway`、`serviceBusy`、`httpFailed`、`rateLimited`、`notFound`、`htmlError`）**不能退休**。它们确实难看，但只要还有一条链路是浏览器直连第三方，就还得靠它们兜底。
+**错误处理只剩一套。** 全部错误按第一期的约定以 `error.code` 返回，文案统一走 `apiErrors.*` 注册表（见第一期「统一错误提示机制」）；三个文件里各自的 `readApiErrorMessage` / `readAxiosError` 猜测逻辑与 `apiErrors.*` 里那批靠猜 HTTP 状态码生成的条目（`authenticationFailed`、`badGateway`、`serviceBusy`、`httpFailed`、`rateLimited`、`notFound`、`htmlError`）**一起删除**。各错误码的呈现行为在生成入口逐个落实：
 
-平台路径生成成功后要让 `/api/me` 的 react-query 查询失效，让点数余额跟着刷新，这与第三期处理配额的做法一致；用户渠道路径不扣点，不需要刷新。402 `INSUFFICIENT_CREDITS` 要给出明确的「还差多少点」提示和充值引导入口。
+- 402 `INSUFFICIENT_CREDITS`：拦截生成并展示「还差 N 点（¥X.XX）」+ 充值按钮，用户已输入的 prompt 与参数原样保留。
+- 409 `QUOTE_STALE`：静默重新调一次 `/api/ai/quote`，新价与用户确认过的价不同时弹确认框展示新价，用户点确认后才按新价生成；不自动按旧价提交。
+- 429 `CONCURRENCY_LIMITED` / `RATE_LIMITED`：按钮进入按 `Retry-After` 秒数的禁用倒计时，文案说明「生成任务过多，请稍候」，不要让用户连点。
+- 502 `UPSTREAM_ERROR` / 504 `UPSTREAM_TIMEOUT`：提示「生成失败，本次点数已退回」，失败不吞掉用户输入，可直接重试；重试走新的 `idempotencyKey`（`ai.ts` 每次请求生成），不与失败请求共用。
+- 403 `READ_ONLY` / `ACCOUNT_PENDING_DELETION` / `EMAIL_NOT_VERIFIED`：持续性状态，按第一期的分层用常驻提示引导，而不是每次生成弹一条。
+
+生成成功后让 `/api/me` 的 react-query 查询失效，点数余额与免费额度跟着刷新，与第三期处理配额的做法一致。
 
 ### 国际化
 
-`zh-CN.ts` 与 `en-US.ts` 同步新增 `ai.credits.*`（余额、消耗、不足提示）与 `ai.errors.*`（按本期新增错误码一一对应），以及模型选择器里两类模型的标注文案。`apiErrors.*` 原样保留，用户渠道还要用。两个文件的 key 结构必须保持对称。
+`zh-CN.ts` 与 `en-US.ts` 同步新增 `ai.credits.*`（余额、消耗、价格表展示）文案；本期启用的错误码文案（`MODEL_NOT_SUPPORTED`、`PARAM_NOT_SUPPORTED`、`QUOTE_STALE`、`CONCURRENCY_LIMITED`、`UPSTREAM_ERROR`、`UPSTREAM_TIMEOUT` 等）按第一期定下的机制登记进扁平的 `apiErrors.*`，不新开 `ai.errors.*` 分组。删除渠道、Key、脚本相关的全部文案（渠道管理、连接测试、脚本编辑器）与 `apiErrors.*` 里靠猜 HTTP 状态码的旧条目。两个文件的 key 结构必须保持对称。
+
 
 ## 部署调整
 
@@ -821,20 +809,17 @@ Go 侧还有一个必踩的坑：`http.Server.WriteTimeout` 是从响应开始�
 | `AI_ALLOW_PRIVATE_UPSTREAM` | 是否允许上游地址落在内网，缺省 false，仅本地调试开启 |
 | `PRICING_PROMOTION_ENABLED` | 是否启用限时折扣；关闭后所有新报价只使用基础价格 |
 
-`CREDENTIAL_MASTER_KEY` 复用第二期的，不新增密钥。媒体卷第一期已经建好，本期不需要新的数据卷。
+`CREDENTIAL_MASTER_KEY` 是本期新引入的，也是全服务唯一的加密主密钥。媒体卷第一期已经建好，本期不需要新的数据卷。
 
 ## 验收清单
 
-分流与计费规则：
+单一路径与计费规则：
 
 - 用平台目录里的模型生成一张图，点数余额按 `credit_cost` 减少，流水里有一条消费记录。
-- 用自定义渠道的模型（标识带 `::`）生成一张图，点数余额不变，流水里没有新记录。
-- 用同一个账号分别用平台模型和自己渠道的模型各生成一次，前者扣点、后者不扣，两次都能拿到结果。
-- 用户渠道的生成请求在浏览器网络面板里直接打到第三方域名，不出现任何指向本站 `/api/ai/*` 的请求。
-- 平台模型的生成请求在浏览器网络面板里只打到本站 `/api/ai/*`，看不到第三方域名。
-- 手工往 `/api/ai/images/generations` 里传一个含 `::` 的模型标识，返回 400 `MODEL_NOT_SUPPORTED`，没有扣点、没有调上游。
-- 传一个目录里不存在的裸模型名，返回 400 `MODEL_NOT_SUPPORTED`。
-- localStorage、sessionStorage 与内存里都找不到平台渠道的 Key。
+- 任意页面的任意生成请求在浏览器网络面板里只打到本站 `/api/ai/*`，全程没有任何指向第三方域名的请求。
+- 手工往 `/api/ai/images/generations` 里传一个目录外的模型名或带 `::` 之类的渠道前缀痕迹，返回 400 `MODEL_NOT_SUPPORTED`，没有扣点、没有调上游。
+- localStorage、sessionStorage 与内存里都找不到任何 API Key。
+- 全局搜索 `model-plugin`、`CHANNEL_MODEL_SEPARATOR`、`fetchChannelModels`、`encodeChannelModel` 均无残留，配置页没有任何渠道、Key 或脚本入口。
 
 价格展示与报价：
 
@@ -858,10 +843,12 @@ Go 侧还有一个必踩的坑：`http.Server.WriteTimeout` 是从响应开始�
 - 点数不足时返回 402 `INSUFFICIENT_CREDITS`，带 `requiredMicros`、`availableMicros` 与 `shortfallMicros`，且没有发起任何上游请求。
 - 把平台渠道 Key 改错后发起生成，返回 502，点数被全额退还并写入一条 `type=refund` 流水。
 - 同一个 `idempotencyKey` 连发两次，只扣一次点，第二次返回同一结果。
+- 不带 `idempotencyKey` 的生成请求返回 400 `VALIDATION_FAILED`，没有扣点、没有调上游。
 - 流式对话输出到一半时关掉浏览器标签页，点数不退还，服务端日志显示上游请求被取消。
 - 流式对话在第一个 delta 之前上游返回 500，点数全额退还。
 - 视频任务失败后点数退还，且同一个任务不会被退两次。
 - 手动把退还流程打断后重试，不会出现双倍退款。
+- 生成进行中直接杀掉 `api` 进程再启动，启动完成后对应的 `ai_requests` 收敛为 `failed`，被预扣的点数按原桶退还且只有一条退款流水；视频任务则在重启后继续轮询到终态，`ai_requests` 跟着收敛。
 
 流式转发：
 
@@ -875,7 +862,7 @@ Go 侧还有一个必踩的坑：`http.Server.WriteTimeout` 是从响应开始�
 
 - 给平台模型传一个不在 `constraints.size` 里的尺寸，返回 400 `PARAM_NOT_SUPPORTED`，响应里列出允许值，且没有扣点、没有调上游。
 - 在平台模型之间切换后，尺寸、比例、时长选项跟着变，原来选中的非法值被自动重置为合法值。
-- 切到用户渠道的模型后，选项回到现有的硬编码列表，取值不受 `constraints` 限制。
+- 不同模型之间切换后，尺寸、比例、时长选项全部来自各自的 `constraints`，前端不再存在硬编码选项列表。
 - 拿视频模型去调 `/api/ai/images/generations` 返回 `MODEL_NOT_SUPPORTED`。
 
 结果落地：
@@ -891,7 +878,7 @@ Go 侧还有一个必踩的坑：`http.Server.WriteTimeout` 是从响应开始�
 
 - 让平台上游返回一个指向内网地址的结果 URL，服务端拒绝下载。
 - 让结果 URL 先返回一个公网地址、再 302 跳到内网地址，服务端在这一跳上同样拒绝。
-- 给平台模型配上脚本，脚本不会被执行，请求仍走服务端默认调用。
+- 在管理后台把某个模型的请求故意配错，生成失败并全额退款；随后修复配置恢复正常，全程浏览器侧拿不到任何 Key。
 - 后端日志里搜不到任何 API Key，`Authorization` 与 `x-goog-api-key` 均已脱敏。
 - 管理后台的渠道接口不返回 Key 明文，只返回 `hasKey` 与后四位。
 
@@ -903,9 +890,7 @@ Go 侧还有一个必踩的坑：`http.Server.WriteTimeout` 是从响应开始�
 
 前端：
 
-- 全新注册的账号在没有配置任何渠道的情况下，能直接用平台模型生成，入口不被「未配置 API Key」挡住。
-- 模型选择器里平台模型与用户渠道模型并列出现，平台项显示预估点数，用户渠道项显示「不消耗点数」。
-- 用户在自己的渠道里配一个与平台目录同名的模型，两个选项互不串台，选平台项时仍然走 `/api/ai/*`。
-- 用户渠道的模型配上脚本后仍能正常执行，`model-plugin.ts` 相关功能没有回归。
-- `bun run typecheck` 通过，`web/src/services/api/` 下原有的直连实现完整保留，用户渠道生成不受影响。
-- 两个语言包 key 结构对称，新增的 `ai.*` 文案齐全，`apiErrors.*` 未被误删。
+- 全新注册的账号不需要任何配置就能直接生成，入口不被「未配置 API Key」挡住。
+- 模型选择器只出现平台目录里的模型，每项显示预估点数。
+- `bun run typecheck` 通过，`web/src/lib/seedance-video.ts` 与 `model-plugin.ts` 已删除，`image.ts` / `video.ts` / `audio.ts` 中没有残留的直连实现。
+- 两个语言包 key 结构对称，新增的 `ai.*` 文案齐全，渠道与脚本相关文案及 `apiErrors.*` 猜测类条目已删除。

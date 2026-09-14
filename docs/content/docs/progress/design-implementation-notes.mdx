@@ -1,0 +1,59 @@
+---
+title: Design Implementation Notes
+description: Architecture decisions, component mapping, and known pitfalls for turning the mockups into React code
+---
+
+# Design Implementation Notes
+
+This document captures the architecture decisions, component mappings, and pitfalls discovered while building the `design/html/` mockups, so the React implementation does not rediscover them the hard way.
+
+## Workbench boundary (important)
+
+**Image/video workbenches get style changes only — no architecture or feature changes.** The source structure to preserve:
+
+- Layout: the three-column grid in `web/src/pages/image/index.tsx` (left 300px log panel / middle 420px params / right results), single column with bottom drawers on mobile — unchanged.
+- Result card states: `ResultImageCard` / `PendingImageCard` (dot-grid + spinner) / `FailedImageCard` (red + retry) — structure kept, new style tokens only.
+- LogPanel / LogCard, GenerationSettings — structure kept.
+- The Agent workflow (`use-workbench-agent-store` command dispatch, `imageCommand` handling) — **untouched**; the Agent panel shown in the mockups is just a visual placeholder for the existing `AgentPanel` from `user-layout.tsx`.
+
+## Global component mapping
+
+| Mockup class | React implementation |
+| --- | --- |
+| `.btn-*` / `.icon-btn` | antd Button theming in `app-theme.ts`; active `scale(0.98)`, disabled `opacity-40 + pointer-events-none`, focus-visible 2px outline |
+| `.field-input` | antd Input/Select token overrides (focus border `#a8a29e`) |
+| `.chip*` | antd Tag theming; success state is black-on-white (`chip-blue`), no colors |
+| `.filter-tag` | reuse the existing `.prompt-filter-tag` pattern |
+| `.switch` | antd Switch theming (black/white inversion) |
+| `.popover` / `.menu-*` | antd Dropdown/Menu component tokens (already configured) |
+| `.toast` | antd message theming with semantic icons |
+| `.progress` (>90% red) | small custom component |
+| `.skeleton` / `.spinner` / `.indeterminate` | antd Skeleton/Spin + custom CSS |
+| Modal/Drawer transitions | antd built-ins suffice; custom scenes use the mockup curves |
+
+## Pitfalls already hit (watch for the same)
+
+1. **z-index table**: drawers/modals `z-[60]`, popovers inside them `z-[70]`, toasts `z-[70]`. A popover below the drawer layer gets hidden by the overlay.
+2. **fixed positioning + scroll containers**: anchored popovers must recompute position on scroll (capture phase) or they stick to stale viewport coordinates.
+3. **Insert semantics**: constraint tags insert **before** the "+ custom" button (`btn.before(tag)`); the add button always stays last in its group.
+4. **value/label mapping**: every option is `{ value, label? }`; `label` auto-generates when omitted (`3072 → 3K`, `1440 → 1440p`); ratio values are `width:height` integer pairs entered via two separate number inputs.
+5. **Image vs video param systems are separate**: image `quality` (render quality) vs `sizes` (short-edge tiers); video `resolutions` (vertical p) + `durations` (continuous range rendered as a slider) + `modes` + `supportsAudio/supportWatermark`. The conversion table ships from `/api/models`; no frontend hardcoding.
+6. **Infrastructure before mocks**: confirm toast/modal infrastructure exists before wiring interactions — four pages referenced an undefined `toast`, breaking clicks.
+7. **openModal handles both containers**: selector `.drawer-open, .modal-open` with null guard.
+
+## Mobile baseline
+
+- Top nav collapses to a hamburger drawer below `md` (all front pages).
+- Admin sidebar hidden below `md`, served by the hamburger drawer; the docs tree has its own `lg` breakpoint drawer.
+- Workbenches: log panel hidden below `lg` → bottom drawer; params → bottom drawer; fixed mobile generate bar.
+- Account: sidebar becomes horizontal tabs below `md`.
+- Tables: `overflow-x-auto` + `min-w-[...]`.
+- Agent panel: fixed full-width on mobile, static sidebar on desktop.
+- Constraint chip containers: `flex-wrap`; the custom popover clamps to viewport bounds.
+
+## Suggested implementation order
+
+1. Extend `app-theme.ts` tokens first (button states, Tag, Switch, message icons) — global effect in one step.
+2. Implement front pages in the order shown in `index.html`, reusing existing components before adding new ones.
+3. Build the seven admin pages on a shared `web/src/layouts/admin-layout.tsx` (new).
+4. Workbenches last: swap style tokens only, keep the structure.

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 活动中心设计稿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75 dark:focus-visible:outline-stone-100; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18] dark:focus-visible:outline-stone-100; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 active:scale-95 active:bg-black/[0.1] disabled:pointer-events-none disabled:opacity-40 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white dark:active:bg-white/[0.2]; }
+  .nav-link { @apply relative flex h-14 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .dot-grid { background-image: radial-gradient(#e5e7eb 1px, transparent 1px); background-size: 16px 16px; }
+  .dark .dot-grid { background-image: radial-gradient(rgba(245,245,244,.18) 1px, transparent 1px); }
+  .badge { @apply inline-flex items-center gap-1 rounded-full border border-stone-200 px-2 py-0.5 text-[11px] text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<!-- ========== 顶部导航 ========== -->
+<header class="sticky top-0 z-40 h-14 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl dark:border-stone-800 dark:bg-[#1c1917]/90">
+  <div class="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-4 sm:px-6">
+    <div class="flex min-w-0 items-center">
+      <a href="home.html" class="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
+        <span class="size-5 shrink-0 rounded bg-current"></span>
+        <span class="text-base font-medium">无限画布</span>
+      </a>
+      <button type="button" class="icon-btn ml-2 md:hidden" onclick="toggleDrawer(true)" aria-label="打开菜单"><i data-lucide="menu" class="size-5"></i></button>
+      <nav class="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
+        <a href="home.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100">首页</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="image" class="size-4"></i>图片</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="video" class="size-4"></i>视频</a>
+        <a href="community.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="users" class="size-4"></i>社区</a>
+        <a href="models.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="boxes" class="size-4"></i>模型</a>
+        <a href="activity.html" class="nav-link font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"><i data-lucide="gift" class="size-4"></i>活动</a>
+        <a href="pricing.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="credit-card" class="size-4"></i>定价</a>
+      </nav>
+    </div>
+    <div class="my-auto flex h-9 min-w-0 items-center justify-end gap-2 whitespace-nowrap">
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="切换主题">
+        <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+        <i data-lucide="moon" class="size-4 dark:hidden"></i>
+      </button>
+      <a href="login.html" class="btn-primary !h-8 !px-4 text-[13px]">登录</a>
+    </div>
+  </div>
+</header>
+
+<!-- ========== 移动端抽屉 ========== -->
+<div id="drawer" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+  <div class="absolute inset-y-0 left-0 w-72 bg-white p-5 dark:bg-[#292524]">
+    <div class="mb-6 flex items-center justify-between">
+      <span class="text-base font-medium">无限画布</span>
+      <button type="button" class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button>
+    </div>
+    <nav class="flex flex-col gap-1 text-sm">
+      <a href="home.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">首页</a>
+      <a href="community.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">社区</a>
+      <a href="models.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">模型</a>
+      <a href="activity.html" class="rounded-lg bg-black/5 px-3 py-2.5 font-medium dark:bg-white/10">活动</a>
+      <a href="pricing.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">定价</a>
+    </nav>
+  </div>
+</div>
+
+<main class="dot-grid">
+  <!-- ========== 焦点活动 Banner ========== -->
+  <section class="mx-auto max-w-7xl px-4 pt-10 sm:px-6">
+    <div class="card relative overflow-hidden">
+      <img src="https://picsum.photos/seed/event-hero/1400/420" alt="" class="h-64 w-full object-cover sm:h-80" />
+      <div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/40 to-transparent"></div>
+      <div class="absolute inset-0 flex flex-col justify-center p-6 text-white sm:p-12">
+        <span class="w-fit rounded-full bg-white/15 px-3 py-1 text-xs backdrop-blur">进行中 · 至 10 月 31 日</span>
+        <h2 class="mt-4 max-w-xl text-3xl font-semibold sm:text-4xl">秋季创作马拉松</h2>
+        <p class="mt-3 max-w-lg text-sm leading-6 text-white/80">用画布完成一个完整的视觉故事，赢取最高 5,000 积分与专业版年卡。每周评选，人人可参与。</p>
+        <div class="mt-6 flex flex-wrap gap-3">
+          <a href="#" class="btn-primary !border-0 !bg-white !text-stone-900 hover:!bg-stone-100">立即报名</a>
+          <a href="#" class="btn-secondary !border-white/30 !bg-transparent !text-white hover:!bg-white/10">了解规则</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 进行中的活动 ========== -->
+  <section class="mx-auto max-w-7xl px-4 pt-14 sm:px-6">
+    <div class="mb-6 flex items-end justify-between">
+      <h2 class="text-2xl font-semibold">进行中</h2>
+      <a href="#" class="text-sm text-stone-500 transition hover:text-stone-900 dark:hover:text-stone-100">全部活动</a>
+    </div>
+    <div class="grid gap-4 md:grid-cols-3">
+      <a href="#" class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+        <div class="relative">
+          <img src="https://picsum.photos/seed/event-1/640/360" alt="" class="aspect-video w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+          <span class="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white backdrop-blur">剩余 12 天</span>
+        </div>
+        <div class="p-5">
+          <div class="flex flex-wrap gap-1.5">
+            <span class="badge">创作比赛</span><span class="badge">积分奖励</span>
+          </div>
+          <h3 class="mt-3 font-medium">赛博城市主题挑战</h3>
+          <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">以「2076 年的城市夜晚」为主题创作，前三名可获 3,000 / 2,000 / 1,000 积分。</p>
+          <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 text-xs text-stone-500 dark:border-stone-800/60 dark:text-stone-400">
+            <span class="inline-flex items-center gap-1.5"><i data-lucide="users" class="size-3.5"></i>856 人参与</span>
+            <span>09-01 ~ 09-25</span>
+          </div>
+        </div>
+      </a>
+      <a href="#" class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+        <div class="relative">
+          <img src="https://picsum.photos/seed/event-2/640/360" alt="" class="aspect-video w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+          <span class="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white backdrop-blur">剩余 5 天</span>
+        </div>
+        <div class="p-5">
+          <div class="flex flex-wrap gap-1.5">
+            <span class="badge">限时福利</span>
+          </div>
+          <h3 class="mt-3 font-medium">新模型免费体验周</h3>
+          <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">Kling 2.0 上线体验周，所有登录用户每天可免费生成 3 段视频。</p>
+          <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 text-xs text-stone-500 dark:border-stone-800/60 dark:text-stone-400">
+            <span class="inline-flex items-center gap-1.5"><i data-lucide="users" class="size-3.5"></i>12.4k 人参与</span>
+            <span>09-08 ~ 09-18</span>
+          </div>
+        </div>
+      </a>
+      <a href="#" class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+        <div class="relative">
+          <img src="https://picsum.photos/seed/event-3/640/360" alt="" class="aspect-video w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+          <span class="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white backdrop-blur">长期有效</span>
+        </div>
+        <div class="p-5">
+          <div class="flex flex-wrap gap-1.5">
+            <span class="badge">邀请返利</span>
+          </div>
+          <h3 class="mt-3 font-medium">邀请好友得积分</h3>
+          <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">每成功邀请一位好友注册并完成首次生成，双方各得 100 积分，上不封顶。</p>
+          <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 text-xs text-stone-500 dark:border-stone-800/60 dark:text-stone-400">
+            <span class="inline-flex items-center gap-1.5"><i data-lucide="users" class="size-3.5"></i>32.1k 人参与</span>
+            <span>长期活动</span>
+          </div>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <!-- ========== 签到领积分 ========== -->
+  <section class="mx-auto max-w-7xl px-4 py-14 sm:px-6">
+    <div class="card p-6 sm:p-8">
+      <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 class="text-xl font-semibold">每日签到</h2>
+          <p class="mt-1.5 text-sm text-stone-500 dark:text-stone-400">连续签到奖励递增，7 天一个周期，中断后重新计算</p>
+        </div>
+        <button type="button" class="btn-primary w-fit">今日签到 +10 积分</button>
+      </div>
+      <div class="mt-8 grid grid-cols-4 gap-2 sm:grid-cols-7">
+        <div class="rounded-xl border border-stone-900 p-3 text-center dark:border-stone-100">
+          <p class="text-xs text-stone-500 dark:text-stone-400">第 1 天</p>
+          <p class="mt-1.5 font-semibold">+10</p>
+          <span class="mt-2 inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400"><i data-lucide="check" class="size-3"></i>已签</span>
+        </div>
+        <div class="rounded-xl border border-stone-900 p-3 text-center dark:border-stone-100">
+          <p class="text-xs text-stone-500 dark:text-stone-400">第 2 天</p>
+          <p class="mt-1.5 font-semibold">+10</p>
+          <span class="mt-2 inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400"><i data-lucide="check" class="size-3"></i>已签</span>
+        </div>
+        <div class="rounded-xl border border-stone-200 p-3 text-center dark:border-stone-800">
+          <p class="text-xs text-stone-500 dark:text-stone-400">第 3 天</p>
+          <p class="mt-1.5 font-semibold">+15</p>
+          <span class="mt-2 inline-flex text-[11px] text-stone-400">今天</span>
+        </div>
+        <div class="rounded-xl border border-stone-200 p-3 text-center dark:border-stone-800">
+          <p class="text-xs text-stone-500 dark:text-stone-400">第 4 天</p>
+          <p class="mt-1.5 font-semibold">+15</p>
+        </div>
+        <div class="rounded-xl border border-stone-200 p-3 text-center dark:border-stone-800">
+          <p class="text-xs text-stone-500 dark:text-stone-400">第 5 天</p>
+          <p class="mt-1.5 font-semibold">+20</p>
+        </div>
+        <div class="rounded-xl border border-stone-200 p-3 text-center dark:border-stone-800">
+          <p class="text-xs text-stone-500 dark:text-stone-400">第 6 天</p>
+          <p class="mt-1.5 font-semibold">+20</p>
+        </div>
+        <div class="rounded-xl border border-dashed border-stone-300 p-3 text-center dark:border-stone-600">
+          <p class="text-xs text-stone-500 dark:text-stone-400">第 7 天</p>
+          <p class="mt-1.5 font-semibold">+50</p>
+          <span class="mt-2 inline-flex items-center gap-1 text-[11px] text-stone-500 dark:text-stone-400"><i data-lucide="gift" class="size-3"></i>大奖</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 已结束 ========== -->
+  <section class="mx-auto max-w-7xl px-4 pb-20 sm:px-6">
+    <h2 class="mb-6 text-2xl font-semibold">已结束</h2>
+    <div class="grid gap-4 opacity-60 md:grid-cols-3">
+      <a href="#" class="card group overflow-hidden">
+        <div class="relative">
+          <img src="https://picsum.photos/seed/event-4/640/360" alt="" class="aspect-video w-full object-cover" />
+          <span class="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white backdrop-blur">已结束</span>
+        </div>
+        <div class="p-5">
+          <h3 class="font-medium">夏日光影大赛</h3>
+          <p class="mt-1.5 line-clamp-1 text-sm text-stone-500 dark:text-stone-400">共 3,204 件作品参与评选，获奖名单已公布。</p>
+          <p class="mt-4 text-xs text-stone-400">07-01 ~ 08-15</p>
+        </div>
+      </a>
+      <a href="#" class="card group overflow-hidden">
+        <div class="relative">
+          <img src="https://picsum.photos/seed/event-5/640/360" alt="" class="aspect-video w-full object-cover" />
+          <span class="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white backdrop-blur">已结束</span>
+        </div>
+        <div class="p-5">
+          <h3 class="font-medium">开源插件征集</h3>
+          <p class="mt-1.5 line-clamp-1 text-sm text-stone-500 dark:text-stone-400">收到 87 份插件投稿，12 个已入选官方推荐。</p>
+          <p class="mt-4 text-xs text-stone-400">06-10 ~ 07-31</p>
+        </div>
+      </a>
+      <a href="#" class="card group overflow-hidden">
+        <div class="relative">
+          <img src="https://picsum.photos/seed/event-6/640/360" alt="" class="aspect-video w-full object-cover" />
+          <span class="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white backdrop-blur">已结束</span>
+        </div>
+        <div class="p-5">
+          <h3 class="font-medium">周年庆充值返利</h3>
+          <p class="mt-1.5 line-clamp-1 text-sm text-stone-500 dark:text-stone-400">活动期间充值积分额外赠送 30%，已结束。</p>
+          <p class="mt-4 text-xs text-stone-400">05-20 ~ 06-20</p>
+        </div>
+      </a>
+    </div>
+  </section>
+</main>
+
+<footer class="border-t border-stone-200 py-8 dark:border-stone-800">
+  <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 text-sm text-stone-500 sm:flex-row sm:px-6 dark:text-stone-400">
+    <span>© 2026 无限画布</span>
+    <nav class="flex flex-wrap justify-center gap-6">
+      <a href="#" class="transition hover:text-stone-900 dark:hover:text-stone-100">文档</a>
+      <a href="community.html" class="transition hover:text-stone-900 dark:hover:text-stone-100">社区</a>
+      <a href="#" class="transition hover:text-stone-900 dark:hover:text-stone-100">服务条款</a>
+      <a href="#" class="transition hover:text-stone-900 dark:hover:text-stone-100">隐私政策</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) {
+    document.getElementById('drawer').classList.toggle('hidden', !open);
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

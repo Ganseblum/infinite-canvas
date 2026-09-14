@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 提示词与社区管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-stone-900 px-4 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 disabled:pointer-events-none disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85; }
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 px-4 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .side-link { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-link.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .side-group { @apply mb-1 px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 text-xs leading-none text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400; }
+  .chip-red { @apply inline-flex h-6 items-center rounded-md border border-red-200 bg-red-50 px-1.5 text-xs leading-none text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400; }
+  .chip-amber { @apply inline-flex h-6 items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 text-xs leading-none text-amber-600 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-400; }
+  .th { @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500; }
+  .td { @apply px-4 py-3 text-sm; }
+  .seg { @apply flex-1 rounded-lg py-1.5 text-center text-[13px] text-stone-500 transition hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100; }
+  .seg.active { @apply bg-black/5 font-medium text-stone-950 dark:bg-white/10 dark:text-stone-50; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex dark:border-stone-800 dark:bg-[#1c1917]">
+    <a href="admin.html" class="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 px-5 text-sm font-semibold tracking-tight dark:border-stone-800">
+      <span class="size-5 rounded bg-current"></span><span class="text-base font-medium">管理后台</span>
+    </a>
+    <nav class="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div class="side-group">运营</div>
+      <a href="admin.html" class="side-link"><i data-lucide="layout-dashboard" class="size-4"></i>总览</a>
+      <a href="admin-users.html" class="side-link"><i data-lucide="users" class="size-4"></i>用户管理</a>
+      <a href="admin-billing.html" class="side-link"><i data-lucide="credit-card" class="size-4"></i>订单与收入</a>
+      <div class="side-group">内容</div>
+      <a href="admin-content.html" class="side-link active"><i data-lucide="library" class="size-4"></i>提示词与社区</a>
+      <a href="#" class="side-link" onclick="switchTab('activity'); return false;"><i data-lucide="gift" class="size-4"></i>活动管理</a>
+      <a href="admin-docs-mgr.html" class="side-link"><i data-lucide="file-text" class="size-4"></i>文档管理</a>
+      <div class="side-group">服务端</div>
+      <a href="admin-models.html" class="side-link"><i data-lucide="boxes" class="size-4"></i>模型与渠道</a>
+      <a href="admin-system.html" class="side-link"><i data-lucide="settings-2" class="size-4"></i>系统设置</a>
+    </nav>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <a href="home.html" class="side-link"><i data-lucide="arrow-left" class="size-4"></i>返回前台</a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 dark:border-stone-800 dark:bg-[#1c1917]/90">
+      <div class="flex items-center gap-3">
+        <button class="icon-btn md:hidden" onclick="toggleDrawer(true)"><i data-lucide="menu" class="size-5"></i></button>
+        <h1 class="text-lg font-semibold">提示词与社区</h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="icon-btn" onclick="toggleTheme()"><i data-lucide="sun" class="size-4 hidden dark:block"></i><i data-lucide="moon" class="size-4 dark:hidden"></i></button>
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+      </div>
+    </header>
+
+    <div id="drawer" class="fixed inset-0 z-50 hidden md:hidden">
+      <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+      <div class="absolute inset-y-0 left-0 w-64 bg-white p-4 dark:bg-[#1c1917]">
+        <div class="mb-4 flex items-center justify-between"><span class="font-medium">管理后台</span><button class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button></div>
+        <nav class="flex flex-col gap-1">
+          <a href="admin.html" class="side-link">总览</a><a href="admin-users.html" class="side-link">用户管理</a><a href="admin-billing.html" class="side-link">订单与收入</a><a href="admin-content.html" class="side-link active">提示词与社区</a><a href="admin-models.html" class="side-link">模型与渠道</a><a href="admin-system.html" class="side-link">系统设置</a>
+        </nav>
+      </div>
+    </div>
+
+    <main class="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <!-- 页内 tab -->
+      <div class="inline-flex gap-1 rounded-xl border border-stone-200 bg-white p-1 dark:border-stone-800 dark:bg-[#292524]">
+        <button class="rounded-lg bg-black/5 px-4 py-1.5 text-sm font-medium dark:bg-white/10" data-panel-tab="community" onclick="switchTab('community')">社区作品审核</button>
+        <button class="rounded-lg px-4 py-1.5 text-sm text-stone-500 transition hover:text-stone-900 dark:text-stone-400" data-panel-tab="prompts" onclick="switchTab('prompts')">提示词库管理</button>
+        <button class="rounded-lg px-4 py-1.5 text-sm text-stone-500 transition hover:text-stone-900 dark:text-stone-400" data-panel-tab="activity" onclick="switchTab('activity')">活动管理</button>
+        <button class="rounded-lg px-4 py-1.5 text-sm text-stone-500 transition hover:text-stone-900 dark:text-stone-400" data-panel-tab="moderation" onclick="switchTab('moderation')">内容安全审核</button>
+      </div>
+
+      <!-- ===== 社区作品审核 ===== -->
+      <section id="tab-community" class="tab-panel mt-4">
+        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex gap-1" id="review-filter">
+            <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition" onclick="pickFilter(this)">待审核 12</button>
+            <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition" onclick="pickFilter(this)">已通过</button>
+            <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition" onclick="pickFilter(this)">已拒绝</button>
+            <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition" onclick="pickFilter(this)">被举报 3</button>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn-secondary" onclick="bulkReview(true)">批量通过</button>
+            <button class="btn-secondary !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="bulkReview(false)">批量拒绝</button>
+          </div>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <!-- 待审卡片 -->
+          <div class="card overflow-hidden bg-white dark:bg-[#292524]">
+            <div class="relative">
+              <img src="https://picsum.photos/seed/mod1/400/300" class="aspect-video w-full object-cover" alt="" />
+              <span class="chip-amber absolute left-2.5 top-2.5">待审核</span>
+            </div>
+            <div class="p-4">
+              <p class="line-clamp-2 text-xs leading-5 text-stone-500 dark:text-stone-400">黄昏逆光，天台边缘，35mm 胶片质感……</p>
+              <div class="mt-2.5 flex items-center gap-2 text-xs text-stone-400"><img src="https://i.pravatar.cc/32?img=12" class="size-5 rounded-full" alt="" />阿河 · 10 分钟前</div>
+              <div class="mt-3 flex gap-2 border-t border-stone-100 pt-3 dark:border-stone-800/60">
+                <button class="btn-secondary btn-sm flex-1 !border-emerald-200 !text-emerald-600 dark:!border-emerald-900/60 dark:!text-emerald-400" onclick="removeCard(this, '已通过并发布', 'success')">通过</button>
+                <button class="btn-secondary btn-sm flex-1 !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="rejectCard(this)">拒绝</button>
+              </div>
+            </div>
+          </div>
+          <div class="card overflow-hidden bg-white dark:bg-[#292524]">
+            <div class="relative">
+              <img src="https://picsum.photos/seed/mod2/400/300" class="aspect-video w-full object-cover" alt="" />
+              <span class="chip-amber absolute left-2.5 top-2.5">待审核</span>
+            </div>
+            <div class="p-4">
+              <p class="line-clamp-2 text-xs leading-5 text-stone-500 dark:text-stone-400">赛博城市夜景，雨后地面反射……</p>
+              <div class="mt-2.5 flex items-center gap-2 text-xs text-stone-400"><img src="https://i.pravatar.cc/32?img=27" class="size-5 rounded-full" alt="" />Neon_Rider · 32 分钟前</div>
+              <div class="mt-3 flex gap-2 border-t border-stone-100 pt-3 dark:border-stone-800/60">
+                <button class="btn-secondary btn-sm flex-1 !border-emerald-200 !text-emerald-600 dark:!border-emerald-900/60 dark:!text-emerald-400" onclick="removeCard(this, '已通过并发布', 'success')">通过</button>
+                <button class="btn-secondary btn-sm flex-1 !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="rejectCard(this)">拒绝</button>
+              </div>
+            </div>
+          </div>
+          <div class="card overflow-hidden bg-white dark:bg-[#292524]">
+            <div class="relative">
+              <img src="https://picsum.photos/seed/mod3/400/300" class="aspect-video w-full object-cover" alt="" />
+              <span class="chip-red absolute left-2.5 top-2.5">被举报 ×2</span>
+            </div>
+            <div class="p-4">
+              <p class="line-clamp-2 text-xs leading-5 text-stone-500 dark:text-stone-400">举报原因：涉嫌搬运他人作品未标注来源</p>
+              <div class="mt-2.5 flex items-center gap-2 text-xs text-stone-400"><img src="https://i.pravatar.cc/32?img=44" class="size-5 rounded-full" alt="" />spam_user · 1 小时前</div>
+              <div class="mt-3 flex gap-2 border-t border-stone-100 pt-3 dark:border-stone-800/60">
+                <button class="btn-secondary btn-sm flex-1 !border-emerald-200 !text-emerald-600 dark:!border-emerald-900/60 dark:!text-emerald-400" onclick="removeCard(this, '已驳回举报', 'success')">驳回举报</button>
+                <button class="btn-secondary btn-sm flex-1 !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="rejectCard(this)">下架</button>
+              </div>
+            </div>
+          </div>
+          <div class="card overflow-hidden bg-white dark:bg-[#292524]">
+            <div class="relative">
+              <img src="https://picsum.photos/seed/mod4/400/300" class="aspect-video w-full object-cover" alt="" />
+              <span class="chip-amber absolute left-2.5 top-2.5">待审核</span>
+            </div>
+            <div class="p-4">
+              <p class="line-clamp-2 text-xs leading-5 text-stone-500 dark:text-stone-400">极简产品渲染，柔和顶光……</p>
+              <div class="mt-2.5 flex items-center gap-2 text-xs text-stone-400"><img src="https://i.pravatar.cc/32?img=8" class="size-5 rounded-full" alt="" />白噪工作室 · 2 小时前</div>
+              <div class="mt-3 flex gap-2 border-t border-stone-100 pt-3 dark:border-stone-800/60">
+                <button class="btn-secondary btn-sm flex-1 !border-emerald-200 !text-emerald-600 dark:!border-emerald-900/60 dark:!text-emerald-400" onclick="removeCard(this, '已通过并发布', 'success')">通过</button>
+                <button class="btn-secondary btn-sm flex-1 !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="rejectCard(this)">拒绝</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 提示词库管理 ===== -->
+      <section id="tab-prompts" class="tab-panel mt-4 hidden">
+        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="relative w-full sm:w-72">
+            <i data-lucide="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400"></i>
+            <input placeholder="搜索提示词标题…" class="h-9 w-full rounded-lg border border-stone-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:bg-[#292524] dark:focus:border-stone-500" />
+          </div>
+          <button class="btn-primary w-fit" onclick="openModal('m-prompt-edit')"><i data-lucide="plus" class="size-4"></i>新建提示词</button>
+        </div>
+        <div class="card overflow-hidden bg-white dark:bg-[#292524]">
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[760px]">
+              <thead class="border-b border-stone-200 dark:border-stone-800"><tr><th class="th">提示词</th><th class="th">分类</th><th class="th">标签</th><th class="th">使用次数</th><th class="th">状态</th><th class="th text-right">操作</th></tr></thead>
+              <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+                <tr>
+                  <td class="td"><div class="flex items-center gap-3"><img src="https://picsum.photos/seed/p1/80/80" class="size-10 rounded-lg object-cover" alt="" /><div class="min-w-0"><p class="truncate font-medium">黄昏天台的电影感人像</p><p class="truncate text-xs text-stone-400">黄昏逆光，天台边缘，35mm 胶片质感…</p></div></div></td>
+                  <td class="td">人像摄影</td>
+                  <td class="td"><div class="flex gap-1"><span class="chip">电影感</span><span class="chip">胶片</span></div></td>
+                  <td class="td">12.4k</td>
+                  <td class="td"><span class="chip-green">已上架</span></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-prompt-edit')">编辑</button><button class="btn-secondary btn-sm" onclick="togglePromptRow(this, false)">下架</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td"><div class="flex items-center gap-3"><img src="https://picsum.photos/seed/p2/80/80" class="size-10 rounded-lg object-cover" alt="" /><div class="min-w-0"><p class="truncate font-medium">极简产品渲染</p><p class="truncate text-xs text-stone-400">柔和顶光，浅灰背景，商业摄影质感…</p></div></div></td>
+                  <td class="td">产品设计</td>
+                  <td class="td"><div class="flex gap-1"><span class="chip">极简</span></div></td>
+                  <td class="td">8.1k</td>
+                  <td class="td"><span class="chip-green">已上架</span></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-prompt-edit')">编辑</button><button class="btn-secondary btn-sm" onclick="togglePromptRow(this, false)">下架</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td"><div class="flex items-center gap-3"><img src="https://picsum.photos/seed/p9/80/80" class="size-10 rounded-lg object-cover" alt="" /><div class="min-w-0"><p class="truncate font-medium">未命名草稿 04</p><p class="truncate text-xs text-stone-400">待补充封面与描述…</p></div></div></td>
+                  <td class="td">插画</td>
+                  <td class="td"><span class="text-xs text-stone-400">—</span></td>
+                  <td class="td">0</td>
+                  <td class="td"><span class="chip-amber">草稿</span></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-prompt-edit')">编辑</button><button class="btn-primary btn-sm" onclick="togglePromptRow(this, true)">上架</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 活动管理 ===== -->
+      <section id="tab-activity" class="tab-panel mt-4 hidden">
+        <div class="mb-4 flex justify-end">
+          <button class="btn-primary" onclick="openModal('m-activity-edit')"><i data-lucide="plus" class="size-4"></i>新建活动</button>
+        </div>
+        <div class="card overflow-hidden bg-white dark:bg-[#292524]">
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[820px]">
+              <thead class="border-b border-stone-200 dark:border-stone-800"><tr><th class="th">活动</th><th class="th">类型</th><th class="th">时间</th><th class="th">参与人数</th><th class="th">状态</th><th class="th text-right">操作</th></tr></thead>
+              <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+                <tr>
+                  <td class="td"><div class="flex items-center gap-3"><img src="https://picsum.photos/seed/event-hero/80/48" class="h-10 w-16 rounded-lg object-cover" alt="" /><span class="font-medium">秋季创作马拉松</span></div></td>
+                  <td class="td">创作比赛</td>
+                  <td class="td text-stone-400">09-01 ~ 10-31</td>
+                  <td class="td">3,204</td>
+                  <td class="td"><span class="chip-green">进行中</span></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-activity-edit')">编辑</button><button class="btn-secondary btn-sm" onclick="endActivity(this)">结束</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td"><div class="flex items-center gap-3"><img src="https://picsum.photos/seed/event-2/80/48" class="h-10 w-16 rounded-lg object-cover" alt="" /><span class="font-medium">新模型免费体验周</span></div></td>
+                  <td class="td">限时福利</td>
+                  <td class="td text-stone-400">09-08 ~ 09-18</td>
+                  <td class="td">12.4k</td>
+                  <td class="td"><span class="chip-green">进行中</span></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-activity-edit')">编辑</button><button class="btn-secondary btn-sm" onclick="endActivity(this)">结束</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td"><div class="flex items-center gap-3"><img src="https://picsum.photos/seed/event-7/80/48" class="h-10 w-16 rounded-lg object-cover" alt="" /><span class="font-medium">双节充值返利</span></div></td>
+                  <td class="td">充值返利</td>
+                  <td class="td text-stone-400">09-28 ~ 10-08</td>
+                  <td class="td">—</td>
+                  <td class="td"><span class="chip">未开始</span></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-activity-edit')">编辑</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="removeRow(this, '已删除草稿活动')">删除</button></div></td>
+                </tr>
+                <tr class="opacity-60">
+                  <td class="td"><div class="flex items-center gap-3"><img src="https://picsum.photos/seed/event-4/80/48" class="h-10 w-16 rounded-lg object-cover grayscale" alt="" /><span class="font-medium">夏日光影大赛</span></div></td>
+                  <td class="td">创作比赛</td>
+                  <td class="td text-stone-400">07-01 ~ 08-15</td>
+                  <td class="td">3,204</td>
+                  <td class="td"><span class="chip">已结束</span></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-activity-edit')">查看</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 内容安全审核（第五期） ===== -->
+      <section id="tab-moderation" class="tab-panel mt-4 hidden">
+        <!-- 统计 -->
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="card bg-white p-5 dark:bg-[#292524]">
+            <p class="text-sm text-stone-500 dark:text-stone-400">今日审核量</p>
+            <p class="mt-2 text-2xl font-semibold">12,846</p>
+            <p class="mt-1 text-xs text-stone-400">输入 9.1k · 产物 3.4k · 上传 346</p>
+          </div>
+          <div class="card bg-white p-5 dark:bg-[#292524]">
+            <p class="text-sm text-stone-500 dark:text-stone-400">命中率</p>
+            <p class="mt-2 text-2xl font-semibold">2.1%</p>
+            <p class="mt-1 text-xs text-stone-400">策略 v7 · NSFWJS（图）+ Detoxify（文）</p>
+          </div>
+          <div class="card bg-white p-5 dark:bg-[#292524]">
+            <p class="text-sm text-stone-500 dark:text-stone-400">待人工复核</p>
+            <p class="mt-2 text-2xl font-semibold">17</p>
+            <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">积压超过 2 小时 3 条</p>
+          </div>
+          <div class="card bg-white p-5 dark:bg-[#292524]">
+            <p class="text-sm text-stone-500 dark:text-stone-400">误判改判率</p>
+            <p class="mt-2 text-2xl font-semibold">0.4%</p>
+            <p class="mt-1 text-xs text-stone-400">近 7 天复核 240 条</p>
+          </div>
+        </div>
+
+        <!-- 审核记录表 -->
+        <div class="card mt-4 overflow-hidden bg-white dark:bg-[#292524]">
+          <div class="flex flex-col gap-3 border-b border-stone-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-stone-800">
+            <div class="flex gap-1" id="mod-filter">
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">全部</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">拒绝</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">待复核</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">已改判</button>
+            </div>
+            <span class="text-xs text-stone-400">审核不可用时 fail mode = reject，生成入口返回 503</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[860px]">
+              <thead class="border-b border-stone-200 dark:border-stone-800"><tr><th class="th">阶段</th><th class="th">用户</th><th class="th">命中标签</th><th class="th">服务商摘要</th><th class="th">结论</th><th class="th">时间</th><th class="th text-right">操作</th></tr></thead>
+              <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+                <tr>
+                  <td class="td"><span class="chip">prompt</span></td>
+                  <td class="td">spam_user</td>
+                  <td class="td"><span class="chip-red">成人内容</span></td>
+                  <td class="td max-w-48 truncate text-xs text-stone-400">riskLevel=high, labels=…</td>
+                  <td class="td"><span class="chip-red">已拒绝</span></td>
+                  <td class="td text-stone-400">10:41</td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-mod-detail')">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td"><span class="chip">artifact</span></td>
+                  <td class="td">阿河</td>
+                  <td class="td"><span class="chip-amber">疑似 · 置信度 0.62</span></td>
+                  <td class="td max-w-48 truncate text-xs text-stone-400">riskLevel=medium, labels=…</td>
+                  <td class="td"><span class="chip-amber">待复核</span></td>
+                  <td class="td text-stone-400">10:28</td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-mod-detail')">复核</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td"><span class="chip">upload</span></td>
+                  <td class="td">白噪工作室</td>
+                  <td class="td"><span class="chip-red">暴力</span></td>
+                  <td class="td max-w-48 truncate text-xs text-stone-400">riskLevel=high, labels=…</td>
+                  <td class="td"><span class="chip-red">已拒绝</span></td>
+                  <td class="td text-stone-400">09:55</td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-mod-detail')">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td"><span class="chip">artifact</span></td>
+                  <td class="td">山野</td>
+                  <td class="td"><span class="chip-amber">疑似 · 置信度 0.58</span></td>
+                  <td class="td max-w-48 truncate text-xs text-stone-400">riskLevel=medium, labels=…</td>
+                  <td class="td"><span class="chip-green">已改判通过</span></td>
+                  <td class="td text-stone-400">昨天</td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-mod-detail')">详情</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p class="mt-3 text-xs text-stone-400">普通审核记录不保存原始提示词与媒体；隔离原件加密存储、限权访问、24 小时自动删除。人工改判不退点，补偿走「赠送桶」。</p>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- 拒绝原因弹窗 -->
+<div id="m-reject" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-reject')"></div>
+  <div class="modal-open relative w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start justify-between">
+      <h3 class="text-lg font-semibold">拒绝 / 下架原因</h3>
+      <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-reject')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="mt-4 space-y-2">
+      <label class="flex cursor-pointer items-center gap-2.5 rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-700"><input type="radio" name="reason" class="size-4 accent-stone-900 dark:accent-stone-100" />含违规内容（色情 / 暴力 / 政治敏感）</label>
+      <label class="flex cursor-pointer items-center gap-2.5 rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-700"><input type="radio" name="reason" class="size-4 accent-stone-900 dark:accent-stone-100" />涉嫌侵权或搬运</label>
+      <label class="flex cursor-pointer items-center gap-2.5 rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-700"><input type="radio" name="reason" class="size-4 accent-stone-900 dark:accent-stone-100" />广告或垃圾信息</label>
+      <label class="flex cursor-pointer items-center gap-2.5 rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-700"><input type="radio" name="reason" class="size-4 accent-stone-900 dark:accent-stone-100" />其他（手动填写）</label>
+      <textarea rows="2" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="补充说明（将通知作者）"></textarea>
+    </div>
+    <div class="mt-6 flex justify-end gap-3">
+      <button class="btn-secondary" onclick="closeModal('m-reject')">取消</button>
+      <button class="inline-flex h-9 items-center justify-center rounded-lg bg-red-600 px-4 text-sm font-medium text-white transition hover:bg-red-700" onclick="rejectGo()">确认拒绝</button>
+    </div>
+  </div>
+</div>
+
+<!-- 提示词编辑抽屉 -->
+<div id="m-prompt-edit" class="fixed inset-0 z-[60] hidden">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-prompt-edit')"></div>
+  <div class="drawer-open absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-stone-200 bg-white dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex h-14 shrink-0 items-center justify-between border-b border-stone-200 px-5 dark:border-stone-800">
+      <h3 class="font-semibold">编辑提示词</h3>
+      <button class="icon-btn" onclick="closeModal('m-prompt-edit')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">标题</label><input class="h-10 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" value="黄昏天台的电影感人像" /></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">提示词内容</label><textarea rows="5" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm leading-6 outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500">黄昏逆光，天台边缘，35mm 胶片质感，浅景深，暖色霓虹点缀……</textarea></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">分类</label>
+          <button class="flex h-10 w-full items-center justify-between rounded-lg border border-stone-200 px-3 text-sm dark:border-stone-700"><span>人像摄影</span><i data-lucide="chevron-down" class="size-4 text-stone-400"></i></button>
+        </div>
+        <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">封面图</label>
+          <button class="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-stone-300 text-xs text-stone-500 dark:border-stone-600"><i data-lucide="upload" class="size-4"></i>重新上传</button>
+        </div>
+      </div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">标签（逗号分隔）</label><input class="h-10 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" value="电影感, 胶片" /></div>
+    </div>
+    <div class="flex shrink-0 justify-end gap-3 border-t border-stone-200 p-5 dark:border-stone-800">
+      <button class="btn-secondary" onclick="closeModal('m-prompt-edit')">取消</button>
+      <button class="btn-primary" onclick="closeModal('m-prompt-edit'); toast('已保存并上架', 'success')">保存并上架</button>
+    </div>
+  </div>
+</div>
+
+<!-- 活动编辑抽屉 -->
+<div id="m-activity-edit" class="fixed inset-0 z-[60] hidden">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-activity-edit')"></div>
+  <div class="drawer-open absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-stone-200 bg-white dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex h-14 shrink-0 items-center justify-between border-b border-stone-200 px-5 dark:border-stone-800">
+      <h3 class="font-semibold">编辑活动</h3>
+      <button class="icon-btn" onclick="closeModal('m-activity-edit')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">活动名称</label><input class="h-10 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" value="秋季创作马拉松" /></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">活动类型</label>
+        <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800">
+          <button class="seg active">创作比赛</button><button class="seg">限时福利</button><button class="seg">充值返利</button><button class="seg">邀请返利</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">开始时间</label><input class="h-10 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" value="2026-09-01" /></div>
+        <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">结束时间</label><input class="h-10 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" value="2026-10-31" /></div>
+      </div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">活动 Banner</label>
+        <div class="flex items-center justify-center rounded-lg border border-dashed border-stone-300 py-8 dark:border-stone-600">
+          <img src="https://picsum.photos/seed/event-hero/400/120" class="rounded-lg" alt="" />
+        </div>
+      </div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">活动说明</label><textarea rows="4" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm leading-6 outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500">用画布完成一个完整的视觉故事，赢取最高 5,000 积分与专业版年卡。</textarea></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">奖励配置</label>
+        <div class="space-y-2">
+          <div class="flex gap-2"><input class="h-9 flex-1 rounded-lg border border-stone-200 bg-transparent px-3 text-sm dark:border-stone-700" value="第 1 名" /><input class="h-9 w-28 rounded-lg border border-stone-200 bg-transparent px-3 text-sm dark:border-stone-700" value="5000 积分" /><button class="icon-btn"><i data-lucide="x" class="size-4"></i></button></div>
+          <div class="flex gap-2"><input class="h-9 flex-1 rounded-lg border border-stone-200 bg-transparent px-3 text-sm dark:border-stone-700" value="第 2 名" /><input class="h-9 w-28 rounded-lg border border-stone-200 bg-transparent px-3 text-sm dark:border-stone-700" value="3000 积分" /><button class="icon-btn"><i data-lucide="x" class="size-4"></i></button></div>
+          <button class="btn-secondary btn-sm"><i data-lucide="plus" class="size-3.5"></i>添加奖励</button>
+        </div>
+      </div>
+    </div>
+    <div class="flex shrink-0 justify-end gap-3 border-t border-stone-200 p-5 dark:border-stone-800">
+      <button class="btn-secondary" onclick="closeModal('m-activity-edit')">存为草稿</button>
+      <button class="btn-primary" onclick="closeModal('m-activity-edit'); toast('活动已保存并上线', 'success')">保存并上线</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 审核详情与复核弹窗 -->
+<div id="m-mod-detail" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-mod-detail')"></div>
+  <div class="modal-open relative w-full max-w-lg rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start justify-between">
+      <div>
+        <h3 class="text-lg font-semibold">审核详情</h3>
+        <p class="mt-1 text-xs text-stone-400">记录 ID mod_01J5… · 策略版本 v7</p>
+      </div>
+      <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-mod-detail')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+      <div class="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.06]"><p class="text-xs text-stone-400">阶段</p><p class="mt-1 font-medium">artifact（产物审核）</p></div>
+      <div class="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.06]"><p class="text-xs text-stone-400">对象哈希</p><p class="mt-1 font-mono text-xs">sha256:9f2c…a41d</p></div>
+      <div class="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.06]"><p class="text-xs text-stone-400">命中标签</p><p class="mt-1 font-medium">疑似成人内容 · 置信度 0.62</p></div>
+      <div class="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.06]"><p class="text-xs text-stone-400">服务商请求 ID</p><p class="mt-1 font-mono text-xs">nsfwjs:local-7f…</p></div>
+    </div>
+    <div class="mt-4">
+      <p class="text-sm font-medium">隔离原件预览（5 分钟有效，禁止缓存）</p>
+      <img src="https://picsum.photos/seed/mod-preview/480/270" class="mt-2 w-full rounded-lg border border-stone-200 object-cover dark:border-stone-700" alt="" />
+      <p class="mt-1.5 text-xs text-stone-400">预览地址仅管理员可见、有效期不超过 5 分钟，不在前端持久化。</p>
+    </div>
+    <div class="mt-4">
+      <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">复核说明（必填）</label>
+      <textarea rows="2" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="说明改判或维持原因"></textarea>
+    </div>
+    <div class="mt-6 flex flex-wrap justify-end gap-3 border-t border-stone-200 pt-5 dark:border-stone-800">
+      <button class="btn-secondary" onclick="closeModal('m-mod-detail')">关闭</button>
+      <button class="btn-secondary" onclick="closeModal('m-mod-detail'); openModal('m-compensate')">补偿积分</button>
+      <button class="btn-secondary !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="closeModal('m-mod-detail'); toast('已改判为拒绝', 'success')">改判拒绝</button>
+      <button class="btn-primary" onclick="closeModal('m-mod-detail'); toast('已改判为通过，产物已释放', 'success')">改判通过</button>
+    </div>
+  </div>
+</div>
+
+<!-- 审核补偿弹窗 -->
+<div id="m-compensate" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-compensate')"></div>
+  <div class="modal-open relative w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start justify-between">
+      <h3 class="text-lg font-semibold">补偿积分（二次确认）</h3>
+      <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-compensate')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="mt-4 space-y-4">
+      <div>
+        <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">积分数量</label>
+        <input type="number" class="field-input" value="10" />
+      </div>
+      <div>
+        <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">说明（必填，写入流水）</label>
+        <textarea rows="2" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="例如：审核误判补偿"></textarea>
+      </div>
+      <div class="rounded-lg bg-black/[0.03] p-3 text-xs leading-5 text-stone-500 dark:bg-white/[0.06] dark:text-stone-400">补偿进入赠送桶（granted），不改变付费身份；同一审核记录的补偿幂等，自动审核通过后不可再补偿。</div>
+    </div>
+    <div class="mt-6 flex justify-end gap-3">
+      <button class="btn-secondary" onclick="closeModal('m-compensate')">取消</button>
+      <button class="btn-primary" onclick="closeModal('m-compensate'); toast('补偿已发放至赠送桶', 'success')">确认补偿</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden-t"></div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) { document.getElementById('drawer').classList.toggle('hidden', !open); }
+  function pickFilter(btn) {
+    btn.parentElement.querySelectorAll('.filter-tag').forEach((el) => el.classList.toggle('active', el === btn));
+  }
+  function switchTab(name) {
+    document.querySelectorAll('.tab-panel').forEach((el) => el.classList.toggle('hidden', el.id !== `tab-${name}`));
+    document.querySelectorAll('[data-panel-tab]').forEach((el) => {
+      const active = el.dataset.panelTab === name;
+      el.classList.toggle('bg-black/5', active);
+      el.classList.toggle('dark:bg-white/10', active);
+      el.classList.toggle('font-medium', active);
+      el.classList.toggle('text-stone-500', !active);
+    });
+  }
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes modal-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+    .overlay-open { animation: fade-in 0.2s ease-out; }
+    .modal-open { animation: modal-in 0.25s cubic-bezier(0.16,1,0.3,1); }
+    .drawer-open { animation: drawer-in 0.3s cubic-bezier(0.16,1,0.3,1); }
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(style);
+  function openModal(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('hidden');
+    const card = el.querySelector('.modal-open, .drawer-open');
+    card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
+  }
+  function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+  /* ===== Mock：审核卡片移除 / 提示词上下架 / 活动流转 ===== */
+  function removeCard(btn, msg, type) {
+    const card = btn.closest('.card');
+    if (card) { card.style.transition = 'opacity .3s, transform .3s'; card.style.opacity = '0'; card.style.transform = 'scale(0.96)'; setTimeout(() => card.remove(), 300); }
+    toast(msg, type);
+  }
+  let rejectTarget = null;
+  function rejectCard(btn) { rejectTarget = btn.closest('.card'); openModal('m-reject'); }
+  function rejectGo() {
+    if (rejectTarget) { rejectTarget.style.transition = 'opacity .3s, transform .3s'; rejectTarget.style.opacity = '0'; rejectTarget.style.transform = 'scale(0.96)'; setTimeout(() => rejectTarget.remove(), 300); rejectTarget = null; }
+    closeModal('m-reject');
+    toast('已拒绝并通知作者', 'success');
+  }
+  function bulkReview(pass) {
+    const cards = [...document.querySelectorAll('#tab-community .card')].filter((c) => c.querySelector('.chip-amber'));
+    if (!cards.length) { toast('没有待审核卡片', 'error'); return; }
+    cards.forEach((c) => { c.style.transition = 'opacity .3s, transform .3s'; c.style.opacity = '0'; c.style.transform = 'scale(0.96)'; setTimeout(() => c.remove(), 300); });
+    toast(pass ? `已批量通过 ${cards.length} 项` : `已批量拒绝 ${cards.length} 项并通知作者`, 'success');
+  }
+  function togglePromptRow(btn, publish) {
+    const row = btn.closest('tr');
+    const chip = row.querySelector('.chip-green, .chip-amber');
+    if (chip) {
+      chip.className = publish ? 'chip-green' : 'chip-amber';
+      chip.textContent = publish ? '已上架' : '草稿';
+    }
+    btn.textContent = publish ? '下架' : '上架';
+    btn.onclick = () => togglePromptRow(btn, !publish);
+    toast(publish ? '已上架，用户端可见' : '已下架为草稿', 'success');
+  }
+  function endActivity(btn) {
+    const row = btn.closest('tr');
+    const chip = row.querySelector('.chip-green');
+    if (chip) { chip.className = 'chip'; chip.textContent = '已结束'; }
+    row.classList.add('opacity-60');
+    btn.remove();
+    toast('活动已提前结束', 'info');
+  }
+  function removeRow(btn, msg) {
+    const row = btn.closest('tr');
+    row.style.transition = 'opacity .3s';
+    row.style.opacity = '0';
+    setTimeout(() => row.remove(), 300);
+    toast(msg, 'info');
+  }
+
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const el = document.getElementById('toast');
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    el.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    el.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden-t'), 2500);
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

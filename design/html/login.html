@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 登录设计稿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75 dark:focus-visible:outline-stone-100; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18] dark:focus-visible:outline-stone-100; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 active:scale-95 active:bg-black/[0.1] disabled:pointer-events-none disabled:opacity-40 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white dark:active:bg-white/[0.2]; }
+  .field-input { @apply h-11 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:text-stone-100 dark:focus:border-stone-500; }
+  .field-label { @apply mb-1.5 block text-sm text-stone-600 dark:text-stone-300; }
+  .dot-grid { background-image: radial-gradient(#e5e7eb 1px, transparent 1px); background-size: 16px 16px; }
+  .dark .dot-grid { background-image: radial-gradient(rgba(245,245,244,.18) 1px, transparent 1px); }
+  .ai-title-aurora {
+    background: linear-gradient(90deg, #111827 0%, #111827 36%, #6b7280 54%, #111827 72%, #111827 100%);
+    background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: ai-title-aurora 7s ease-in-out infinite;
+  }
+  .dark .ai-title-aurora {
+    background: linear-gradient(90deg, #fafaf9 0%, #fafaf9 36%, #a8a29e 54%, #fafaf9 72%, #fafaf9 100%);
+    background-size: 220% 100%; -webkit-background-clip: text; background-clip: text;
+  }
+  @keyframes ai-title-aurora {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+  .auth-tab { @apply flex-1 rounded-lg py-2 text-center text-sm text-stone-500 transition hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100; }
+  .auth-tab.active { @apply bg-black/5 font-medium text-stone-950 dark:bg-white/10 dark:text-stone-50; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<div class="flex h-dvh">
+  <!-- ========== 左侧品牌区（lg 以上显示） ========== -->
+  <aside class="dot-grid relative hidden w-[44%] max-w-2xl flex-col justify-between overflow-hidden border-r border-stone-200 p-10 lg:flex dark:border-stone-800">
+    <div class="pointer-events-none absolute left-[20%] top-[30%] size-24 rounded-full border border-dashed border-stone-200 dark:border-stone-800"></div>
+    <a href="home.html" class="relative flex items-center gap-2 text-sm font-semibold tracking-tight">
+      <span class="size-5 rounded bg-current"></span>
+      <span class="text-base font-medium">无限画布</span>
+    </a>
+    <div class="relative">
+      <h1 class="ai-title-aurora text-4xl font-semibold leading-tight xl:text-5xl">回到你的画布，<br />继续未完成的创作。</h1>
+      <p class="mt-5 max-w-md text-sm leading-7 text-stone-500 dark:text-stone-400">登录后可同步云端项目、管理订阅与积分，并在社区分享你的作品。</p>
+      <ul class="mt-8 space-y-3 text-sm text-stone-600 dark:text-stone-300">
+        <li class="flex items-center gap-2.5"><i data-lucide="check" class="size-4"></i>云端项目与素材同步</li>
+        <li class="flex items-center gap-2.5"><i data-lucide="check" class="size-4"></i>积分与用量一目了然</li>
+        <li class="flex items-center gap-2.5"><i data-lucide="check" class="size-4"></i>社区作品一键发布</li>
+      </ul>
+    </div>
+    <p class="relative text-xs text-stone-400 dark:text-stone-500">© 2026 无限画布</p>
+  </aside>
+
+  <!-- ========== 右侧表单区 ========== -->
+  <main class="relative flex min-w-0 flex-1 items-center justify-center overflow-y-auto p-6">
+    <button type="button" class="icon-btn absolute right-4 top-4" onclick="toggleTheme()" title="切换主题">
+      <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+      <i data-lucide="moon" class="size-4 dark:hidden"></i>
+    </button>
+
+    <div class="w-full max-w-sm">
+      <!-- 移动端 Logo -->
+      <a href="home.html" class="mb-8 flex items-center justify-center gap-2 lg:hidden">
+        <span class="size-5 rounded bg-current"></span>
+        <span class="text-base font-medium">无限画布</span>
+      </a>
+
+      <h2 class="text-2xl font-semibold">登录</h2>
+      <p class="mt-2 text-sm text-stone-500 dark:text-stone-400">还没有账号？<a href="register.html" class="font-medium text-stone-900 underline-offset-4 hover:underline dark:text-stone-100">免费注册</a></p>
+
+      <!-- 登录方式 Tab -->
+      <div class="mt-8 flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800">
+        <button type="button" class="auth-tab active" data-tab="password" onclick="switchTab('password')">密码登录</button>
+        <button type="button" class="auth-tab" data-tab="code" onclick="switchTab('code')">验证码登录</button>
+      </div>
+
+      <!-- 密码登录 -->
+      <form id="tab-password" class="mt-6 space-y-4" onsubmit="return false;">
+        <div>
+          <label class="field-label" for="email">邮箱</label>
+          <input id="email" type="email" class="field-input" placeholder="you@example.com" />
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <label class="field-label" for="password">密码</label>
+            <a href="#" class="mb-1.5 text-xs text-stone-500 transition hover:text-stone-900 dark:hover:text-stone-100">忘记密码？</a>
+          </div>
+          <input id="password" type="password" class="field-input" placeholder="请输入密码" />
+        </div>
+        <button type="submit" class="btn-primary w-full" onclick="doLogin()">登 录</button>
+      </form>
+
+      <!-- 验证码登录 -->
+      <form id="tab-code" class="mt-6 hidden space-y-4" onsubmit="return false;">
+        <div>
+          <label class="field-label" for="email2">邮箱</label>
+          <input id="email2" type="email" class="field-input" placeholder="you@example.com" />
+        </div>
+        <div>
+          <label class="field-label" for="code">验证码</label>
+          <div class="flex gap-2">
+            <input id="code" type="text" class="field-input flex-1" placeholder="6 位验证码" maxlength="6" />
+            <button type="button" class="btn-secondary shrink-0 !px-3 text-[13px]" onclick="sendCode(this)">发送验证码</button>
+          </div>
+        </div>
+        <button type="submit" class="btn-primary w-full" onclick="doLoginCode()">登 录</button>
+      </form>
+
+      <!-- 第三方登录 -->
+      <div class="mt-8">
+        <div class="flex items-center gap-4 text-xs text-stone-400 dark:text-stone-500">
+          <span class="h-px flex-1 bg-stone-200 dark:bg-stone-800"></span>
+          其他登录方式
+          <span class="h-px flex-1 bg-stone-200 dark:bg-stone-800"></span>
+        </div>
+        <div class="mt-4 flex justify-center gap-3">
+          <button type="button" class="btn-secondary !h-10 !px-5" title="GitHub 登录" onclick="oauth('GitHub')"><i data-lucide="github" class="size-4"></i>GitHub</button>
+          <button type="button" class="btn-secondary !h-10 !px-5" title="Google 登录" onclick="oauth('Google')"><i data-lucide="chrome" class="size-4"></i>Google</button>
+        </div>
+      </div>
+
+      <p class="mt-8 text-center text-xs leading-5 text-stone-400 dark:text-stone-500">
+        登录即代表同意
+        <a href="#" class="underline underline-offset-2">服务条款</a>
+        与
+        <a href="#" class="underline underline-offset-2">隐私政策</a>
+      </p>
+    </div>
+  </main>
+</div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function switchTab(name) {
+    document.querySelectorAll('.auth-tab').forEach((el) => el.classList.toggle('active', el.dataset.tab === name));
+    document.getElementById('tab-password').classList.toggle('hidden', name !== 'password');
+    document.getElementById('tab-code').classList.toggle('hidden', name !== 'code');
+  }
+  function sendCode(btn) {
+    let left = 60;
+    btn.disabled = true;
+    const timer = setInterval(() => {
+      btn.textContent = `${left--}s 后重发`;
+      if (left < 0) { clearInterval(timer); btn.disabled = false; btn.textContent = '发送验证码'; }
+    }, 1000);
+  }
+
+  /* ===== Mock：登录校验与跳转 ===== */
+  function needToast(msg, type) { toast(msg, type); return false; }
+  function doLogin() {
+    const email = document.getElementById('email').value.trim();
+    const pw = document.getElementById('password').value;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return needToast('请输入有效的邮箱地址', 'error');
+    if (!pw) return needToast('请输入密码', 'error');
+    toast('登录成功，正在进入…', 'success');
+    setTimeout(() => location.href = 'account.html', 800);
+  }
+  function doLoginCode() {
+    const email = document.getElementById('email2').value.trim();
+    const code = document.getElementById('code').value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return needToast('请输入有效的邮箱地址', 'error');
+    if (!/^\d{6}$/.test(code)) return needToast('请输入 6 位验证码', 'error');
+    toast('登录成功，正在进入…', 'success');
+    setTimeout(() => location.href = 'account.html', 800);
+  }
+  function oauth(name) {
+    toast(`${name} 授权中…（Mock）`, 'info');
+    setTimeout(() => location.href = 'account.html', 900);
+  }
+
+
+  /* ===== Toast（带语义图标） ===== */
+  const toastEl = document.createElement('div');
+  toastEl.className = 'toast hidden-t';
+  document.body.appendChild(toastEl);
+  const style2 = document.createElement('style');
+  style2.textContent = `
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(style2);
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    toastEl.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    toastEl.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.add('hidden-t'), 2500);
+  }
+
+  lucide.createIcons();
+</script>
+</body>
+</html>

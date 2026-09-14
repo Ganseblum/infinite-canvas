@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 订单与收入</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 px-4 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .side-link { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-link.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .side-group { @apply mb-1 px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 text-xs leading-none text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400; }
+  .chip-red { @apply inline-flex h-6 items-center rounded-md border border-red-200 bg-red-50 px-1.5 text-xs leading-none text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400; }
+  .th { @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500; }
+  .td { @apply px-4 py-3 text-sm; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex dark:border-stone-800 dark:bg-[#1c1917]">
+    <a href="admin.html" class="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 px-5 text-sm font-semibold tracking-tight dark:border-stone-800">
+      <span class="size-5 rounded bg-current"></span><span class="text-base font-medium">管理后台</span>
+    </a>
+    <nav class="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div class="side-group">运营</div>
+      <a href="admin.html" class="side-link"><i data-lucide="layout-dashboard" class="size-4"></i>总览</a>
+      <a href="admin-users.html" class="side-link"><i data-lucide="users" class="size-4"></i>用户管理</a>
+      <a href="admin-billing.html" class="side-link active"><i data-lucide="credit-card" class="size-4"></i>订单与收入</a>
+      <div class="side-group">内容</div>
+      <a href="admin-content.html" class="side-link"><i data-lucide="library" class="size-4"></i>提示词与社区</a>
+      <a href="admin-docs-mgr.html" class="side-link"><i data-lucide="file-text" class="size-4"></i>文档管理</a>
+      <div class="side-group">服务端</div>
+      <a href="admin-models.html" class="side-link"><i data-lucide="boxes" class="size-4"></i>模型与渠道</a>
+      <a href="admin-system.html" class="side-link"><i data-lucide="settings-2" class="size-4"></i>系统设置</a>
+    </nav>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <a href="home.html" class="side-link"><i data-lucide="arrow-left" class="size-4"></i>返回前台</a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 dark:border-stone-800 dark:bg-[#1c1917]/90">
+      <div class="flex items-center gap-3">
+        <button class="icon-btn md:hidden" onclick="toggleDrawer(true)"><i data-lucide="menu" class="size-5"></i></button>
+        <h1 class="text-lg font-semibold">订单与收入</h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="icon-btn" onclick="toggleTheme()"><i data-lucide="sun" class="size-4 hidden dark:block"></i><i data-lucide="moon" class="size-4 dark:hidden"></i></button>
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+      </div>
+    </header>
+
+    <div id="drawer" class="fixed inset-0 z-50 hidden md:hidden">
+      <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+      <div class="absolute inset-y-0 left-0 w-64 bg-white p-4 dark:bg-[#1c1917]">
+        <div class="mb-4 flex items-center justify-between"><span class="font-medium">管理后台</span><button class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button></div>
+        <nav class="flex flex-col gap-1">
+          <a href="admin.html" class="side-link">总览</a><a href="admin-users.html" class="side-link">用户管理</a><a href="admin-billing.html" class="side-link active">订单与收入</a><a href="admin-content.html" class="side-link">提示词与社区</a><a href="admin-models.html" class="side-link">模型与渠道</a><a href="admin-system.html" class="side-link">系统设置</a>
+        </nav>
+      </div>
+    </div>
+
+    <main class="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <!-- 收入概览 -->
+      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <p class="text-sm text-stone-500 dark:text-stone-400">本月收入</p>
+          <p class="mt-2 text-2xl font-semibold">¥ 386,420</p>
+          <p class="mt-1 text-xs text-emerald-600 dark:text-emerald-400">较上月 +12.8%</p>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <p class="text-sm text-stone-500 dark:text-stone-400">充值收入</p>
+          <p class="mt-2 text-2xl font-semibold">¥ 291,300</p>
+          <p class="mt-1 text-xs text-stone-400">占比 75.4%</p>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <p class="text-sm text-stone-500 dark:text-stone-400">加油包收入</p>
+          <p class="mt-2 text-2xl font-semibold">¥ 95,120</p>
+          <p class="mt-1 text-xs text-stone-400">占比 24.6%</p>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <p class="text-sm text-stone-500 dark:text-stone-400">管理员补偿（赠送桶）</p>
+          <p class="mt-2 text-2xl font-semibold">3,200 积分</p>
+          <p class="mt-1 text-xs text-stone-400">5 笔 · 客诉与误判补偿</p>
+        </div>
+      </div>
+
+      <!-- 订单列表 -->
+      <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div class="relative w-full sm:w-72">
+            <i data-lucide="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400"></i>
+            <input placeholder="搜索订单号 / 用户…" class="h-9 w-full rounded-lg border border-stone-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:bg-[#292524] dark:focus:border-stone-500" />
+          </div>
+          <div class="flex gap-1" id="order-filter">
+            <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">全部</button>
+            <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">已支付</button>
+            <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">待支付</button>
+            <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none transition">已关闭</button>
+          </div>
+        </div>
+        <button class="btn-secondary w-fit"><i data-lucide="download" class="size-4"></i>导出账单</button>
+      </div>
+
+      <div class="card mt-4 overflow-hidden bg-white dark:bg-[#292524]">
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[860px]">
+            <thead class="border-b border-stone-200 dark:border-stone-800"><tr><th class="th">订单号</th><th class="th">用户</th><th class="th">内容</th><th class="th">金额</th><th class="th">支付方式</th><th class="th">状态</th><th class="th">时间</th><th class="th text-right">操作</th></tr></thead>
+            <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+              <tr>
+                <td class="td font-mono text-xs">ORD-20260913-0412</td><td class="td">阿河</td><td class="td">标准包（2,000 积分）</td><td class="td font-medium">¥68.00</td><td class="td text-stone-400">微信支付</td><td class="td"><span class="chip-green">已支付</span></td><td class="td text-stone-400">10:24</td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-order')">详情</button></div></td>
+              </tr>
+              <tr>
+                <td class="td font-mono text-xs">ORD-20260913-0411</td><td class="td">白噪工作室</td><td class="td">标准包（2,000 积分）</td><td class="td font-medium">¥50.00</td><td class="td text-stone-400">支付宝</td><td class="td"><span class="chip-green">已支付</span></td><td class="td text-stone-400">09:58</td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-order')">详情</button></div></td>
+              </tr>
+              <tr>
+                <td class="td font-mono text-xs">ORD-20260913-0410</td><td class="td">慢速快门</td><td class="td">大额包（5,000 积分）</td><td class="td font-medium">¥268.00</td><td class="td text-stone-400">—</td><td class="td"><span class="chip">待支付</span></td><td class="td text-stone-400">09:41</td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-order')">详情</button><button class="btn-secondary btn-sm" onclick="cancelOrder(this)">取消</button></div></td>
+              </tr>
+              <tr>
+                <td class="td font-mono text-xs">ORD-20260913-0409</td><td class="td">柚子茶</td><td class="td">标准包 ×2</td><td class="td font-medium">¥648.00</td><td class="td text-stone-400">微信支付</td><td class="td"><span class="chip">已关闭</span></td><td class="td text-stone-400">08:17</td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-order')">详情</button></div></td>
+              </tr>
+              <tr>
+                <td class="td font-mono text-xs">ORD-20260913-0408</td><td class="td">山野</td><td class="td">大额包（5,000 积分）</td><td class="td font-medium">¥118.00</td><td class="td text-stone-400">支付宝</td><td class="td"><span class="chip-green">已支付</span></td><td class="td text-stone-400">08:02</td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-order')">详情</button><button class="btn-secondary btn-sm" onclick="openModal('m-compensate')">补偿积分</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-end gap-1.5 border-t border-stone-200 px-4 py-3 dark:border-stone-800">
+          <button class="icon-btn !size-8"><i data-lucide="chevron-left" class="size-4"></i></button>
+          <button class="size-8 rounded-lg bg-stone-900 text-sm font-medium text-white dark:bg-stone-100 dark:text-stone-900">1</button>
+          <button class="size-8 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">2</button>
+          <button class="size-8 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">3</button>
+          <button class="icon-btn !size-8"><i data-lucide="chevron-right" class="size-4"></i></button>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 订单详情弹窗 -->
+<div id="m-order" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-order')"></div>
+  <div class="modal-open relative w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start justify-between">
+      <h3 class="text-lg font-semibold">订单详情</h3>
+      <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-order')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <dl class="mt-5 space-y-2.5 text-sm">
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">订单号</dt><dd class="font-mono text-xs">ORD-20260913-0412</dd></div>
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">用户</dt><dd>阿河（he@example.com）</dd></div>
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">商品</dt><dd>标准包（2,000 积分）</dd></div>
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">金额</dt><dd class="font-medium">¥68.00</dd></div>
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">支付方式</dt><dd>微信支付</dd></div>
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">交易流水号</dt><dd class="font-mono text-xs">42000023…9921</dd></div>
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">创建时间</dt><dd>2026-09-13 10:24:03</dd></div>
+      <div class="flex justify-between"><dt class="text-stone-500 dark:text-stone-400">发票</dt><dd><span class="chip">未申请</span></dd></div>
+    </dl>
+    <div class="mt-6 flex justify-end gap-3 border-t border-stone-200 pt-5 dark:border-stone-800">
+      <button class="btn-secondary" onclick="closeModal('m-order')">关闭</button>
+      <button class="btn-secondary" onclick="openModal('m-compensate')">补偿积分</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 补偿积分弹窗 -->
+<div id="m-compensate" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-compensate')"></div>
+  <div class="modal-open relative w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start justify-between">
+      <h3 class="text-lg font-semibold">补偿积分</h3>
+      <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-compensate')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="mt-4 space-y-4">
+      <div>
+        <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">积分数量</label>
+        <input type="number" class="field-input" value="500" />
+      </div>
+      <div>
+        <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">说明（必填，写入流水）</label>
+        <textarea rows="2" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="例如：生成失败客诉补偿"></textarea>
+      </div>
+      <div class="rounded-lg bg-black/[0.03] p-3 text-xs leading-5 text-stone-500 dark:bg-white/[0.06] dark:text-stone-400">补偿一律进入赠送桶（granted），不产生付费身份、不影响付费统计；订单本身不支持退款。</div>
+    </div>
+    <div class="mt-6 flex justify-end gap-3">
+      <button class="btn-secondary" onclick="closeModal('m-compensate')">取消</button>
+      <button class="btn-primary" onclick="compensateGo()">确认补偿</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden-t"></div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) { document.getElementById('drawer').classList.toggle('hidden', !open); }
+  document.querySelectorAll('#order-filter .filter-tag').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#order-filter .filter-tag').forEach((el) => el.classList.toggle('active', el === btn));
+    });
+  });
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes modal-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: none; } }
+    .overlay-open { animation: fade-in 0.2s ease-out; }
+    .modal-open { animation: modal-in 0.25s cubic-bezier(0.16,1,0.3,1); }
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(style);
+  function openModal(id) {
+    const el = document.getElementById(id);
+    el.classList.replace('hidden', 'flex');
+    const card = el.querySelector('.modal-open');
+    card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
+  }
+  function closeModal(id) { document.getElementById(id).classList.replace('flex', 'hidden'); }
+
+  /* ===== Mock：订单取消 / 补偿 ===== */
+  function cancelOrder(btn) {
+    const row = btn.closest('tr');
+    const chip = row.querySelector('.chip');
+    if (chip) { chip.className = 'chip'; chip.textContent = '已关闭'; }
+    btn.remove();
+    toast('订单已取消', 'info');
+  }
+  function compensateGo() {
+    const amount = document.querySelector('#m-compensate input[type="number"]').value || '0';
+    closeModal('m-compensate');
+    toast(`已补偿 ${amount} 积分至赠送桶`, 'success');
+  }
+
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const el = document.getElementById('toast');
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    el.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    el.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden-t'), 2500);
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

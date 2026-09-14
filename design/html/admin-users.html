@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 用户管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-stone-900 px-4 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 disabled:pointer-events-none disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85; }
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 px-4 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .side-link { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-link.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .side-group { @apply mb-1 px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 text-xs leading-none text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400; }
+  .chip-red { @apply inline-flex h-6 items-center rounded-md border border-red-200 bg-red-50 px-1.5 text-xs leading-none text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400; }
+  .th { @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500; }
+  .td { @apply px-4 py-3 text-sm; }
+  .filter-tag { @apply cursor-pointer rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none text-stone-500 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/10; }
+  .filter-tag.active { @apply bg-stone-900 font-semibold text-white dark:bg-stone-100 dark:text-stone-900; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <!-- 左侧导航（同 admin.html） -->
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex dark:border-stone-800 dark:bg-[#1c1917]">
+    <a href="admin.html" class="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 px-5 text-sm font-semibold tracking-tight dark:border-stone-800">
+      <span class="size-5 rounded bg-current"></span>
+      <span class="text-base font-medium">管理后台</span>
+    </a>
+    <nav class="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div class="side-group">运营</div>
+      <a href="admin.html" class="side-link"><i data-lucide="layout-dashboard" class="size-4"></i>总览</a>
+      <a href="admin-users.html" class="side-link active"><i data-lucide="users" class="size-4"></i>用户管理</a>
+      <a href="admin-billing.html" class="side-link"><i data-lucide="credit-card" class="size-4"></i>订单与收入</a>
+      <div class="side-group">内容</div>
+      <a href="admin-content.html" class="side-link"><i data-lucide="library" class="size-4"></i>提示词与社区</a>
+      <a href="admin-docs-mgr.html" class="side-link"><i data-lucide="file-text" class="size-4"></i>文档管理</a>
+      <div class="side-group">服务端</div>
+      <a href="admin-models.html" class="side-link"><i data-lucide="boxes" class="size-4"></i>模型与渠道</a>
+      <a href="admin-system.html" class="side-link"><i data-lucide="settings-2" class="size-4"></i>系统设置</a>
+    </nav>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <a href="home.html" class="side-link"><i data-lucide="arrow-left" class="size-4"></i>返回前台</a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 dark:border-stone-800 dark:bg-[#1c1917]/90">
+      <div class="flex items-center gap-3">
+        <button class="icon-btn md:hidden" onclick="toggleDrawer(true)"><i data-lucide="menu" class="size-5"></i></button>
+        <h1 class="text-lg font-semibold">用户管理</h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="icon-btn" onclick="toggleTheme()"><i data-lucide="sun" class="size-4 hidden dark:block"></i><i data-lucide="moon" class="size-4 dark:hidden"></i></button>
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+      </div>
+    </header>
+
+    <div id="drawer" class="fixed inset-0 z-50 hidden md:hidden">
+      <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+      <div class="absolute inset-y-0 left-0 w-64 bg-white p-4 dark:bg-[#1c1917]">
+        <div class="mb-4 flex items-center justify-between"><span class="font-medium">管理后台</span><button class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button></div>
+        <nav class="flex flex-col gap-1">
+          <a href="admin.html" class="side-link">总览</a><a href="admin-users.html" class="side-link active">用户管理</a><a href="admin-billing.html" class="side-link">订单与收入</a><a href="admin-content.html" class="side-link">提示词与社区</a><a href="admin-models.html" class="side-link">模型与渠道</a><a href="admin-system.html" class="side-link">系统设置</a>
+        </nav>
+      </div>
+    </div>
+
+    <main class="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <!-- 筛选栏 -->
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div class="relative w-full sm:w-72">
+            <i data-lucide="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400"></i>
+            <input placeholder="搜索昵称 / 邮箱 / 用户 ID…" class="h-9 w-full rounded-lg border border-stone-200 bg-white pl-9 pr-3 text-sm outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:bg-[#292524] dark:focus:border-stone-500" />
+          </div>
+          <div class="flex gap-1" id="plan-filter">
+            <button class="filter-tag active">全部</button>
+            <button class="filter-tag">免费版</button>
+            <button class="filter-tag">专业版</button>
+            <button class="filter-tag">团队版</button>
+            <button class="filter-tag">已封禁</button>
+          </div>
+        </div>
+        <button class="btn-secondary w-fit"><i data-lucide="download" class="size-4"></i>导出 CSV</button>
+      </div>
+
+      <!-- 用户表格 -->
+      <div class="card mt-4 overflow-hidden bg-white dark:bg-[#292524]">
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[860px]">
+            <thead class="border-b border-stone-200 dark:border-stone-800">
+              <tr><th class="th w-10"><input type="checkbox" id="check-all" class="size-4 accent-stone-900 dark:accent-stone-100" onchange="syncPicks()" /></th><th class="th">用户</th><th class="th">套餐</th><th class="th">积分余额</th><th class="th">生成次数</th><th class="th">注册时间</th><th class="th">最近活跃</th><th class="th">状态</th><th class="th text-right">操作</th></tr>
+            </thead>
+            <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+              <tr>
+                <td class="td"><input type="checkbox" class="row-check size-4 accent-stone-900 dark:accent-stone-100" onchange="syncPicks()" /></td>
+                <td class="td"><div class="flex items-center gap-2.5"><img src="https://i.pravatar.cc/64?img=12" class="size-8 rounded-full" alt="" /><div><p class="font-medium">阿河</p><p class="text-xs text-stone-400">he@example.com</p></div></div></td>
+                <td class="td"><span class="chip">专业版</span></td>
+                <td class="td font-medium">1,280</td>
+                <td class="td">342</td>
+                <td class="td text-stone-400">2026-03-12</td>
+                <td class="td text-stone-400">2 小时前</td>
+                <td class="td"><span class="chip-green">正常</span></td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-user')">详情</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="openBan(this)">封禁</button></div></td>
+              </tr>
+              <tr>
+                <td class="td"><input type="checkbox" class="row-check size-4 accent-stone-900 dark:accent-stone-100" onchange="syncPicks()" /></td>
+                <td class="td"><div class="flex items-center gap-2.5"><img src="https://i.pravatar.cc/64?img=8" class="size-8 rounded-full" alt="" /><div><p class="font-medium">白噪工作室</p><p class="text-xs text-stone-400">noise@example.com</p></div></div></td>
+                <td class="td"><span class="chip">团队版</span></td>
+                <td class="td font-medium">8,640</td>
+                <td class="td">1,207</td>
+                <td class="td text-stone-400">2025-11-02</td>
+                <td class="td text-stone-400">10 分钟前</td>
+                <td class="td"><span class="chip-green">正常</span></td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-user')">详情</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="openBan(this)">封禁</button></div></td>
+              </tr>
+              <tr>
+                <td class="td"><input type="checkbox" class="row-check size-4 accent-stone-900 dark:accent-stone-100" onchange="syncPicks()" /></td>
+                <td class="td"><div class="flex items-center gap-2.5"><img src="https://i.pravatar.cc/64?img=33" class="size-8 rounded-full" alt="" /><div><p class="font-medium">山野</p><p class="text-xs text-stone-400">shan@example.com</p></div></div></td>
+                <td class="td"><span class="chip">免费版</span></td>
+                <td class="td font-medium">86</td>
+                <td class="td">57</td>
+                <td class="td text-stone-400">2026-08-30</td>
+                <td class="td text-stone-400">3 天前</td>
+                <td class="td"><span class="chip-green">正常</span></td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-user')">详情</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="openBan(this)">封禁</button></div></td>
+              </tr>
+              <tr class="opacity-60">
+                <td class="td"><input type="checkbox" class="row-check size-4 accent-stone-900 dark:accent-stone-100" onchange="syncPicks()" /></td>
+                <td class="td"><div class="flex items-center gap-2.5"><img src="https://i.pravatar.cc/64?img=44" class="size-8 rounded-full grayscale" alt="" /><div><p class="font-medium">spam_bot_07</p><p class="text-xs text-stone-400">bot07@example.com</p></div></div></td>
+                <td class="td"><span class="chip">免费版</span></td>
+                <td class="td font-medium">0</td>
+                <td class="td">2,310</td>
+                <td class="td text-stone-400">2026-09-01</td>
+                <td class="td text-stone-400">09-02</td>
+                <td class="td"><span class="chip-red">已封禁</span></td>
+                <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-user')">详情</button><button class="btn-secondary btn-sm" onclick="unbanRow(this)">解封</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- 批量操作 + 分页 -->
+        <div class="flex flex-col items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 sm:flex-row dark:border-stone-800">
+          <div class="flex items-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+            <span>已选 <b id="pick-count">0</b> 项</span>
+            <button class="btn-secondary btn-sm" onclick="grantPicked()">赠送积分</button>
+            <button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="banPicked()">批量封禁</button>
+          </div>
+          <nav class="flex items-center gap-1.5">
+            <button class="icon-btn !size-8"><i data-lucide="chevron-left" class="size-4"></i></button>
+            <button class="size-8 rounded-lg bg-stone-900 text-sm font-medium text-white dark:bg-stone-100 dark:text-stone-900">1</button>
+            <button class="size-8 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">2</button>
+            <button class="size-8 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">3</button>
+            <span class="px-1 text-sm text-stone-400">…</span>
+            <button class="size-8 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">482</button>
+            <button class="icon-btn !size-8"><i data-lucide="chevron-right" class="size-4"></i></button>
+          </nav>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 用户详情弹窗 -->
+<div id="m-user" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-user')"></div>
+  <div class="modal-open relative w-full max-w-lg rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start justify-between">
+      <div class="flex items-center gap-3">
+        <img src="https://i.pravatar.cc/96?img=12" class="size-12 rounded-full" alt="" />
+        <div><h3 class="text-lg font-semibold">阿河</h3><p class="text-xs text-stone-400">he@example.com · 2026-03-12 注册</p></div>
+      </div>
+      <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-user')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="mt-5 grid grid-cols-3 gap-3 text-center">
+      <div class="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.06]"><p class="text-xs text-stone-400">套餐</p><p class="mt-1 text-sm font-semibold">专业版</p></div>
+      <div class="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.06]"><p class="text-xs text-stone-400">积分余额</p><p class="mt-1 text-sm font-semibold">1,280</p></div>
+      <div class="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.06]"><p class="text-xs text-stone-400">累计生成</p><p class="mt-1 text-sm font-semibold">342 次</p></div>
+    </div>
+    <div class="mt-5 space-y-2.5 text-sm">
+      <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">累计消费</span><span>¥ 1,224.00</span></div>
+      <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">最近订单</span><span>标准包 · 09-13</span></div>
+      <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">违规记录</span><span>无</span></div>
+    </div>
+    <div class="mt-6 flex justify-end gap-3 border-t border-stone-200 pt-5 dark:border-stone-800">
+      <button class="btn-secondary" onclick="closeModal('m-user')">关闭</button>
+      <button class="btn-primary" onclick="closeModal('m-user'); toast('积分调整已生效', 'success')">调整积分</button>
+    </div>
+  </div>
+</div>
+
+<!-- 封禁确认弹窗 -->
+<div id="m-ban" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-ban')"></div>
+  <div class="modal-open relative w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start gap-3">
+      <span class="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-red-50 dark:bg-red-950/50"><i data-lucide="shield-off" class="size-4 text-red-600 dark:text-red-400"></i></span>
+      <div>
+        <h3 class="text-lg font-semibold">封禁用户「阿河」？</h3>
+        <p class="mt-2 text-sm leading-6 text-stone-500 dark:text-stone-400">封禁后该用户将无法登录与生成，积分与数据保留，可随时解封。</p>
+      </div>
+    </div>
+    <div class="mt-5">
+      <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">封禁原因（将通知用户）</label>
+      <textarea rows="2" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="例如：批量滥用免费接口"></textarea>
+    </div>
+    <div class="mt-6 flex justify-end gap-3">
+      <button class="btn-secondary" onclick="closeModal('m-ban')">取消</button>
+      <button class="inline-flex h-9 items-center justify-center rounded-lg bg-red-600 px-4 text-sm font-medium text-white transition hover:bg-red-700" onclick="banGo()">确认封禁</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 赠送积分弹窗 -->
+<div id="m-grant" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-grant')"></div>
+  <div class="modal-open relative w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start justify-between">
+      <h3 class="text-lg font-semibold">赠送积分</h3>
+      <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-grant')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="mt-4 space-y-4">
+      <div>
+        <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">积分数量</label>
+        <input type="number" id="grant-amount" class="field-input" value="100" />
+      </div>
+      <div>
+        <label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">说明（必填，写入流水）</label>
+        <textarea id="grant-note" rows="2" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="例如：活动奖励 / 客诉补偿"></textarea>
+      </div>
+      <div class="rounded-lg bg-black/[0.03] p-3 text-xs leading-5 text-stone-500 dark:bg-white/[0.06] dark:text-stone-400">赠送一律进入赠送桶（granted），不产生付费身份。</div>
+    </div>
+    <div class="mt-6 flex justify-end gap-3">
+      <button class="btn-secondary" onclick="closeModal('m-grant')">取消</button>
+      <button class="btn-primary" onclick="grantGo()">确认赠送</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden-t"></div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) { document.getElementById('drawer').classList.toggle('hidden', !open); }
+  document.querySelectorAll('#plan-filter .filter-tag').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#plan-filter .filter-tag').forEach((el) => el.classList.toggle('active', el === btn));
+    });
+  });
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes modal-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: none; } }
+    .overlay-open { animation: fade-in 0.2s ease-out; }
+    .modal-open { animation: modal-in 0.25s cubic-bezier(0.16,1,0.3,1); }
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(style);
+  function openModal(id) {
+    const el = document.getElementById(id);
+    el.classList.replace('hidden', 'flex');
+    const card = el.querySelector('.modal-open');
+    card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
+  }
+  function closeModal(id) { document.getElementById(id).classList.replace('flex', 'hidden'); }
+
+  /* ===== Mock：勾选联动 / 赠送 / 封禁解封 ===== */
+  function syncPicks() {
+    const all = document.getElementById('check-all');
+    const rows = [...document.querySelectorAll('.row-check')];
+    const picked = rows.filter((r) => r.checked);
+    document.getElementById('pick-count').textContent = String(picked.length);
+    if (all) all.checked = picked.length && picked.length === rows.length;
+  }
+  function pickedRows() {
+    return [...document.querySelectorAll('.row-check')].filter((r) => r.checked).map((r) => r.closest('tr'));
+  }
+  function grantPicked() {
+    const rows = pickedRows();
+    if (!rows.length) { toast('请先勾选用户', 'error'); return; }
+    openModal('m-grant');
+  }
+  function grantGo() {
+    if (!document.getElementById('grant-note').value.trim()) { toast('请填写说明（写入流水）', 'error'); return; }
+    closeModal('m-grant');
+    toast(`已向 ${document.querySelectorAll('.row-check:checked').length} 位用户赠送 ${document.getElementById('grant-amount').value} 积分（赠送桶）`, 'success');
+  }
+  let banTarget = null;
+  function openBan(btn) { banTarget = btn.closest('tr'); openModal('m-ban'); }
+  function banGo() {
+    if (banTarget) {
+      banTarget.classList.add('opacity-60');
+      const chip = banTarget.querySelector('.chip-green');
+      if (chip) { chip.className = 'chip-red'; chip.textContent = '已封禁'; }
+      const btn = [...banTarget.querySelectorAll('button')].find((b) => b.textContent.trim() === '封禁');
+      if (btn) { btn.textContent = '解封'; btn.className = 'btn-secondary btn-sm'; btn.onclick = () => unbanRow(btn); }
+    }
+    banTarget = null;
+    closeModal('m-ban');
+    toast('用户已封禁', 'success');
+  }
+  function unbanRow(btn) {
+    const row = btn.closest('tr');
+    row.classList.remove('opacity-60');
+    const chip = row.querySelector('.chip-red');
+    if (chip) { chip.className = 'chip-green'; chip.textContent = '正常'; }
+    btn.textContent = '封禁';
+    btn.className = 'btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400';
+    btn.onclick = () => openBan(btn);
+    toast('用户已解封', 'success');
+  }
+  function banPicked() {
+    const rows = pickedRows();
+    if (!rows.length) { toast('请先勾选用户', 'error'); return; }
+    rows.forEach((row) => {
+      row.classList.add('opacity-60');
+      const chip = row.querySelector('.chip-green');
+      if (chip) { chip.className = 'chip-red'; chip.textContent = '已封禁'; }
+      const btn = [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === '封禁');
+      if (btn) { btn.textContent = '解封'; btn.className = 'btn-secondary btn-sm'; btn.onclick = () => unbanRow(btn); }
+      row.querySelector('.row-check').checked = false;
+    });
+    syncPicks();
+    toast(`已批量封禁 ${rows.length} 位用户`, 'success');
+  }
+
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const el = document.getElementById('toast');
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    el.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    el.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden-t'), 2500);
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

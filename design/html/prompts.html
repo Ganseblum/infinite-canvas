@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 提示词库设计稿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75 dark:focus-visible:outline-stone-100; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18] dark:focus-visible:outline-stone-100; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 active:scale-95 active:bg-black/[0.1] disabled:pointer-events-none disabled:opacity-40 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white dark:active:bg-white/[0.2]; }
+  .nav-link { @apply relative flex h-14 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .dot-grid { background-image: radial-gradient(#e5e7eb 1px, transparent 1px); background-size: 16px 16px; }
+  .dark .dot-grid { background-image: radial-gradient(rgba(245,245,244,.16) 1px, transparent 1px); }
+  .filter-tag { @apply cursor-pointer rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none text-stone-500 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-50; }
+  .filter-tag.active { @apply bg-stone-900 font-semibold text-white dark:bg-stone-100 dark:text-stone-900; }
+  .chip { @apply inline-flex items-center gap-1 rounded-full border border-stone-200 px-2 py-0.5 text-[11px] text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<!-- ========== 顶部导航 ========== -->
+<header class="sticky top-0 z-40 h-14 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl dark:border-stone-800 dark:bg-[#1c1917]/90">
+  <div class="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-4 sm:px-6">
+    <div class="flex min-w-0 items-center">
+      <a href="home.html" class="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
+        <span class="size-5 shrink-0 rounded bg-current"></span>
+        <span class="text-base font-medium">无限画布</span>
+      </a>
+      <button type="button" class="icon-btn ml-2 md:hidden" onclick="toggleDrawer(true)" aria-label="打开菜单"><i data-lucide="menu" class="size-5"></i></button>
+      <nav class="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
+        <a href="home.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100">首页</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="image" class="size-4"></i>图片</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="video" class="size-4"></i>视频</a>
+        <a href="prompts.html" class="nav-link font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"><i data-lucide="library" class="size-4"></i>提示词库</a>
+        <a href="community.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="users" class="size-4"></i>社区</a>
+        <a href="models.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="boxes" class="size-4"></i>模型</a>
+        <a href="activity.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="gift" class="size-4"></i>活动</a>
+        <a href="pricing.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="credit-card" class="size-4"></i>定价</a>
+      </nav>
+    </div>
+    <div class="my-auto flex h-9 min-w-0 items-center justify-end gap-2 whitespace-nowrap">
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="切换主题">
+        <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+        <i data-lucide="moon" class="size-4 dark:hidden"></i>
+      </button>
+      <a href="login.html" class="btn-primary !h-8 !px-4 text-[13px]">登录</a>
+    </div>
+  </div>
+</header>
+
+<!-- ========== 移动端抽屉 ========== -->
+<div id="drawer" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+  <div class="absolute inset-y-0 left-0 w-72 bg-white p-5 dark:bg-[#292524]">
+    <div class="mb-6 flex items-center justify-between">
+      <span class="text-base font-medium">无限画布</span>
+      <button type="button" class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button>
+    </div>
+    <nav class="flex flex-col gap-1 text-sm">
+      <a href="home.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">首页</a>
+      <a href="#" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">图片</a>
+      <a href="#" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">视频</a>
+      <a href="prompts.html" class="rounded-lg bg-black/5 px-3 py-2.5 font-medium dark:bg-white/10">提示词库</a>
+      <a href="community.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">社区</a>
+      <a href="models.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">模型</a>
+      <a href="pricing.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">定价</a>
+    </nav>
+  </div>
+</div>
+
+<main class="dot-grid min-h-[calc(100vh-3.5rem)]">
+  <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <!-- ========== 页头 ========== -->
+    <div class="text-center">
+      <h1 class="text-2xl font-semibold">提示词库</h1>
+      <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">共 3,482 条提示词 · 持续更新中</p>
+    </div>
+
+    <div class="mt-6 grid items-start gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <!-- ========== 左侧筛选栏 ========== -->
+      <aside class="lg:sticky lg:top-20">
+        <div class="relative">
+          <i data-lucide="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400"></i>
+          <input type="text" placeholder="搜索提示词…" class="h-10 w-full rounded-lg border border-stone-200 bg-transparent pl-9 pr-3 text-sm outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" />
+        </div>
+        <div class="mt-6">
+          <div class="mb-2.5 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">分类</div>
+          <nav class="flex flex-col gap-0.5">
+            <button class="side-item active flex items-center justify-between rounded-lg px-3 py-2 text-sm"><span>全部</span><span class="text-xs text-stone-400">3482</span></button>
+            <button class="side-item flex items-center justify-between rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><span>人像摄影</span><span class="text-xs text-stone-400">856</span></button>
+            <button class="side-item flex items-center justify-between rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><span>风景</span><span class="text-xs text-stone-400">642</span></button>
+            <button class="side-item flex items-center justify-between rounded-lg px-3 py-2 text-sm text-stone-500 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><span>产品设计</span><span class="text-xs text-stone-400">421</span></button>
+            <button class="side-item flex items-center justify-between rounded-lg px-3 py-2 text-sm text-stone-500 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><span>插画</span><span class="text-xs text-stone-400">389</span></button>
+            <button class="side-item flex items-center justify-between rounded-lg px-3 py-2 text-sm text-stone-500 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><span>建筑空间</span><span class="text-xs text-stone-400">276</span></button>
+          </nav>
+        </div>
+        <div class="mt-6">
+          <div class="mb-2.5 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">标签</div>
+          <div class="flex flex-wrap gap-1.5">
+            <button class="filter-tag active">全部</button>
+            <button class="filter-tag">电影感</button>
+            <button class="filter-tag">胶片</button>
+            <button class="filter-tag">国风</button>
+            <button class="filter-tag">赛博朋克</button>
+            <button class="filter-tag">极简</button>
+            <button class="filter-tag">3D</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ========== 右侧瀑布流 ========== -->
+      <div>
+        <!-- 排序 -->
+        <div class="mb-4 flex items-center justify-between">
+          <div class="flex gap-1" id="sort">
+            <button class="filter-tag active">最热</button>
+            <button class="filter-tag">最新</button>
+            <button class="filter-tag">最多收藏</button>
+          </div>
+          <span class="hidden text-xs text-stone-400 sm:inline">下拉到底自动加载</span>
+        </div>
+        <!-- 瀑布流卡片 -->
+        <div class="columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4">
+          <a href="#" class="group relative block break-inside-avoid overflow-hidden rounded-xl border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <img src="https://picsum.photos/seed/p1/480/620" alt="" class="w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-4 text-white">
+              <h3 class="text-sm font-medium">黄昏天台的电影感人像</h3>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/75">黄昏逆光，天台边缘，35mm 胶片质感，浅景深，暖色霓虹点缀……</p>
+              <div class="mt-3 flex items-center justify-between">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">人像</span>
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">电影感</span>
+                </div>
+                <span class="inline-flex items-center gap-1 text-xs"><i data-lucide="heart" class="size-3.5"></i>1.2k</span>
+              </div>
+            </div>
+            <span class="absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('提示词已复制', 'success')"><i data-lucide="copy" class="size-3.5"></i></span>
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('已加入我的素材', 'success')"><i data-lucide="plus" class="size-3.5"></i></span>
+            </span>
+          </a>
+          <a href="#" class="group relative block break-inside-avoid overflow-hidden rounded-xl border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <img src="https://picsum.photos/seed/p2/480/420" alt="" class="w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-4 text-white">
+              <h3 class="text-sm font-medium">极简产品渲染</h3>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/75">柔和顶光，浅灰背景，商业摄影质感，微距细节……</p>
+              <div class="mt-3 flex items-center justify-between">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">产品</span>
+                </div>
+                <span class="inline-flex items-center gap-1 text-xs"><i data-lucide="heart" class="size-3.5"></i>864</span>
+              </div>
+            </div>
+            <span class="absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('提示词已复制', 'success')"><i data-lucide="copy" class="size-3.5"></i></span>
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('已加入我的素材', 'success')"><i data-lucide="plus" class="size-3.5"></i></span>
+            </span>
+          </a>
+          <a href="#" class="group relative block break-inside-avoid overflow-hidden rounded-xl border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <img src="https://picsum.photos/seed/p3/480/540" alt="" class="w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-4 text-white">
+              <h3 class="text-sm font-medium">水彩风格的橘猫</h3>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/75">湿润笔触，纸张纹理，阳光洒落窗台，暖色调……</p>
+              <div class="mt-3 flex items-center justify-between">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">插画</span>
+                </div>
+                <span class="inline-flex items-center gap-1 text-xs"><i data-lucide="heart" class="size-3.5"></i>3.4k</span>
+              </div>
+            </div>
+            <span class="absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('提示词已复制', 'success')"><i data-lucide="copy" class="size-3.5"></i></span>
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('已加入我的素材', 'success')"><i data-lucide="plus" class="size-3.5"></i></span>
+            </span>
+          </a>
+          <a href="#" class="group relative block break-inside-avoid overflow-hidden rounded-xl border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <img src="https://picsum.photos/seed/p4/480/460" alt="" class="w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-4 text-white">
+              <h3 class="text-sm font-medium">赛博城市夜景</h3>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/75">雨后地面反射，霓虹招牌，广角仰拍，深蓝主调……</p>
+              <div class="mt-3 flex items-center justify-between">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">风景</span>
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">赛博朋克</span>
+                </div>
+                <span class="inline-flex items-center gap-1 text-xs"><i data-lucide="heart" class="size-3.5"></i>4.6k</span>
+              </div>
+            </div>
+            <span class="absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('提示词已复制', 'success')"><i data-lucide="copy" class="size-3.5"></i></span>
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('已加入我的素材', 'success')"><i data-lucide="plus" class="size-3.5"></i></span>
+            </span>
+          </a>
+          <a href="#" class="group relative block break-inside-avoid overflow-hidden rounded-xl border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <img src="https://picsum.photos/seed/p5/480/660" alt="" class="w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-4 text-white">
+              <h3 class="text-sm font-medium">森林晨雾</h3>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/75">丁达尔光，高分辨率风景摄影，冷色调，薄雾弥漫……</p>
+              <div class="mt-3 flex items-center justify-between">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">风景</span>
+                </div>
+                <span class="inline-flex items-center gap-1 text-xs"><i data-lucide="heart" class="size-3.5"></i>978</span>
+              </div>
+            </div>
+            <span class="absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('提示词已复制', 'success')"><i data-lucide="copy" class="size-3.5"></i></span>
+              <span class="inline-flex size-7 items-center limit-0"></span>
+            </span>
+          </a>
+          <a href="#" class="group relative block break-inside-avoid overflow-hidden rounded-xl border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <img src="https://picsum.photos/seed/p6/480/380" alt="" class="w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-4 text-white">
+              <h3 class="text-sm font-medium">复古海报字体实验</h3>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/75">瑞士风格，几何构图，三色限制，粗衬线字体……</p>
+              <div class="mt-3 flex items-center justify-between">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">平面</span>
+                </div>
+                <span class="inline-flex items-center gap-1 text-xs"><i data-lucide="heart" class="size-3.5"></i>651</span>
+              </div>
+            </div>
+            <span class="absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('提示词已复制', 'success')"><i data-lucide="copy" class="size-3.5"></i></span>
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('已加入我的素材', 'success')"><i data-lucide="plus" class="size-3.5"></i></span>
+            </span>
+          </a>
+          <a href="#" class="group relative block break-inside-avoid overflow-hidden rounded-xl border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <img src="https://picsum.photos/seed/p7/480/560" alt="" class="w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-4 text-white">
+              <h3 class="text-sm font-medium">黏土质感 3D 角色</h3>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/75">柔和摄影棚布光，治愈系配色，圆润造型……</p>
+              <div class="mt-3 flex items-center justify-between">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded bg-white/15 px-1.5 py-0.5 text-[11px] backdrop-blur">3D</span>
+                </div>
+                <span class="inline-flex items-center gap-1 text-xs"><i data-lucide="heart" class="size-3.5"></i>2.7k</span>
+              </div>
+            </div>
+            <span class="absolute right-2.5 top-2.5 flex 复制"></span>
+            <span class="absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur" onclick="event.preventDefault(); event.stopPropagation(); toast('提示词已复制', 'success')"><i data-lucide="copy" class="size-3.5"></i></span>
+              <span class="inline-flex size-7 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur"><i data-lucide="plus" class="size-3. prompts"></i></span>
+            </span>
+          </a>
+        </div>
+        <!-- 加载中 -->
+        <div class="mt-8 flex items-center justify-center gap-2.5 text-sm text-stone-400">
+          <span class="inline-block size-4 animate-spin rounded-full border-2 border-stone-400 border-t-transparent"></span>
+          正在加载更多…
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) {
+    const d = document.getElementById('drawer');
+    if (d) d.classList.toggle('hidden', !open);
+  }
+  const toastEl = document.createElement('div');
+  toastEl.className = 'toast hidden-t';
+  document.body.appendChild(toastEl);
+  const infraStyle = document.createElement('style');
+  infraStyle.textContent = `
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(infraStyle);
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    toastEl.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    toastEl.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.add('hidden-t'), 2500);
+  }
+  document.querySelectorAll('#sort .filter-tag, aside .filter-tag').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      btn.parentElement.querySelectorAll('.filter-tag').forEach((el) => el.classList.toggle('active', el === btn));
+    });
+  });
+  lucide.createIcons();
+</script>
+</body>
+</html>

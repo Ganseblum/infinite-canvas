@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 我的素材设计稿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75 dark:focus-visible:outline-stone-100; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18] dark:focus-visible:outline-stone-100; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 active:scale-95 active:bg-black/[0.1] disabled:pointer-events-none disabled:opacity-40 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white dark:active:bg-white/[0.2]; }
+  .nav-link { @apply relative flex h-14 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .dot-grid { background-image: radial-gradient(#e5e7eb 1px, transparent 1px); background-size: 16px 16px; }
+  .dark .dot-grid { background-image: radial-gradient(rgba(245,245,244,.16) 1px, transparent 1px); }
+  .filter-tag { @apply cursor-pointer rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none text-stone-500 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-50; }
+  .filter-tag.active { @apply bg-stone-900 font-semibold text-white dark:bg-stone-100 dark:text-stone-900; }
+  .checkbox { @apply size-4 cursor-pointer rounded border-stone-300 accent-stone-900 dark:border-stone-600 dark:accent-stone-100; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<!-- ========== 顶部导航 ========== -->
+<header class="sticky top-0 z-40 h-14 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl dark:border-stone-800 dark:bg-[#1c1917]/90">
+  <div class="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-4 sm:px-6">
+    <div class="flex min-w-0 items-center">
+      <a href="home.html" class="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
+        <span class="size-5 shrink-0 rounded bg-current"></span>
+        <span class="text-base font-medium">无限画布</span>
+      </a>
+      <button type="button" class="icon-btn ml-2 md:hidden" onclick="toggleDrawer(true)" aria-label="打开菜单"><i data-lucide="menu" class="size-5"></i></button>
+      <nav class="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
+        <a href="home.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100">首页</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="image" class="size-4"></i>图片</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="video" class="size-4"></i>视频</a>
+        <a href="prompts.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="library" class="size-4"></i>提示词库</a>
+        <a href="community.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="users" class="size-4"></i>社区</a>
+        <a href="models.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="boxes" class="size-4"></i>模型</a>
+        <a href="activity.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="gift" class="size-4"></i>活动</a>
+        <a href="pricing.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="credit-card" class="size-4"></i>定价</a>
+      </nav>
+    </div>
+    <div class="my-auto flex h-9 min-w-0 items-center justify-end gap-2 whitespace-nowrap">
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="切换主题">
+        <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+        <i data-lucide="moon" class="size-4 dark:hidden"></i>
+      </button>
+      <a href="account.html" class="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 transition hover:bg-black/5 dark:hover:bg-white/10">
+        <img src="https://i.pravatar.cc/64?img=12" alt="头像" class="size-7 rounded-full object-cover" />
+        <span class="hidden text-sm sm:inline">阿河</span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ========== 移动端抽屉 ========== -->
+<div id="drawer" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+  <div class="absolute inset-y-0 left-0 w-72 bg-white p-5 dark:bg-[#292524]">
+    <div class="mb-6 flex items-center justify-between">
+      <span class="text-base font-medium">无限画布</span>
+      <button type="button" class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button>
+    </div>
+    <nav class="flex flex-col gap-1 text-sm">
+      <a href="home.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">首页</a>
+      <a href="#" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">图片</a>
+      <a href="#" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">视频</a>
+      <a href="prompts.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">提示词库</a>
+      <a href="community.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">社区</a>
+      <a href="pricing.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">定价</a>
+    </nav>
+  </div>
+</div>
+
+<main class="dot-grid min-h-[calc(100vh-3.5rem)]">
+  <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <!-- ========== 页头 + 操作 ========== -->
+    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold">我的素材</h1>
+        <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">共 86 个素材 · 已用 3.2GB / 20GB</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn-secondary" onclick="toast('正在打包导出…完成后自动下载（Mock）', 'info')"><i data-lucide="download" class="size-4"></i>导出全部</button>
+        <button class="btn-secondary" onclick="toast('已导入备份包（Mock）', 'success')"><i data-lucide="upload" class="size-4"></i>导入</button>
+        <button class="btn-primary" onclick="toast('已上传 1 个素材（Mock）', 'success')"><i data-lucide="plus" class="size-4"></i>上传素材</button>
+      </div>
+    </div>
+
+    <!-- ========== 工具栏：搜索 / 类型筛选 / 批量 ========== -->
+    <div class="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div class="relative w-full sm:w-72">
+          <i data-lucide="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400"></i>
+          <input type="text" placeholder="搜索素材标题或标签…" class="h-10 w-full rounded-lg border border-stone-200 bg-transparent pl-9 pr-3 text-sm outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" />
+        </div>
+        <div class="flex gap-1" id="kind">
+          <button class="filter-tag active">全部 86</button>
+          <button class="filter-tag">文本 24</button>
+          <button class="filter-tag">图片 45</button>
+          <button class="filter-tag">视频 12</button>
+          <button class="filter-tag">音频 5</button>
+        </div>
+      </div>
+      <!-- 批量操作条（选中后出现） -->
+      <div class="hidden items-center gap-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-stone-700" id="batch-bar">
+        <span class="text-sm">已选 <b>3</b> 项</span>
+        <span class="h-4 w-px bg-stone-200 dark:bg-stone-700"></span>
+        <button class="btn-secondary !h-7 !px-2.5 text-xs">下载</button>
+        <button class="btn-secondary !h-7 !px-2.5 text-xs">移动</button>
+        <button class="btn-secondary !h-7 !px-2.5 text-xs !text-red-600 !border-red-200 dark:!text-red-400 dark:!border-red-900/60">删除</button>
+        <button class="icon-btn !size-7" onclick="toggleBatch(false)"><i data-lucide="x" class="size-3.5"></i></button>
+      </div>
+      <button class="btn-secondary w-fit !h-9 !px-3 text-[13px]" id="batch-btn" onclick="toggleBatch(true)"><i data-lucide="check-square" class="size-4"></i>批量管理</button>
+    </div>
+
+    <!-- ========== 素材网格（多选卡片） ========== -->
+    <div class="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4" id="grid">
+      <!-- 图片素材 -->
+      <div class="card group relative cursor-pointer overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <img src="https://picsum.photos/seed/a1/480/480" alt="" class="aspect-square w-full object-cover" />
+        <span class="check absolute left-2.5 top-2.5 hidden"><input type="checkbox" class="checkbox" checked /></span>
+        <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 transition group-hover:opacity-100">
+          <span class="truncate text-xs">黄昏天台 01</span>
+          <span class="flex gap-1.5">
+            <i data-lucide="copy" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已复制（Mock）', 'success')"></i>
+            <i data-lucide="download" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已开始下载（Mock）', 'success')"></i>
+            <i data-lucide="trash-2" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); removeAsset(this)"></i>
+          </span>
+        </div>
+      </div>
+      <div class="card group relative cursor-pointer overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <img src="https://picsum.photos/seed/a2/480/480" alt="" class="aspect-square w-full object-cover" />
+        <span class="check absolute left-2.5 top-2.5 hidden"><input type="checkbox" class="checkbox" checked /></span>
+        <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 transition group-hover:opacity-100">
+          <span class="truncate text-xs">赛博城市 03</span>
+          <span class="flex gap-1.5">
+            <i data-lucide="copy" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已复制（Mock）', 'success')"></i>
+            <i data-lucide="download" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已开始下载（Mock）', 'success')"></i>
+            <i data-lucide="trash-2" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); removeAsset(this)"></i>
+          </span>
+        </div>
+      </div>
+      <!-- 文本素材 -->
+      <div class="card group relative cursor-pointer p-4 transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <span class="check absolute left-2.5 top-2.5 hidden"><input type="checkbox" class="checkbox" checked /></span>
+        <div class="flex items-center gap-2 text-stone-400"><i data-lucide="type" class="size-4"></i><span class="text-[11px] uppercase tracking-wide">文本</span></div>
+        <p class="mt-2.5 line-clamp-4 text-sm leading-6">黄昏逆光，天台边缘，35mm 胶片质感，浅景深，暖色霓虹点缀，电影感构图……</p>
+        <div class="absolute inset-x-0 bottom-0 flex items-center justify-between border-t border-stone-100 p-3 opacity-0 transition group-hover:opacity-100 dark:border-stone-800/60">
+          <span class="truncate text-xs text-stone-500">天台人像提示词</span>
+          <span class="flex gap-1.5 text-stone-400">
+            <i data-lucide="copy" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已复制（Mock）', 'success')"></i>
+            <i data-lucide="trash-2" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); removeAsset(this)"></i>
+          </span>
+        </div>
+      </div>
+      <!-- 视频素材 -->
+      <div class="card group relative cursor-pointer overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <img src="https://picsum.photos/seed/a4/480/480" alt="" class="aspect-square w-full object-cover" />
+        <span class="absolute left-2.5 top-2.5 rounded bg-black/50 px-1.5 py-0.5 text-[11px] text-white backdrop-blur">视频</span>
+        <span class="absolute bottom-2.5 right-2.5 rounded bg-black/50 px-1.5 py-0.5 text-[11px] text-white backdrop-blur"><i data-lucide="play" class="mr-0.5 inline size-3"></i>00:15</span>
+        <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 transition group-hover:opacity-100">
+          <span class="truncate text-xs">城市延时 02</span>
+          <span class="flex gap-1.5">
+            <i data-lucide="download" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已开始下载（Mock）', 'success')"></i>
+            <i data-lucide="trash-2" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); removeAsset(this)"></i>
+          </span>
+        </div>
+      </div>
+      <div class="card group relative cursor-pointer overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <img src="https://picsum.photos/seed/a5/480/480" alt="" class="aspect-square w-full object-cover" />
+        <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 transition group-hover:opacity-100">
+          <span class="truncate text-xs">森林晨雾 07</span>
+          <span class="flex gap-1.5">
+            <i data-lucide="copy" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已复制（Mock）', 'success')"></i>
+            <i data-lucide="download" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已开始下载（Mock）', 'success')"></i>
+            <i data-lucide="trash-2" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); removeAsset(this)"></i>
+          </span>
+        </div>
+      </div>
+      <!-- 音频素材 -->
+      <div class="card group relative cursor-pointer p-4 transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <span class="check absolute left-2.5 top-2.5 hidden"><input type="checkbox" class="checkbox" /></span>
+        <div class="flex items-center gap-3">
+          <span class="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-black/5 dark:bg-white/10"><i data-lucide="music" class="size-5"></i></span>
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium">雨夜氛围配乐</p>
+            <p class="mt-0.5 text-xs text-stone-400">00:02:36</p>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center gap-1.5">
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:8px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:14px"></span>
+          <span class="w-1 rounded bg-stone-900 dark:bg-stone-100" style="height:18px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:10px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:16px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:6px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:12px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:9px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:15px"></span>
+          <span class="w-1 rounded bg-stone-300 dark:bg-stone-600" style="height:7px"></span>
+        </div>
+      </div>
+      <div class="card group relative cursor-pointer overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <img src="https://picsum.photos/seed/a7/480/480" alt="" class="aspect-square w-full object-cover" />
+        <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 transition group-hover:opacity-100">
+          <span class="truncate text-xs">产品渲染 11</span>
+          <span class="flex gap-1.5">
+            <i data-lucide="copy" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已复制（Mock）', 'success')"></i>
+            <i data-lucide="download" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已开始下载（Mock）', 'success')"></i>
+            <i data-lucide="trash-2" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); removeAsset(this)"></i>
+          </span>
+        </div>
+      </div>
+      <div class="card group relative cursor-pointer overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]" onclick="togglePick(this)">
+        <img src="https://picsum.photos/seed/a8/480/480" alt="" class="aspect-square w-full object-cover" />
+        <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 transition group-hover:opacity-100">
+          <span class="truncate text-xs">水彩橘猫 02</span>
+          <span class="flex gap-1.5">
+            <i data-lucide="copy" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已复制（Mock）', 'success')"></i>
+            <i data-lucide="download" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); toast('已开始下载（Mock）', 'success')"></i>
+            <i data-lucide="trash-2" class="size-3.5 cursor-pointer" onclick="event.stopPropagation(); removeAsset(this)"></i>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 分页 ========== -->
+    <nav class="mt-8 flex items-center justify-center gap-1.5">
+      <button class="icon-btn !size-9"><i data-lucide="chevron-left" class="size-4"></i></button>
+      <button class="size-9 rounded-lg bg-stone-900 text-sm font-medium text-white dark:bg-stone-100 dark:text-stone-900">1</button>
+      <button class="size-9 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">2</button>
+      <button class="size-9 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">3</button>
+      <span class="px-1 text-sm text-stone-400">…</span>
+      <button class="size-9 rounded-lg text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">9</button>
+      <button class="icon-btn !size-9"><i data-lucide="chevron-right" class="size-4"></i></button>
+    </nav>
+  </div>
+</main>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  /* ===== Toast 基础设施（带语义图标） ===== */
+  const toastEl = document.createElement('div');
+  toastEl.className = 'toast hidden-t';
+  document.body.appendChild(toastEl);
+  const infraStyle = document.createElement('style');
+  infraStyle.textContent = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes modal-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+    .overlay-open { animation: fade-in 0.2s ease-out; }
+    .modal-open { animation: modal-in 0.25s cubic-bezier(0.16,1,0.3,1); }
+    .drawer-open { animation: drawer-in 0.3s cubic-bezier(0.16,1,0.3,1); }
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(infraStyle);
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    toastEl.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    toastEl.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.add('hidden-t'), 2500);
+  }
+  function openModal(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('hidden');
+    const card = el.querySelector('.drawer-open, .modal-open');
+    if (card) { card.style.animation = 'none'; void card.offsetWidth; card.style.animation = ''; }
+  }
+  function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+  function toggleDrawer(open) {
+    const d = document.getElementById('drawer');
+    if (d) d.classList.toggle('hidden', !open);
+  }
+
+  function toggleDrawer(open) {
+    document.getElementById('drawer').classList.toggle('hidden', !open);
+  }
+  document.querySelectorAll('#kind .filter-tag').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#kind .filter-tag').forEach((el) => el.classList.toggle('active', el === btn));
+    });
+  });
+
+  /* ===== Mock：素材删除 / 批量 ===== */
+  function removeAsset(icon) {
+    const card = icon.closest('.card');
+    if (card) { card.style.transition = 'opacity .3s, transform .3s'; card.style.opacity = '0'; card.style.transform = 'scale(0.95)'; setTimeout(() => card.remove(), 300); }
+    toast('素材已删除', 'success');
+  }
+  function batchDownload() {
+    const n = document.querySelectorAll('.row-check:checked, #grid input[type="checkbox"]:checked').length;
+    toast(n ? `正在打包 ${n} 个素材…（Mock）` : '请先勾选素材', n ? 'info' : 'error');
+  }
+  function batchDelete() {
+    const checked = [...document.querySelectorAll('#grid input[type="checkbox"]')].filter((c) => c.checked);
+    if (!checked.length) { toast('请先勾选素材', 'error'); return; }
+    checked.forEach((c) => { const card = c.closest('.card'); if (card) { card.style.opacity = '0'; card.style.transform = 'scale(0.95)'; setTimeout(() => card.remove(), 300); } });
+    toast(`已删除 ${checked.length} 个素材`, 'success');
+  }
+
+  /* 批量模式切换 */
+  function toggleBatch(on) {
+    document.getElementById('batch-bar').classList.toggle('hidden', !on);
+    document.getElementById('batch-bar').classList.toggle('flex', on);
+    document.getElementById('batch-btn').classList.toggle('hidden', on);
+    document.querySelectorAll('#grid .check').forEach((el) => el.classList.toggle('hidden', !on));
+  }
+  /* 卡片选中 */
+  function togglePick(card) {
+    if (!document.getElementById('batch-bar').classList.contains('hidden')) {
+      const cb = card.querySelector('input[type="checkbox"]');
+      cb.checked = !cb.checked;
+      card.classList.toggle('!border-stone-900', cb.checked);
+      card.classList.toggle('dark:!border-stone-100', cb.checked);
+    }
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

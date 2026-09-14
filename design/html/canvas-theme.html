@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 画布主题对照稿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .tool-btn { @apply inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .tool-btn.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .canvas-node { @apply rounded-lg border border-stone-300 bg-[#e7e5df] dark:border-stone-700 dark:bg-[#292524]; }
+  .dot-grid { background-image: radial-gradient(#d6d3d1 1px, transparent 1px); background-size: 24px 24px; }
+  .dark .dot-grid { background-image: radial-gradient(rgba(214,211,209,.12) 1px, transparent 1px); }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<div class="flex h-dvh flex-col overflow-hidden">
+  <!-- ========== 顶部工具栏（画布极简扁平风） ========== -->
+  <header class="flex h-12 shrink-0 items-center justify-between border-b border-stone-200 px-4 dark:border-stone-800">
+    <div class="flex items-center gap-1">
+      <a href="home.html" class="mr-2 flex items-center gap-2 text-sm font-semibold tracking-tight">
+        <span class="size-5 rounded bg-current"></span>
+      </a>
+      <button class="tool-btn active"><i data-lucide="mouse-pointer-2" class="size-4"></i>选择</button>
+      <button class="tool-btn"><i data-lucide="hand" class="size-4"></i>拖拽</button>
+      <button class="tool-btn"><i data-lucide="square" class="size-4"></i>框选</button>
+      <span class="mx-2 h-5 w-px bg-stone-200 dark:bg-stone-700"></span>
+      <button class="tool-btn"><i data-lucide="undo-2" class="size-4"></i></button>
+      <button class="tool-btn"><i data-lucide="redo-2" class="size-4"></i></button>
+      <span class="ml-3 hidden text-xs text-stone-400 sm:inline">未命名画布 · 已自动保存</span>
+    </div>
+    <div class="flex items-center gap-1">
+      <button class="tool-btn"><i data-lucide="users" class="size-4"></i>协作</button>
+      <button class="tool-btn"><i data-lucide="download" class="size-4"></i>导出</button>
+      <button class="icon-btn" onclick="toggleTheme()" title="切换主题">
+        <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+        <i data-lucide="moon" class="size-4 dark:hidden"></i>
+      </button>
+      <a href="account.html" class="ml-1"><img src="https://i.pravatar.cc/64?img=12" alt="头像" class="size-7 rounded-full object-cover" /></a>
+    </div>
+  </header>
+
+  <div class="flex min-h-0 flex-1">
+    <!-- ========== 左侧节点面板 ========== -->
+    <aside class="thin-scrollbar hidden w-60 shrink-0 overflow-y-auto border-r border-stone-200 p-4 md:block dark:border-stone-800">
+      <p class="mb-3 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">添加节点</p>
+      <div class="grid grid-cols-2 gap-2">
+        <button class="flex flex-col items-center gap-2 rounded-lg p-3 text-xs text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">
+          <i data-lucide="image" class="size-5"></i>图片
+        </button>
+        <button class="flex flex-col items-center gap-2 rounded-lg p-3 text-xs text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">
+          <i data-lucide="video" class="size-5"></i>视频
+        </button>
+        <button class="flex flex-col items-center gap-2 rounded-lg p-3 text-xs text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">
+          <i data-lucide="type" class="size-5"></i>文本
+        </button>
+        <button class="flex flex-col items-center gap-2 rounded-lg p-3 text-xs text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">
+          <i data-lucide="audio-lines" class="size-5"></i>音频
+        </button>
+        <button class="flex flex-col items-center gap-2 rounded-lg p-3 text-xs text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">
+          <i data-lucide="git-branch" class="size-5"></i>工作流
+        </button>
+        <button class="flex flex-col items-center gap-2 rounded-lg p-3 text-xs text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">
+          <i data-lucide="upload" class="size-5"></i>素材
+        </button>
+      </div>
+
+      <p class="mb-3 mt-6 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">画布大纲</p>
+      <div class="space-y-1">
+        <div class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><i data-lucide="image" class="size-3.5 shrink-0"></i><span class="truncate">黄昏天台 01</span></div>
+        <div class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><i data-lucide="image" class="size-3.5 shrink-0"></i><span class="truncate">黄昏天台 02</span></div>
+        <div class="flex items-center gap-2 rounded-md bg-black/[0.06] px-2 py-1.5 text-sm font-medium dark:bg-white/[0.12]"><i data-lucide="type" class="size-3.5 shrink-0"></i><span class="truncate">镜头脚本</span></div>
+        <div class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><i data-lucide="video" class="size-3.5 shrink-0"></i><span class="truncate">开场视频</span></div>
+        <div class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10"><i data-lucide="audio-lines" class="size-3.5 shrink-0"></i><span class="truncate">背景配乐</span></div>
+      </div>
+    </aside>
+
+    <!-- ========== 画布区 ========== -->
+    <main class="dot-grid relative min-w-0 flex-1 overflow-hidden">
+      <!-- 连线 SVG 演示 -->
+      <svg class="pointer-events-none absolute inset-0 size-full" fill="none">
+        <path d="M 380 180 C 460 180, 460 320, 540 320" stroke="#a8a29e" stroke-width="1.5" stroke-dasharray="4 4" />
+        <path d="M 380 420 C 460 420, 460 340, 540 340" stroke="#a8a29e" stroke-width="1.5" stroke-dasharray="4 4" />
+      </svg>
+
+      <!-- 节点：图片 -->
+      <div class="canvas-node absolute left-[8%] top-[12%] w-56 p-2 shadow-sm">
+        <img src="https://picsum.photos/seed/cn1/400/260" alt="" class="w-full rounded" />
+        <div class="flex items-center justify-between px-1 pt-2 text-xs text-stone-600 dark:text-stone-300">
+          <span class="truncate">黄昏天台 01</span>
+          <span class="inline-flex items-center gap-1 text-stone-400"><i data-lucide="coins" class="size-3"></i>10</span>
+        </div>
+        <span class="absolute -right-1.5 top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-stone-400 bg-white dark:border-stone-500 dark:bg-[#292524]"></span>
+      </div>
+
+      <!-- 节点：文本（无灰底，保持干净） -->
+      <div class="absolute left-[8%] top-[58%] w-56 rounded-lg border border-stone-300 p-3 dark:border-stone-700">
+        <div class="flex items-center gap-2 text-xs text-stone-400"><i data-lucide="type" class="size-3.5"></i>镜头脚本</div>
+        <p class="mt-2 text-sm leading-6 text-stone-800 dark:text-stone-200">黄昏逆光，天台边缘，人物转身望向城市，霓虹灯牌渐次亮起……</p>
+        <span class="absolute -right-1.5 top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-stone-400 bg-white dark:border-stone-500 dark:bg-[#292524]"></span>
+      </div>
+
+      <!-- 节点：视频（生成中） -->
+      <div class="canvas-node absolute left-[52%] top-[38%] w-72 p-2 shadow-sm">
+        <div class="flex aspect-video items-center justify-center rounded bg-stone-200/70 dark:bg-stone-800/70">
+          <div class="text-center">
+            <span class="inline-block size-5 animate-spin rounded-full border-2 border-stone-400 border-t-transparent"></span>
+            <p class="mt-2 text-xs text-stone-500">生成中 · 68%</p>
+          </div>
+        </div>
+        <div class="flex items-center justify-between px-1 pt-2 text-xs text-stone-600 dark:text-stone-300">
+          <span>开场视频</span>
+          <button class="text-stone-400 transition hover:text-stone-900 dark:hover:text-stone-100">取消</button>
+        </div>
+      </div>
+
+      <!-- 底部缩放控制 -->
+      <div class="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border border-stone-200 bg-white/90 p-1 backdrop-blur dark:border-stone-700/60 dark:bg-[#292524]/90">
+        <button class="icon-btn" title="缩小"><i data-lucide="zoom-out" class="size-4"></i></button>
+        <span class="text-xs text-stone-500">75%</span>
+        <button class="icon-btn" title="放大"><i data-lucide="zoom-in" class="size-4"></i></button>
+        <span class="mx-1 h-5 w-px bg-stone-200 dark:bg-stone-700"></span>
+        <button class="icon-btn" title="适应屏幕"><i data-lucide="scan" class="size-4"></i></button>
+      </div>
+
+      <!-- 右下角 AI 助手按钮 -->
+      <button class="absolute bottom-4 right-4 inline-flex size-10 items-center justify-center rounded-full bg-stone-900 text-white shadow-lg transition hover:scale-105 dark:bg-stone-100 dark:text-stone-900" title="AI 助手">
+        <i data-lucide="bot" class="size-5"></i>
+      </button>
+    </main>
+  </div>
+</div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 设计稿总览</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18]; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .frame { @apply w-full rounded-xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-[#1c1917]; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<!-- ========== 顶部导航 ========== -->
+<header class="sticky top-0 z-40 h-14 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl dark:border-stone-800 dark:bg-[#1c1917]/90">
+  <div class="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6">
+    <a href="home.html" class="flex items-center gap-2 text-sm font-semibold tracking-tight">
+      <span class="size-5 rounded bg-current"></span>
+      <span class="text-base font-medium">无限画布 · 设计稿总览</span>
+    </a>
+    <div class="flex items-center gap-2">
+      <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]" onclick="setAllTheme('light')">全部切浅色</button>
+      <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]" onclick="setAllTheme('dark')">全部切深色</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="切换本页主题">
+        <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+        <i data-lucide="moon" class="size-4 dark:hidden"></i>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+  <p class="text-sm leading-6 text-stone-500 dark:text-stone-400">点击卡片在 iframe 中预览，或点「新窗口打开」独立查看。卡片按流程分组排列。</p>
+
+  <!-- ========== 用户流程 ========== -->
+  <section class="mt-8">
+    <h2 class="mb-4 text-lg font-semibold">用户流程</h2>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card overflow-hidden">
+        <iframe src="home.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">首页</p><p class="text-xs text-stone-400">home.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('home.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="home.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="login.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">登录</p><p class="text-xs text-stone-400">login.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('login.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="login.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="register.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">注册</p><p class="text-xs text-stone-400">register.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('register.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="register.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="account.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">个人中心</p><p class="text-xs text-stone-400">account.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('account.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="account.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 内容页面 ========== -->
+  <section class="mt-10">
+    <h2 class="mb-4 text-lg font-semibold">内容页面</h2>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card overflow-hidden">
+        <iframe src="prompts.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">提示词库</p><p class="text-xs text-stone-400">prompts.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('prompts.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="prompts.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="assets.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">我的素材</p><p class="text-xs text-stone-400">assets.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('assets.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="assets.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="community.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">社区</p><p class="text-xs text-stone-400">community.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('community.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="community.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="models.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">模型广场</p><p class="text-xs text-stone-400">models.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('models.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="models.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 商业化与运营 ========== -->
+  <section class="mt-10">
+    <h2 class="mb-4 text-lg font-semibold">商业化与运营</h2>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card overflow-hidden">
+        <iframe src="pricing.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">定价</p><p class="text-xs text-stone-400">pricing.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('pricing.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="pricing.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="activity.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">活动中心</p><p class="text-xs text-stone-400">activity.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('activity.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="activity.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="components.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">组件规范</p><p class="text-xs text-stone-400">components.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('components.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="components.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="not-found.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">404 页</p><p class="text-xs text-stone-400">not-found.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('not-found.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="not-found.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 管理后台 ========== -->
+  <section class="mt-10">
+    <h2 class="mb-4 text-lg font-semibold">管理后台</h2>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card overflow-hidden">
+        <iframe src="admin.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">后台总览</p><p class="text-xs text-stone-400">admin.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('admin.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="admin.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="admin-users.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">用户管理</p><p class="text-xs text-stone-400">admin-users.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('admin-users.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="admin-users.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="admin-billing.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">订单与收入</p><p class="text-xs text-stone-400">admin-billing.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('admin-billing.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="admin-billing.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="admin-content.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">社区/活动/安全审核</p><p class="text-xs text-stone-400">admin-content.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('admin-content.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="admin-content.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="admin-models.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">模型与渠道</p><p class="text-xs text-stone-400">admin-models.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('admin-models.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="admin-models.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="admin-docs-mgr.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">文档管理</p><p class="text-xs text-stone-400">admin-docs-mgr.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('admin-docs-mgr.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="admin-docs-mgr.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="admin-system.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">系统设置</p><p class="text-xs text-stone-400">admin-system.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('admin-system.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="admin-system.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 工作台 ========== -->
+  <section class="mt-10">
+    <h2 class="mb-4 text-lg font-semibold">工作台（含 Mock 生成流程）</h2>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card overflow-hidden">
+        <iframe src="image-workbench.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">图片工作台</p><p class="text-xs text-stone-400">image-workbench.html · 支持模拟生成</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('image-workbench.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="image-workbench.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="video-workbench.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">视频工作台</p><p class="text-xs text-stone-400">video-workbench.html · 支持模拟生成</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('video-workbench.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="video-workbench.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="config.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">配置页</p><p class="text-xs text-stone-400">config.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('config.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="config.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <iframe src="canvas-theme.html" class="pointer-events-none h-44 w-full border-0" loading="lazy"></iframe>
+        <div class="flex items-center justify-between border-t border-stone-200 p-3.5 dark:border-stone-800">
+          <div><p class="text-sm font-medium">画布主题对照</p><p class="text-xs text-stone-400">canvas-theme.html</p></div>
+          <div class="flex gap-1.5">
+            <button class="icon-btn" onclick="openInFrame('canvas-theme.html')" title="内嵌预览"><i data-lucide="panel-top" class="size-4"></i></button>
+            <a href="canvas-theme.html" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ========== 大预览层 ========== -->
+<div id="viewer" class="fixed inset-0 z-[60] hidden">
+  <div class="overlay-open absolute inset-0 bg-black/50" onclick="closeViewer()"></div>
+  <div class="modal-open absolute inset-x-4 inset-y-8 flex flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white sm:inset-x-10 dark:border-stone-700/60 dark:bg-[#1c1917]">
+    <div class="flex h-12 shrink-0 items-center justify-between border-b border-stone-200 px-4 dark:border-stone-800">
+      <span class="text-sm font-medium" id="viewer-title">预览</span>
+      <div class="flex items-center gap-2">
+        <button type="button" class="btn-secondary !h-7 !px-2.5 text-xs" onclick="setFrameTheme('light')">浅色</button>
+        <button type="button" class="btn-secondary !h-7 !px-2.5 text-xs" onclick="setFrameTheme('dark')">深色</button>
+        <a id="viewer-open" href="#" target="_blank" class="icon-btn" title="新窗口打开"><i data-lucide="external-link" class="size-4"></i></a>
+        <button class="icon-btn" onclick="closeViewer()"><i data-lucide="x" class="size-4"></i></button>
+      </div>
+    </div>
+    <iframe id="viewer-frame" class="min-h-0 flex-1 w-full border-0 bg-white dark:bg-[#1c1917]"></iframe>
+  </div>
+</div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function openInFrame(src) {
+    document.getElementById('viewer-frame').src = src;
+    document.getElementById('viewer-title').textContent = src;
+    document.getElementById('viewer-open').href = src;
+    const v = document.getElementById('viewer');
+    v.classList.remove('hidden');
+    const card = v.querySelector('.modal-open');
+    card.style.animation = 'none';
+    void card.offsetWidth;
+    card.style.animation = '';
+  }
+  function closeViewer() {
+    document.getElementById('viewer').classList.add('hidden');
+    document.getElementById('viewer-frame').src = 'about:blank';
+  }
+  function setFrameTheme(mode) {
+    const f = document.getElementById('viewer-frame');
+    f.contentDocument.documentElement.classList.toggle('dark', mode === 'dark');
+  }
+  function setAllTheme(mode) {
+    document.querySelectorAll('iframe').forEach((f) => {
+      try { f.contentDocument.documentElement.classList.toggle('dark', mode === 'dark'); } catch (e) {}
+    });
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeViewer(); });
+  lucide.createIcons();
+</script>
+</body>
+</html>

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 管理后台总览</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-stone-900 px-4 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85; }
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 px-4 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .side-link { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-link.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .side-group { @apply mb-1 px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 text-xs leading-none text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400; }
+  .chip-red { @apply inline-flex h-6 items-center rounded-md border border-red-200 bg-red-50 px-1.5 text-xs leading-none text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400; }
+  .th { @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500; }
+  .td { @apply px-4 py-3 text-sm; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <!-- ========== 左侧导航 ========== -->
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex dark:border-stone-800 dark:bg-[#1c1917]">
+    <a href="admin.html" class="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 px-5 text-sm font-semibold tracking-tight dark:border-stone-800">
+      <span class="size-5 rounded bg-current"></span>
+      <span class="text-base font-medium">无限画布 · 管理后台</span>
+    </a>
+    <nav class="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div class="side-group">运营</div>
+      <a href="admin.html" class="side-link active"><i data-lucide="layout-dashboard" class="size-4"></i>总览</a>
+      <a href="admin-users.html" class="side-link"><i data-lucide="users" class="size-4"></i>用户管理</a>
+      <a href="admin-billing.html" class="side-link"><i data-lucide="credit-card" class="size-4"></i>订单与收入</a>
+      <div class="side-group">内容</div>
+      <a href="admin-content.html" class="side-link"><i data-lucide="library" class="size-4"></i>提示词与社区</a>
+      <a href="admin-content.html" class="side-link"><i data-lucide="gift" class="size-4"></i>活动管理</a>
+      <a href="admin-docs-mgr.html" class="side-link"><i data-lucide="file-text" class="size-4"></i>文档管理</a>
+      <div class="side-group">服务端</div>
+      <a href="admin-models.html" class="side-link"><i data-lucide="boxes" class="size-4"></i>模型与渠道</a>
+      <a href="admin-system.html" class="side-link"><i data-lucide="settings-2" class="size-4"></i>系统设置</a>
+    </nav>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <a href="home.html" class="side-link mb-1"><i data-lucide="arrow-left" class="size-4"></i>返回前台</a>
+      <div class="flex items-center gap-2.5 rounded-lg px-3 py-2">
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+        <div class="min-w-0"><p class="truncate text-sm font-medium">管理员</p><p class="truncate text-xs text-stone-400">admin@infinite.ai</p></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========== 主区域 ========== -->
+  <div class="flex min-w-0 flex-1 flex-col">
+    <!-- 顶栏 -->
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 dark:border-stone-800 dark:bg-[#1c1917]/90">
+      <div class="flex min-w-0 items-center gap-3">
+        <button class="icon-btn md:hidden" onclick="toggleDrawer(true)"><i data-lucide="menu" class="size-5"></i></button>
+        <h1 class="truncate text-lg font-semibold">总览</h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="icon-btn" onclick="toggleTheme()" title="切换主题">
+          <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+          <i data-lucide="moon" class="size-4 dark:hidden"></i>
+        </button>
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+      </div>
+    </header>
+
+    <!-- 移动端抽屉 -->
+    <div id="drawer" class="fixed inset-0 z-50 hidden md:hidden">
+      <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+      <div class="absolute inset-y-0 left-0 w-64 bg-white p-4 dark:bg-[#1c1917]">
+        <div class="mb-4 flex items-center justify-between">
+          <span class="font-medium">管理后台</span>
+          <button class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button>
+        </div>
+        <nav class="flex flex-col gap-1">
+          <a href="admin.html" class="side-link active">总览</a>
+          <a href="admin-users.html" class="side-link">用户管理</a>
+          <a href="admin-billing.html" class="side-link">订单与收入</a>
+          <a href="admin-content.html" class="side-link">提示词与社区</a>
+          <a href="admin-models.html" class="side-link">模型与渠道</a>
+          <a href="admin-system.html" class="side-link">系统设置</a>
+        </nav>
+      </div>
+    </div>
+
+    <main class="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <!-- 时间筛选 -->
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="inline-flex gap-1 rounded-xl border border-stone-200 bg-white p-1 dark:border-stone-800 dark:bg-[#292524]">
+          <button class="rounded-lg bg-black/5 px-3.5 py-1.5 text-sm font-medium dark:bg-white/10">今日</button>
+          <button class="rounded-lg px-3.5 py-1.5 text-sm text-stone-500 transition hover:text-stone-900 dark:text-stone-400">近 7 天</button>
+          <button class="rounded-lg px-3.5 py-1.5 text-sm text-stone-500 transition hover:text-stone-900 dark:text-stone-400">近 30 天</button>
+        </div>
+        <button class="btn-secondary"><i data-lucide="download" class="size-4"></i>导出报表</button>
+      </div>
+
+      <!-- 核心指标 -->
+      <div class="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-stone-500 dark:text-stone-400">注册用户</span>
+            <span class="chip-green">+12.4%</span>
+          </div>
+          <p class="mt-2 text-2xl font-semibold">48,213</p>
+          <p class="mt-1 text-xs text-stone-400">较昨日 +428</p>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-stone-500 dark:text-stone-400">今日生成任务</span>
+            <span class="chip-green">+8.1%</span>
+          </div>
+          <p class="mt-2 text-2xl font-semibold">126,540</p>
+          <p class="mt-1 text-xs text-stone-400">图片 98.2k · 视频 6.1k · 文本 22.2k</p>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-stone-500 dark:text-stone-400">今日收入</span>
+            <span class="chip-green">+5.6%</span>
+          </div>
+          <p class="mt-2 text-2xl font-semibold">¥ 12,846</p>
+          <p class="mt-1 text-xs text-stone-400">充值包 ¥12,846</p>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-stone-500 dark:text-stone-400">付费转化率</span>
+            <span class="chip-red">-0.8%</span>
+          </div>
+          <p class="mt-2 text-2xl font-semibold">6.2%</p>
+          <p class="mt-1 text-xs text-stone-400">付费用户 2,989</p>
+        </div>
+      </div>
+
+      <!-- 图表区 -->
+      <div class="mt-4 grid gap-4 xl:grid-cols-3">
+        <div class="card bg-white p-5 xl:col-span-2 dark:bg-[#292524]">
+          <div class="flex items-center justify-between">
+            <h3 class="font-medium">生成任务趋势</h3>
+            <div class="flex gap-3 text-xs text-stone-500 dark:text-stone-400">
+              <span class="flex items-center gap-1.5"><span class="size-2 rounded-full bg-stone-900 dark:bg-stone-100"></span>图片</span>
+              <span class="flex items-center gap-1.5"><span class="size-2 rounded-full bg-stone-400"></span>视频</span>
+            </div>
+          </div>
+          <!-- 纯 CSS 柱状图占位 -->
+          <div class="mt-6 flex h-44 items-end gap-1.5">
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:45%"></div>
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:62%"></div>
+            <div class="flex-1 rounded-t bg-stone-900 dark:bg-stone-100" style="height:78%"></div>
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:55%"></div>
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:70%"></div>
+            <div class="flex-1 rounded-t bg-stone-900 dark:bg-stone-100" style="height:88%"></div>
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:64%"></div>
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:74%"></div>
+            <div class="flex-1 rounded-t bg-stone-900 dark:bg-stone-100" style="height:92%"></div>
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:58%"></div>
+            <div class="flex-1 rounded-t bg-stone-200 dark:bg-stone-700" style="height:80%"></div>
+            <div class="flex-1 rounded-t bg-stone-900 dark:bg-stone-100" style="height:96%"></div>
+          </div>
+          <div class="mt-2 flex justify-between text-xs text-stone-400"><span>09-01</span><span>09-04</span><span>09-07</span><span>09-10</span><span>09-13</span></div>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <h3 class="font-medium">模型用量 Top 5</h3>
+          <div class="mt-5 space-y-4">
+            <div>
+              <div class="flex justify-between text-sm"><span>Flux 1.1 Pro</span><span class="text-stone-400">42.1k</span></div>
+              <div class="mt-1.5 h-1.5 rounded-full bg-stone-100 dark:bg-white/10"><div class="h-full w-[86%] rounded-full bg-stone-900 dark:bg-stone-100"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between text-sm"><span>SDXL Turbo</span><span class="text-stone-400">31.7k</span></div>
+              <div class="mt-1.5 h-1.5 rounded-full bg-stone-100 dark:bg-white/10"><div class="h-full w-[65%] rounded-full bg-stone-900 dark:bg-stone-100"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between text-sm"><span>Claude 4.5</span><span class="text-stone-400">22.2k</span></div>
+              <div class="mt-1.5 h-1.5 rounded-full bg-stone-100 dark:bg-white/10"><div class="h-full w-[45%] rounded-full bg-stone-900 dark:bg-stone-100"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between text-sm"><span>Kling 2.0</span><span class="text-stone-400">6.1k</span></div>
+              <div class="mt-1.5 h-1.5 rounded-full bg-stone-100 dark:bg-white/10"><div class="h-full w-[13%] rounded-full bg-stone-900 dark:bg-stone-100"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between text-sm"><span>GPT Image</span><span class="text-stone-400">5.9k</span></div>
+              <div class="mt-1.5 h-1.5 rounded-full bg-stone-100 dark:bg-white/10"><div class="h-full w-[12%] rounded-full bg-stone-900 dark:bg-stone-100"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 最近订单 + 系统状态 -->
+      <div class="mt-4 grid gap-4 xl:grid-cols-3">
+        <div class="card overflow-hidden bg-white xl:col-span-2 dark:bg-[#292524]">
+          <div class="flex items-center justify-between border-b border-stone-200 px-5 py-4 dark:border-stone-800">
+            <h3 class="font-medium">最近订单</h3>
+            <a href="admin-billing.html" class="text-sm text-stone-500 transition hover:text-stone-900 dark:hover:text-stone-100">查看全部</a>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[560px]">
+              <thead class="border-b border-stone-200 dark:border-stone-800"><tr><th class="th">订单号</th><th class="th">用户</th><th class="th">内容</th><th class="th">金额</th><th class="th">状态</th><th class="th">时间</th></tr></thead>
+              <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+                <tr><td class="td font-mono text-xs">ORD-20260913-0412</td><td class="td">阿河</td><td class="td">标准包（2,000 积分）</td><td class="td font-medium">¥68.00</td><td class="td"><span class="chip-green">已支付</span></td><td class="td text-stone-400">10:24</td></tr>
+                <tr><td class="td font-mono text-xs">ORD-20260913-0411</td><td class="td">白噪工作室</td><td class="td">标准包（2,000 积分）</td><td class="td font-medium">¥50.00</td><td class="td"><span class="chip-green">已支付</span></td><td class="td text-stone-400">09:58</td></tr>
+                <tr><td class="td font-mono text-xs">ORD-20260913-0410</td><td class="td">慢速快门</td><td class="td">大额包（5,000 积分）</td><td class="td font-medium">¥268.00</td><td class="td"><span class="chip">待支付</span></td><td class="td text-stone-400">09:41</td></tr>
+                <tr><td class="td font-mono text-xs">ORD-20260913-0409</td><td class="td">柚子茶</td><td class="td">标准包 ×2</td><td class="td font-medium">¥648.00</td><td class="td"><span class="chip">已关闭</span></td><td class="td text-stone-400">08:17</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card bg-white p-5 dark:bg-[#292524]">
+          <h3 class="font-medium">服务状态</h3>
+          <div class="mt-5 space-y-4 text-sm">
+            <div class="flex items-center justify-between"><span class="flex items-center gap-2"><span class="size-2 rounded-full bg-emerald-500"></span>API 网关</span><span class="text-stone-400">正常 · 45ms</span></div>
+            <div class="flex items-center justify-between"><span class="flex items-center gap-2"><span class="size-2 rounded-full bg-emerald-500"></span>图像生成队列</span><span class="text-stone-400">正常 · 排队 12</span></div>
+            <div class="flex items-center justify-between"><span class="flex items-center gap-2"><span class="size-2 rounded-full bg-amber-500"></span>视频生成队列</span><span class="text-stone-400">繁忙 · 排队 86</span></div>
+            <div class="flex items-center justify-between"><span class="flex items-center gap-2"><span class="size-2 rounded-full bg-emerald-500"></span>对象存储</span><span class="text-stone-400">正常 · 62% 容量</span></div>
+            <div class="flex items-center justify-between"><span class="flex items-center gap-2"><span class="size-2 rounded-full bg-emerald-500"></span>数据库</span><span class="text-stone-400">正常 · 38 连接</span></div>
+          </div>
+          <div class="mt-5 rounded-lg bg-black/[0.03] p-3 text-xs leading-5 text-stone-500 dark:bg-white/[0.06] dark:text-stone-400">
+            视频队列繁忙已持续 25 分钟，可临时提升并发上限或给用户排队提示。
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) {
+    document.getElementById('drawer').classList.toggle('hidden', !open);
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

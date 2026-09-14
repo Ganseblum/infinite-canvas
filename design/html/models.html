@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 模型广场设计稿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75 dark:focus-visible:outline-stone-100; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18] dark:focus-visible:outline-stone-100; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 active:scale-95 active:bg-black/[0.1] disabled:pointer-events-none disabled:opacity-40 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white dark:active:bg-white/[0.2]; }
+  .nav-link { @apply relative flex h-14 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .dot-grid { background-image: radial-gradient(#e5e7eb 1px, transparent 1px); background-size: 16px 16px; }
+  .dark .dot-grid { background-image: radial-gradient(rgba(245,245,244,.18) 1px, transparent 1px); }
+  .filter-tag { @apply cursor-pointer rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none text-stone-500 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-50; }
+  .filter-tag.active { @apply bg-stone-900 font-semibold text-white dark:bg-stone-100 dark:text-stone-900; }
+  .chip { @apply inline-flex items-center gap-1 rounded-full border border-stone-200 px-2 py-0.5 text-[11px] text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<!-- ========== 顶部导航 ========== -->
+<header class="sticky top-0 z-40 h-14 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl dark:border-stone-800 dark:bg-[#1c1917]/90">
+  <div class="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-4 sm:px-6">
+    <div class="flex min-w-0 items-center">
+      <a href="home.html" class="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
+        <span class="size-5 shrink-0 rounded bg-current"></span>
+        <span class="text-base font-medium">无限画布</span>
+      </a>
+      <button type="button" class="icon-btn ml-2 md:hidden" onclick="toggleDrawer(true)" aria-label="打开菜单"><i data-lucide="menu" class="size-5"></i></button>
+      <nav class="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
+        <a href="home.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100">首页</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="image" class="size-4"></i>图片</a>
+        <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="video" class="size-4"></i>视频</a>
+        <a href="community.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="users" class="size-4"></i>社区</a>
+        <a href="models.html" class="nav-link font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"><i data-lucide="boxes" class="size-4"></i>模型</a>
+        <a href="activity.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="gift" class="size-4"></i>活动</a>
+        <a href="pricing.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="credit-card" class="size-4"></i>定价</a>
+      </nav>
+    </div>
+    <div class="my-auto flex h-9 min-w-0 items-center justify-end gap-2 whitespace-nowrap">
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="切换主题">
+        <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+        <i data-lucide="moon" class="size-4 dark:hidden"></i>
+      </button>
+      <a href="login.html" class="btn-primary !h-8 !px-4 text-[13px]">登录</a>
+    </div>
+  </div>
+</header>
+
+<!-- ========== 移动端抽屉 ========== -->
+<div id="drawer" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+  <div class="absolute inset-y-0 left-0 w-72 bg-white p-5 dark:bg-[#292524]">
+    <div class="mb-6 flex items-center justify-between">
+      <span class="text-base font-medium">无限画布</span>
+      <button type="button" class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button>
+    </div>
+    <nav class="flex flex-col gap-1 text-sm">
+      <a href="home.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">首页</a>
+      <a href="community.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">社区</a>
+      <a href="models.html" class="rounded-lg bg-black/5 px-3 py-2.5 font-medium dark:bg-white/10">模型</a>
+      <a href="activity.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">活动</a>
+      <a href="pricing.html" class="rounded-lg px-3 py-2.5 text-stone-600 hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10">定价</a>
+    </nav>
+  </div>
+</div>
+
+<main class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+  <!-- ========== 页头 + 搜索 ========== -->
+  <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+    <div>
+      <h1 class="text-3xl font-semibold">模型广场</h1>
+      <p class="mt-2 text-sm text-stone-500 dark:text-stone-400">浏览可用模型的能力与积分消耗，点击即可在画布中直接使用</p>
+    </div>
+    <div class="relative w-full md:w-80">
+      <i data-lucide="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400"></i>
+      <input type="text" placeholder="搜索模型名称或能力…" class="h-10 w-full rounded-lg border border-stone-200 bg-transparent pl-9 pr-3 text-sm outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" />
+    </div>
+  </div>
+
+  <!-- ========== 分类筛选 ========== -->
+  <div class="hide-scrollbar mt-6 flex gap-1 overflow-x-auto pb-1" id="filters">
+    <button class="filter-tag active">全部 24</button>
+    <button class="filter-tag">图像生成 12</button>
+    <button class="filter-tag">视频生成 5</button>
+    <button class="filter-tag">文本生成 4</button>
+    <button class="filter-tag">音频生成 3</button>
+    <button class="filter-tag">图像编辑 3</button>
+  </div>
+
+  <!-- ========== 模型卡片网格 ========== -->
+  <div class="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <!-- 模型卡片 -->
+    <div class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+      <div class="grid grid-cols-3 gap-0.5">
+        <img src="https://picsum.photos/seed/m1a/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m1b/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m1c/300/300" alt="" class="aspect-square w-full object-cover" />
+      </div>
+      <div class="p-5">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="font-medium">Flux 1.1 Pro</h3>
+          <span class="chip">图像</span>
+        </div>
+        <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">目前综合质量最高的图像模型之一，提示词遵循度出色，擅长真实质感与复杂构图。</p>
+        <div class="mt-4 flex flex-wrap gap-1.5">
+          <span class="chip">真实感</span><span class="chip">构图</span><span class="chip">10 积分/张</span>
+        </div>
+        <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 dark:border-stone-800/60">
+          <span class="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400"><i data-lucide="flame" class="size-3.5"></i>本周使用 12.4k</span>
+          <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]">立即使用</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+      <div class="grid grid-cols-3 gap-0.5">
+        <img src="https://picsum.photos/seed/m2a/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m2b/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m2c/300/300" alt="" class="aspect-square w-full object-cover" />
+      </div>
+      <div class="p-5">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <h3 class="font-medium">Kling 2.0</h3>
+            <span class="rounded-full bg-stone-900 px-2 py-0.5 text-[11px] text-white dark:bg-stone-100 dark:text-stone-900">新</span>
+          </div>
+          <span class="chip">视频</span>
+        </div>
+        <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">新一代视频生成模型，动态稳定性与物理表现大幅提升，支持首尾帧衔接。</p>
+        <div class="mt-4 flex flex-wrap gap-1.5">
+          <span class="chip">图生视频</span><span class="chip">首尾帧</span><span class="chip">200 积分/段</span>
+        </div>
+        <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 dark:border-stone-800/60">
+          <span class="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400"><i data-lucide="flame" class="size-3.5"></i>本周使用 8.2k</span>
+          <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]">立即使用</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+      <div class="grid grid-cols-3 gap-0.5">
+        <img src="https://picsum.photos/seed/m3a/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m3b/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m3c/300/300" alt="" class="aspect-square w-full object-cover" />
+      </div>
+      <div class="p-5">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="font-medium">SDXL Turbo</h3>
+          <span class="chip">图像</span>
+        </div>
+        <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">极速出图，适合草图探索与批量风格尝试，消耗积分低。</p>
+        <div class="mt-4 flex flex-wrap gap-1.5">
+          <span class="chip">极速</span><span class="chip">草图</span><span class="chip">1 积分/张</span>
+        </div>
+        <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 dark:border-stone-800/60">
+          <span class="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400"><i data-lucide="flame" class="size-3.5"></i>本周使用 21.7k</span>
+          <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]">立即使用</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+      <div class="grid grid-cols-3 gap-0.5">
+        <img src="https://picsum.photos/seed/m4a/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m4b/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m4c/300/300" alt="" class="aspect-square w-full object-cover" />
+      </div>
+      <div class="p-5">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="font-medium">GPT Image</h3>
+          <span class="chip">图像编辑</span>
+        </div>
+        <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">擅长指令式局部重绘与图文排版，对中文海报场景理解出色。</p>
+        <div class="mt-4 flex flex-wrap gap-1.5">
+          <span class="chip">局部重绘</span><span class="chip">排版</span><span class="chip">8 积分/张</span>
+        </div>
+        <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 dark:border-stone-800/60">
+          <span class="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400"><i data-lucide="flame" class="size-3.5"></i>本周使用 6.9k</span>
+          <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]">立即使用</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+      <div class="grid grid-cols-3 gap-0.5">
+        <img src="https://picsum.photos/seed/m5a/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m5b/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m5c/300/300" alt="" class="aspect-square w-full object-cover" />
+      </div>
+      <div class="p-5">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="font-medium">MiniMax Audio</h3>
+          <span class="chip">音频</span>
+        </div>
+        <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">高质量中文语音合成与音效生成，多音色可选，适合视频配音。</p>
+        <div class="mt-4 flex flex-wrap gap-1.5">
+          <span class="chip">配音</span><span class="chip">音效</span><span class="chip">5 积分/条</span>
+        </div>
+        <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 dark:border-stone-800/60">
+          <span class="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400"><i data-lucide="flame" class="size-3.5"></i>本周使用 3.1k</span>
+          <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]">立即使用</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card group overflow-hidden transition hover:bg-black/[0.02] dark:hover:bg-white/[0.04]">
+      <div class="grid grid-cols-3 gap-0.5">
+        <img src="https://picsum.photos/seed/m6a/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m6b/300/300" alt="" class="aspect-square w-full object-cover" />
+        <img src="https://picsum.photos/seed/m6c/300/300" alt="" class="aspect-square w-full object-cover" />
+      </div>
+      <div class="p-5">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="font-medium">Claude 4.5</h3>
+          <span class="chip">文本</span>
+        </div>
+        <p class="mt-1.5 line-clamp-2 text-sm leading-6 text-stone-500 dark:text-stone-400">长文本理解与创作能力强，适合脚本、分镜大纲与提示词扩写。</p>
+        <div class="mt-4 flex flex-wrap gap-1.5">
+          <span class="chip">长文本</span><span class="chip">脚本</span><span class="chip">2 积分/千字</span>
+        </div>
+        <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4 dark:border-stone-800/60">
+          <span class="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400"><i data-lucide="flame" class="size-3.5"></i>本周使用 9.8k</span>
+          <button type="button" class="btn-secondary !h-8 !px-3 text-[13px]">立即使用</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 加载更多 -->
+  <div class="mt-10 text-center">
+    <button type="button" class="btn-secondary">加载更多模型</button>
+  </div>
+</main>
+
+<footer class="border-t border-stone-200 py-8 dark:border-stone-800">
+  <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 text-sm text-stone-500 sm:flex-row sm:px-6 dark:text-stone-400">
+    <span>© 2026 无限画布</span>
+    <nav class="flex flex-wrap justify-center gap-6">
+      <a href="#" class="transition hover:text-stone-900 dark:hover:text-stone-100">文档</a>
+      <a href="community.html" class="transition hover:text-stone-900 dark:hover:text-stone-100">社区</a>
+      <a href="#" class="transition hover:text-stone-900 dark:hover:text-stone-100">服务条款</a>
+      <a href="#" class="transition hover:text-stone-900 dark:hover:text-stone-100">隐私政策</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) {
+    document.getElementById('drawer').classList.toggle('hidden', !open);
+  }
+  document.querySelectorAll('#filters .filter-tag').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#filters .filter-tag').forEach((el) => el.classList.toggle('active', el === btn));
+    });
+  });
+  lucide.createIcons();
+</script>
+</body>
+</html>

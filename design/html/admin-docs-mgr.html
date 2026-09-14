@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 文档管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-stone-900 px-4 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85; }
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 px-4 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .side-link { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-link.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .side-group { @apply mb-1 px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 text-xs leading-none text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400; }
+  .chip-amber { @apply inline-flex h-6 items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 text-xs leading-none text-amber-600 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-400; }
+  .field-input { @apply h-9 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:text-stone-100 dark:focus:border-stone-500; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex dark:border-stone-800 dark:bg-[#1c1917]">
+    <a href="admin.html" class="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 px-5 text-sm font-semibold tracking-tight dark:border-stone-800">
+      <span class="size-5 rounded bg-current"></span><span class="text-base font-medium">管理后台</span>
+    </a>
+    <nav class="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div class="side-group">运营</div>
+      <a href="admin.html" class="side-link"><i data-lucide="layout-dashboard" class="size-4"></i>总览</a>
+      <a href="admin-users.html" class="side-link"><i data-lucide="users" class="size-4"></i>用户管理</a>
+      <a href="admin-billing.html" class="side-link"><i data-lucide="credit-card" class="size-4"></i>订单与收入</a>
+      <div class="side-group">内容</div>
+      <a href="admin-content.html" class="side-link"><i data-lucide="library" class="size-4"></i>提示词与社区</a>
+      <a href="admin-docs-mgr.html" class="side-link active"><i data-lucide="file-text" class="size-4"></i>文档管理</a>
+      <div class="side-group">服务端</div>
+      <a href="admin-models.html" class="side-link"><i data-lucide="boxes" class="size-4"></i>模型与渠道</a>
+      <a href="admin-system.html" class="side-link"><i data-lucide="settings-2" class="size-4"></i>系统设置</a>
+    </nav>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <a href="home.html" class="side-link"><i data-lucide="arrow-left" class="size-4"></i>返回前台</a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 dark:border-stone-800 dark:bg-[#1c1917]/90">
+      <div class="flex items-center gap-3">
+        <button class="icon-btn lg:hidden" onclick="toggleDocTree(true)" title="文档结构"><i data-lucide="list-tree" class="size-5"></i></button>
+        <button class="icon-btn md:hidden" onclick="toggleDrawer(true)"><i data-lucide="menu" class="size-5"></i></button>
+        <h1 class="text-lg font-semibold">文档管理</h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="btn-secondary !h-8 !px-3 text-[13px]" onclick="toast('已发布全部草稿', 'success')">发布全部</button>
+        <button class="icon-btn" onclick="toggleTheme()"><i data-lucide="sun" class="size-4 hidden dark:block"></i><i data-lucide="moon" class="size-4 dark:hidden"></i></button>
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+      </div>
+    </header>
+
+    <div id="drawer" class="fixed inset-0 z-50 hidden md:hidden">
+      <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+      <div class="absolute inset-y-0 left-0 w-64 bg-white p-4 dark:bg-[#1c1917]">
+        <div class="mb-4 flex items-center justify-between"><span class="font-medium">管理后台</span><button class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button></div>
+        <nav class="flex flex-col gap-1">
+          <a href="admin.html" class="side-link">总览</a><a href="admin-users.html" class="side-link">用户管理</a><a href="admin-billing.html" class="side-link">订单与收入</a><a href="admin-content.html" class="side-link">提示词与社区</a><a href="admin-docs-mgr.html" class="side-link active">文档管理</a><a href="admin-models.html" class="side-link">模型与渠道</a><a href="admin-system.html" class="side-link">系统设置</a>
+        </nav>
+      </div>
+    </div>
+    <!-- 移动端文档树抽屉 -->
+    <div id="doc-drawer" class="fixed inset-0 z-50 hidden lg:hidden">
+      <div class="absolute inset-0 bg-black/40" onclick="toggleDocTree(false)"></div>
+      <div class="absolute inset-y-0 left-0 w-72 overflow-y-auto bg-white p-4 dark:bg-[#1c1917]">
+        <div class="mb-4 flex items-center justify-between">
+          <span class="text-xs font-semibold uppercase tracking-widest text-stone-400">文档结构</span>
+          <button class="icon-btn" onclick="toggleDocTree(false)"><i data-lucide="x" class="size-5"></i></button>
+        </div>
+        <nav class="space-y-0.5 text-sm">
+          <div class="flex items-center gap-2 rounded-md px-2 py-1.5 font-medium">快速开始</div>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="toggleDocTree(false); openDoc('安装部署')">安装部署</button>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="toggleDocTree(false); openDoc('快速上手')">快速上手</button>
+          <div class="flex items-center gap-2 rounded-md px-2 py-1.5 font-medium">功能介绍</div>
+          <button class="block w-full rounded-md bg-black/[0.06] px-2 py-1.5 pl-8 text-left font-medium dark:bg-white/[0.12]" onclick="toggleDocTree(false); openDoc('核心功能')">核心功能</button>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="toggleDocTree(false); openDoc('画布操作')">画布操作</button>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="toggleDocTree(false); openDoc('工作流')">工作流</button>
+        </nav>
+      </div>
+    </div>
+
+
+    <main class="flex min-h-0 flex-1">
+      <!-- 文档树 -->
+      <aside class="thin-scrollbar hidden w-64 shrink-0 overflow-y-auto border-r border-stone-200 p-4 lg:block dark:border-stone-800">
+        <div class="mb-3 flex items-center justify-between">
+          <span class="text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">文档结构</span>
+          <button class="icon-btn !size-7" onclick="toast('已新建页面', 'success')"><i data-lucide="plus" class="size-4"></i></button>
+        </div>
+        <nav class="space-y-0.5 text-sm">
+          <div class="flex items-center gap-2 rounded-md px-2 py-1.5 font-medium"><i data-lucide="chevron-down" class="size-3.5 text-stone-400"></i>快速开始</div>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="openDoc('安装部署')">安装部署</button>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="openDoc('快速上手')">快速上手</button>
+          <div class="flex items-center gap-2 rounded-md px-2 py-1.5 font-medium"><i data-lucide="chevron-down" class="size-3.5 text-stone-400"></i>功能介绍</div>
+          <button class="block w-full rounded-md bg-black/[0.06] px-2 py-1.5 pl-8 text-left font-medium dark:bg-white/[0.12]" onclick="openDoc('核心功能')">核心功能</button>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="openDoc('画布操作')">画布操作</button>
+          <button class="block w-full rounded-md px-2 py-1.5 pl-8 text-left text-stone-600 transition hover:bg-black/5 dark:text-stone-300 dark:hover:bg-white/10" onclick="openDoc('工作流')">工作流</button>
+          <div class="flex items-center gap-2 rounded-md px-2 py-1.5 font-medium"><i data-lucide="chevron-right" class="size-3.5 text-stone-400"></i>进阶</div>
+          <div class="flex items-center gap-2 rounded-md px-2 py-1.5 font-medium"><i data-lucide="chevron-right" class="size-3.5 text-stone-400"></i>API 参考</div>
+        </nav>
+      </aside>
+
+      <!-- 编辑器 -->
+      <div class="thin-scrollbar min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        <div class="mx-auto max-w-3xl">
+          <!-- 编辑器工具条 -->
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <input class="!h-9 w-64 border-0 bg-transparent p-0 text-lg font-semibold outline-none" value="核心功能" />
+              <span class="chip-amber">有未发布修改</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-stone-400">上次发布 09-10 18:30 · 草稿自动保存</span>
+              <button class="btn-secondary btn-sm" onclick="toast('已预览', 'info')">预览</button>
+              <button class="btn-primary btn-sm" onclick="toast('已发布', 'success')">发布</button>
+            </div>
+          </div>
+          <!-- 格式工具栏 -->
+          <div class="sticky top-0 z-10 mt-4 flex items-center gap-0.5 rounded-xl border border-stone-200 bg-white/95 p-1 backdrop-blur dark:border-stone-800 dark:bg-[#292524]/95">
+            <button class="icon-btn !size-7" title="加粗"><i data-lucide="bold" class="size-3.5"></i></button>
+            <button class="icon-btn !size-7" title="斜体"><i data-lucide="italic" class="size-3.5"></i></button>
+            <span class="mx-1 h-4 w-px bg-stone-200 dark:bg-stone-700"></span>
+            <button class="icon-btn !size-7" title="标题"><i data-lucide="heading-2" class="size-3.5"></i></button>
+            <button class="icon-btn !size-7" title="列表"><i data-lucide="list" class="size-3.5"></i></button>
+            <button class="icon-btn !size-7" title="引用"><i data-lucide="quote" class="size-3.5"></i></button>
+            <button class="icon-btn !size-7" title="代码"><i data-lucide="code" class="size-3.5"></i></button>
+            <button class="icon-btn !size-7" title="图片"><i data-lucide="image" class="size-3.5"></i></button>
+            <button class="icon-btn !size-7" title="链接"><i data-lucide="link" class="size-3.5"></i></button>
+            <span class="ml-auto pr-1 text-[11px] text-stone-400">Markdown</span>
+          </div>
+          <!-- 编辑区 -->
+          <div class="mt-4 rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-800 dark:bg-[#292524]">
+            <div class="space-y-3 text-sm leading-7">
+              <h1 class="text-2xl font-semibold">核心功能</h1>
+              <p class="text-stone-600 dark:text-stone-300">无限画布是一个基于浏览器的 AI 创作工作台，以下是其核心能力概览。</p>
+              <h2 class="pt-2 text-lg font-semibold">无限画布</h2>
+              <p class="text-stone-600 dark:text-stone-300">在一块可无限平移与缩放的画布上自由排布图片、视频、文本与音频节点，通过连线组织生成流程。</p>
+              <h2 class="pt-2 text-lg font-semibold">多模型生成</h2>
+              <p class="text-stone-600 dark:text-stone-300">支持接入任意 OpenAI 兼容接口，图像、视频、文本、音频四类任务可并行执行。</p>
+              <div class="rounded-lg border-l-4 border-stone-300 bg-black/[0.03] px-4 py-3 text-stone-600 dark:border-stone-600 dark:bg-white/[0.06] dark:text-stone-300">
+                提示：生成失败会自动返还积分，可在生成记录中一键重试。
+              </div>
+              <h2 class="pt-2 text-lg font-semibold">Agent 助手</h2>
+              <p class="text-stone-600 dark:text-stone-300">侧边 Agent 面板可通过自然语言直接操作画布：创建节点、修改参数、发起生成。</p>
+            </div>
+          </div>
+          <!-- 版本历史 -->
+          <div class="mt-6">
+            <h3 class="mb-3 text-sm font-semibold">版本历史</h3>
+            <div class="card divide-y divide-stone-100 bg-white text-sm dark:divide-stone-800/60 dark:bg-[#292524]">
+              <div class="flex items-center justify-between px-4 py-3"><span>修改了「多模型生成」章节</span><span class="flex items-center gap-2 text-xs text-stone-400">admin · 09-13 10:02 <button class="btn-secondary btn-sm" onclick="toast('已回滚到该版本', 'info')">回滚</button></span></div>
+              <div class="flex items-center justify-between px-4 py-3"><span>更新配图 2 张</span><span class="flex items-center gap-2 text-xs text-stone-400">ops · 09-10 18:30 <button class="btn-secondary btn-sm" onclick="toast('已回滚到该版本', 'info')">回滚</button></span></div>
+              <div class="flex items-center justify-between px-4 py-3"><span>创建页面</span><span class="flex items-center gap-2 text-xs text-stone-400">admin · 09-01 14:11 <button class="btn-secondary btn-sm" onclick="toast('已回滚到该版本', 'info')">回滚</button></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden-t"></div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) { document.getElementById('drawer').classList.toggle('hidden', !open); }
+  function toggleDocTree(open) { document.getElementById('doc-drawer').classList.toggle('hidden', !open); }
+  function openDoc(name) { toast(`已打开「${name}」（Mock）`, 'info'); }
+  const style = document.createElement('style');
+  style.textContent = `
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(style);
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const el = document.getElementById('toast');
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    el.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    el.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden-t'), 2500);
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

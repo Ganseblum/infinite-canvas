@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 模型与渠道配置</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-stone-900 px-4 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 disabled:pointer-events-none disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85; }
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 px-4 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .side-link { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-link.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .side-group { @apply mb-1 px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 text-xs leading-none text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400; }
+  .chip-red { @apply inline-flex h-6 items-center rounded-md border border-red-200 bg-red-50 px-1.5 text-xs leading-none text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400; }
+  .filter-tag { @apply cursor-pointer rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none text-stone-500 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-50; }
+  .filter-tag.active { @apply bg-stone-900 font-semibold text-white dark:bg-stone-100 dark:text-stone-900; }
+  .th { @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500; }
+  .td { @apply px-4 py-3 text-sm; }
+  .field-input { @apply h-9 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:text-stone-100 dark:focus:border-stone-500; }
+  .switch { @apply relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full bg-stone-200 transition dark:bg-stone-700; }
+  .switch::after { content: ""; @apply absolute left-0.5 size-4 rounded-full bg-white shadow transition-transform dark:bg-stone-300; }
+  .switch.on { @apply bg-stone-900 dark:bg-stone-100; }
+  .switch.on::after { @apply translate-x-4 bg-white dark:bg-stone-900; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex dark:border-stone-800 dark:bg-[#1c1917]">
+    <a href="admin.html" class="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 px-5 text-sm font-semibold tracking-tight dark:border-stone-800">
+      <span class="size-5 rounded bg-current"></span><span class="text-base font-medium">管理后台</span>
+    </a>
+    <nav class="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div class="side-group">运营</div>
+      <a href="admin.html" class="side-link"><i data-lucide="layout-dashboard" class="size-4"></i>总览</a>
+      <a href="admin-users.html" class="side-link"><i data-lucide="users" class="size-4"></i>用户管理</a>
+      <a href="admin-billing.html" class="side-link"><i data-lucide="credit-card" class="size-4"></i>订单与收入</a>
+      <div class="side-group">内容</div>
+      <a href="admin-content.html" class="side-link"><i data-lucide="library" class="size-4"></i>提示词与社区</a>
+      <a href="admin-docs-mgr.html" class="side-link"><i data-lucide="file-text" class="size-4"></i>文档管理</a>
+      <div class="side-group">服务端</div>
+      <a href="admin-models.html" class="side-link active"><i data-lucide="boxes" class="size-4"></i>模型与渠道</a>
+      <a href="admin-system.html" class="side-link"><i data-lucide="settings-2" class="size-4"></i>系统设置</a>
+    </nav>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <a href="home.html" class="side-link"><i data-lucide="arrow-left" class="size-4"></i>返回前台</a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 dark:border-stone-800 dark:bg-[#1c1917]/90">
+      <div class="flex items-center gap-3">
+        <button class="icon-btn md:hidden" onclick="toggleDrawer(true)"><i data-lucide="menu" class="size-5"></i></button>
+        <h1 class="text-lg font-semibold">模型与渠道</h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="icon-btn" onclick="toggleTheme()"><i data-lucide="sun" class="size-4 hidden dark:block"></i><i data-lucide="moon" class="size-4 dark:hidden"></i></button>
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+      </div>
+    </header>
+
+    <div id="drawer" class="fixed inset-0 z-50 hidden md:hidden">
+      <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+      <div class="absolute inset-y-0 left-0 w-64 bg-white p-4 dark:bg-[#1c1917]">
+        <div class="mb-4 flex items-center justify-between"><span class="font-medium">管理后台</span><button class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button></div>
+        <nav class="flex flex-col gap-1">
+          <a href="admin.html" class="side-link">总览</a><a href="admin-users.html" class="side-link">用户管理</a><a href="admin-billing.html" class="side-link">订单与收入</a><a href="admin-content.html" class="side-link">提示词与社区</a><a href="admin-models.html" class="side-link active">模型与渠道</a><a href="admin-system.html" class="side-link">系统设置</a>
+        </nav>
+      </div>
+    </div>
+
+    <main class="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <!-- ===== 上游渠道 ===== -->
+      <section>
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold">上游渠道</h2>
+            <p class="mt-0.5 text-xs text-stone-400">模型请求实际转发到的 OpenAI 兼容接口</p>
+          </div>
+          <button class="btn-primary" onclick="openModal('m-channel')"><i data-lucide="plus" class="size-4"></i>添加渠道</button>
+        </div>
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div class="card bg-white p-5 dark:bg-[#292524]">
+            <div class="flex items-start justify-between">
+              <div class="flex items-center gap-2.5">
+                <span class="inline-flex size-9 items-center justify-center rounded-lg bg-black/5 dark:bg-white/10"><i data-lucide="cloud" class="size-4"></i></span>
+                <div><p class="font-medium">官方直连</p><p class="text-xs text-stone-400">api.openai.com</p></div>
+              </div>
+              <span class="chip-green">健康</span>
+            </div>
+            <div class="mt-4 space-y-2 text-sm">
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">密钥</span><span class="font-mono text-xs">sk-…x7f2</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">今日请求</span><span>86.2k</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">平均延迟</span><span>1.2s</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">错误率</span><span class="text-emerald-600 dark:text-emerald-400">0.3%</span></div>
+            </div>
+            <div class="mt-4 flex gap-2 border-t border-stone-100 pt-4 dark:border-stone-800/60">
+              <button class="btn-secondary btn-sm flex-1" onclick="openModal('m-channel')">编辑</button>
+              <button class="btn-secondary btn-sm flex-1" onclick="testChannel('官方直连')">测试</button>
+            </div>
+          </div>
+          <div class="card bg-white p-5 dark:bg-[#292524]">
+            <div class="flex items-start justify-between">
+              <div class="flex items-center gap-2.5">
+                <span class="inline-flex size-9 items-center justify-center rounded-lg bg-black/5 dark:bg-white/10"><i data-lucide="cloud-off" class="size-4"></i></span>
+                <div><p class="font-medium">备用代理 A</p><p class="text-xs text-stone-400">proxy-a.example.com</p></div>
+              </div>
+              <span class="chip-red">异常</span>
+            </div>
+            <div class="mt-4 space-y-2 text-sm">
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">密钥</span><span class="font-mono text-xs">sk-…k9d1</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">今日请求</span><span>0</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">平均延迟</span><span>—</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">错误率</span><span class="text-red-600 dark:text-red-400">100%（超时）</span></div>
+            </div>
+            <div class="mt-4 flex gap-2 border-t border-stone-100 pt-4 dark:border-stone-800/60">
+              <button class="btn-secondary btn-sm flex-1" onclick="openModal('m-channel')">编辑</button>
+              <button class="btn-secondary btn-sm flex-1" onclick="testChannel('备用代理 A')">测试</button>
+            </div>
+          </div>
+          <div class="card bg-white p-5 dark:bg-[#292524]">
+            <div class="flex items-start justify-between">
+              <div class="flex items-center gap-2.5">
+                <span class="inline-flex size-9 items-center justify-center rounded-lg bg-black/5 dark:bg-white/10"><i data-lucide="cloud" class="size-4"></i></span>
+                <div><p class="font-medium">聚合渠道 B</p><p class="text-xs text-stone-400">api.aggregator.com</p></div>
+              </div>
+              <span class="chip-green">健康</span>
+            </div>
+            <div class="mt-4 space-y-2 text-sm">
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">密钥</span><span class="font-mono text-xs">sk-…m3p8</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">今日请求</span><span>41.5k</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">平均延迟</span><span>2.1s</span></div>
+              <div class="flex justify-between"><span class="text-stone-500 dark:text-stone-400">错误率</span><span class="text-emerald-600 dark:text-emerald-400">0.8%</span></div>
+            </div>
+            <div class="mt-4 flex gap-2 border-t border-stone-100 pt-4 dark:border-stone-800/60">
+              <button class="btn-secondary btn-sm flex-1" onclick="openModal('m-channel')">编辑</button>
+              <button class="btn-secondary btn-sm flex-1" onclick="testChannel('聚合渠道 B')">测试</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 模型列表 ===== -->
+      <section class="mt-8">
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold">模型列表</h2>
+            <p class="mt-0.5 text-xs text-stone-400">控制模型上下架、积分定价与默认路由</p>
+          </div>
+          <button class="btn-primary" onclick="openModal('m-model')"><i data-lucide="plus" class="size-4"></i>接入新模型</button>
+        </div>
+        <div class="card overflow-hidden bg-white dark:bg-[#292524]">
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[880px]">
+              <thead class="border-b border-stone-200 dark:border-stone-800"><tr><th class="th">模型</th><th class="th">能力</th><th class="th">渠道</th><th class="th">积分定价</th><th class="th">今日调用量</th><th class="th">状态</th><th class="th text-right">操作</th></tr></thead>
+              <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+                <tr>
+                  <td class="td font-medium">Flux 1.1 Pro</td>
+                  <td class="td">图像</td>
+                  <td class="td text-stone-400">官方直连</td>
+                  <td class="td">10 积分/张</td>
+                  <td class="td">42.1k</td>
+                  <td class="td"><label class="inline-flex cursor-pointer items-center" onclick="event.preventDefault(); toggleModelSwitch(this)"><span class="switch on"></span></label></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-model')">编辑</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="confirmRemoveModel(this)">移除</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td font-medium">Kling 2.0</td>
+                  <td class="td">视频</td>
+                  <td class="td text-stone-400">聚合渠道 B</td>
+                  <td class="td">200 积分/段</td>
+                  <td class="td">6.1k</td>
+                  <td class="td"><label class="inline-flex cursor-pointer items-center" onclick="event.preventDefault(); toggleModelSwitch(this)"><span class="switch on"></span></label></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-model')">编辑</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="confirmRemoveModel(this)">移除</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td font-medium">SDXL Turbo</td>
+                  <td class="td">图像</td>
+                  <td class="td text-stone-400">官方直连</td>
+                  <td class="td">1 积分/张</td>
+                  <td class="td">31.7k</td>
+                  <td class="td"><label class="inline-flex cursor-pointer items-center" onclick="event.preventDefault(); toggleModelSwitch(this)"><span class="switch on"></span></label></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-model')">编辑</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="confirmRemoveModel(this)">移除</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td font-medium">Claude 4.5</td>
+                  <td class="td">文本</td>
+                  <td class="td text-stone-400">官方直连</td>
+                  <td class="td">2 积分/千字</td>
+                  <td class="td">22.2k</td>
+                  <td class="td"><label class="inline-flex cursor-pointer items-center" onclick="event.preventDefault(); toggleModelSwitch(this)"><span class="switch"></span></label></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-model')">编辑</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="confirmRemoveModel(this)">移除</button></div></td>
+                </tr>
+                <tr class="opacity-60">
+                  <td class="td font-medium">旧版 SD 1.5</td>
+                  <td class="td">图像</td>
+                  <td class="td text-stone-400">备用代理 A</td>
+                  <td class="td">1 积分/张</td>
+                  <td class="td">0</td>
+                  <td class="td"><label class="inline-flex cursor-pointer items-center" onclick="event.preventDefault(); toggleModelSwitch(this)"><span class="switch"></span></label></td>
+                  <td class="td"><div class="flex justify-end gap-1.5"><button class="btn-secondary btn-sm" onclick="openModal('m-model')">编辑</button><button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="confirmRemoveModel(this)">移除</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p class="mt-3 text-xs text-stone-400">开关控制模型在用户端「模型广场」的可见性；下架不影响进行中的任务。</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- 渠道编辑抽屉 -->
+<div id="m-channel" class="fixed inset-0 z-[60] hidden">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-channel')"></div>
+  <div class="drawer-open absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-stone-200 bg-white dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex h-14 shrink-0 items-center justify-between border-b border-stone-200 px-5 dark:border-stone-800">
+      <h3 class="font-semibold">编辑渠道</h3>
+      <button class="icon-btn" onclick="closeModal('m-channel')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">渠道名称</label><input class="field-input" value="官方直连" /></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">接口地址（Base URL）</label><input class="field-input" value="https://api.openai.com/v1" /></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">API Key</label><div class="flex gap-2"><input type="password" class="field-input flex-1" value="sk-xxxxxxxxxxxxx7f2" /><button class="btn-secondary shrink-0">测试</button></div></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">备注</label><textarea rows="2" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="例如：主渠道，额度充足"></textarea></div>
+      <label class="flex cursor-pointer items-center justify-between rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-700" onclick="this.querySelector('.switch').classList.toggle('on')">
+        <span>启用故障转移（失败自动切下一渠道）</span><span class="switch on"></span>
+      </label>
+    </div>
+    <div class="flex shrink-0 justify-end gap-3 border-t border-stone-200 p-5 dark:border-stone-800">
+      <button class="btn-secondary" onclick="closeModal('m-channel')">取消</button>
+      <button class="btn-primary" onclick="closeModal('m-channel'); toast('渠道已保存', 'success')">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 模型编辑抽屉 -->
+<div id="m-model" class="fixed inset-0 z-[60] hidden">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-model')"></div>
+  <div class="drawer-open absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-stone-200 bg-white dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex h-14 shrink-0 items-center justify-between border-b border-stone-200 px-5 dark:border-stone-800">
+      <h3 class="font-semibold">编辑模型</h3>
+      <button class="icon-btn" onclick="closeModal('m-model')"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">模型标识（API model 名）</label><input class="field-input" value="flux-1.1-pro" /></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">显示名称</label><input class="field-input" value="Flux 1.1 Pro" /></div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">能力类型</label>
+        <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800" id="cap">
+          <button class="seg flex-1 rounded-lg bg-black/5 py-1.5 text-center text-[13px] font-medium dark:bg-white/10" onclick="switchCap('image')">图像</button>
+          <button class="seg flex-1 rounded-lg py-1.5 text-center text-[13px] text-stone-500" onclick="switchCap('video')">视频</button>
+          <button class="seg flex-1 rounded-lg py-1.5 text-center text-[13px] text-stone-500" onclick="switchCap('text')">文本</button>
+          <button class="seg flex-1 rounded-lg py-1.5 text-center text-[13px] text-stone-500" onclick="switchCap('text')">音频</button>
+        </div>
+      </div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">所属渠道</label>
+        <button class="flex h-9 w-full items-center justify-between rounded-lg border border-stone-200 px-3 text-sm dark:border-stone-700"><span>官方直连</span><i data-lucide="chevron-down" class="size-4 text-stone-400"></i></button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">积分定价</label><input class="field-input" value="10" /></div>
+        <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">计费单位</label>
+          <button class="flex h-9 w-full items-center justify-between rounded-lg border border-stone-200 px-3 text-sm dark:border-stone-700"><span>每张</span><i data-lucide="chevron-down" class="size-4 text-stone-400"></i></button>
+        </div>
+      </div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">能力标签（展示在模型广场）</label><input class="field-input" value="真实感, 构图" /></div>
+
+      <!-- ===== 参数约束（constraints）——按能力类型动态显示 ===== -->
+      <div class="rounded-xl border border-stone-200 p-4 dark:border-stone-700">
+        <p class="text-sm font-medium">参数约束（constraints）</p>
+        <p class="mt-1 text-xs leading-5 text-stone-400">定义该模型实际支持的参数组合；前端表单与价格矩阵都由这里驱动，所有组合必须配有价格才能保存。预设项点击勾选，特殊值用「自定义」输入；自定义值同样进入价格矩阵校验。</p>
+
+        <!-- 图片能力：质量 / 尺寸 / 分辨率档位 / 比例（对齐现有 image-settings-panel） -->
+        <div class="mt-3 space-y-3" id="c-image">
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">质量（qualities）<span class="ml-1 font-normal">渲染质量档位，与分辨率无关</span></label>
+            <div class="flex flex-wrap gap-1.5">
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="auto" title="value: auto">自动</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="high" title="value: high">高</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="medium" title="value: medium">中</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="low" title="value: low">低</button>
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">分辨率档位（sizes）<span class="ml-1 font-normal">短边基准，实际宽高 = 档位 × 比例换算，悬浮查看示例</span></label>
+            <div class="flex flex-wrap gap-1.5">
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="1k" title="value: 1k · 1:1 → 1024×1024 · 16:9 → 1536×864">1K</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="2k" title="value: 2k · 1:1 → 2048×2048 · 16:9 → 2048×1152">2K</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="4k" title="value: 4k · 1:1 → 2880×2880 · 16:9 → 3840×2160">4K</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="auto" title="value: auto">自动</button>
+              <button type="button" class="inline-flex h-7 items-center gap-1 rounded-md border border-dashed border-stone-300 px-2 text-xs text-stone-500 transition hover:border-stone-400 hover:text-stone-900 dark:border-stone-600 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-100" onclick="openCustom(this, 'size')" data-kind="size"><i data-lucide="plus" class="size-3"></i>自定义</button>
+              <span class="custom-tags hidden contents" data-kind="size"></span>
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">比例（aspectRatios）<span class="ml-1 font-normal">服务端存宽:高整数对，实际宽高随档位换算</span></label>
+            <div class="flex flex-wrap gap-1.5">
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="1:1" title="width: 1, height: 1">1:1</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="3:4" title="width: 3, height: 4">3:4</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="16:9" title="width: 16, height: 9">16:9</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="9:16" title="width: 9, height: 16">9:16</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="2:3" title="width: 2, height: 3">2:3</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="3:2" title="width: 3, height: 2">3:2</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="4:3" title="width: 4, height: 3">4:3</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="21:9" title="width: 21, height: 9">21:9</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="9:21" title="width: 9, height: 21">9:21</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="auto" title="value: auto">自动</button>
+              <button type="button" class="inline-flex h-7 items-center gap-1 rounded-md border border-dashed border-stone-300 px-2 text-xs text-stone-500 transition hover:border-stone-400 hover:text-stone-900 dark:border-stone-600 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-100" onclick="openCustom(this, 'ratio')" data-kind="ratio"><i data-lucide="plus" class="size-3"></i>自定义</button>
+              <span class="custom-tags hidden contents" data-kind="ratio"></span>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">最长边上限（px）</label>
+              <input type="number" class="field-input" value="3840" />
+            </div>
+            <div>
+              <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">尺寸步进（px，W/H 需为步进倍数）</label>
+              <input type="number" class="field-input" value="16" />
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">单次生成数量范围（n）</label>
+            <div class="flex items-center gap-2 text-sm">
+              <input type="number" class="field-input !w-20" value="1" />
+              <span class="text-stone-400">~</span>
+              <input type="number" class="field-input !w-20" value="10" />
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">最大参考图数（maxReferenceImages）</label>
+            <input type="number" class="field-input !w-24" value="4" />
+          </div>
+        </div>
+
+        <!-- 视频能力：清晰度 / 比例 / 秒数 / 模式 / 配音水印（对齐现有 video-settings-panel） -->
+        <div class="mt-3 hidden space-y-3" id="c-video">
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">清晰度（resolutions，垂直像素 p 值）<span class="ml-1 font-normal">实际宽高 = p 值 × 比例换算，悬浮查看示例</span></label>
+            <div class="flex flex-wrap gap-1.5">
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="480" title="value: 480 · 16:9 → 854×480">480p</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="720" title="value: 720 · 16:9 → 1280×720">720p</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="1080" title="value: 1080 · 16:9 → 1920×1080">1080p</button>
+              <button type="button" class="inline-flex h-7 items-center gap-1 rounded-md border border-dashed border-stone-300 px-2 text-xs text-stone-500 transition hover:border-stone-400 hover:text-stone-900 dark:border-stone-600 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-100" onclick="openCustom(this, 'p')" data-kind="p"><i data-lucide="plus" class="size-3"></i>自定义</button>
+              <span class="custom-tags hidden contents" data-kind="p"></span>
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">比例（aspectRatios）<span class="ml-1 font-normal">服务端存宽:高整数对</span></label>
+            <div class="flex flex-wrap gap-1.5">
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="1:1" title="width: 1, height: 1">1:1</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="3:4" title="width: 3, height: 4">3:4</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="4:3" title="width: 4, height: 3">4:3</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="16:9" title="width: 16, height: 9">16:9</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="9:16" title="width: 9, height: 16">9:16</button>
+              <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="21:9" title="width: 21, height: 9">21:9</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="auto" title="value: auto">自动</button>
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">秒数范围（durations，秒）<span class="ml-1 font-normal">连续区间，前端渲染为滑杆</span></label>
+            <div class="flex items-center gap-2 text-sm">
+              <input type="number" class="field-input !w-20" value="4" />
+              <span class="text-stone-400">~</span>
+              <input type="number" class="field-input !w-20" value="30" />
+              <label class="ml-2 inline-flex cursor-pointer items-center gap-2 text-xs text-stone-500 dark:text-stone-400" onclick="this.querySelector('.switch').classList.toggle('on')"><span class="switch"></span>支持智能时长（value: -1）</label>
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">生成模式（modes）</label>
+            <div class="flex flex-wrap gap-1.5">
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="frames" title="value: frames">首尾帧模式</button>
+              <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="reference" title="value: reference">全能参考模式</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">生成声音（generateAudio）</label>
+              <div class="flex gap-1.5">
+                <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="true" title="value: true">支持</button>
+                <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="false" title="value: false">不支持</button>
+              </div>
+            </div>
+            <div>
+              <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">添加水印（watermark）</label>
+              <div class="flex gap-1.5">
+                <button class="filter-tag active rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="true" title="value: true">支持</button>
+                <button class="filter-tag rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none" onclick="toggleConstraint(this)" data-value="false" title="value: false">不支持</button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">最大参考图数（maxReferenceImages）<span class="ml-1 font-normal">超过 2 张自动按全能参考发送</span></label>
+            <input type="number" class="field-input !w-24" value="2" />
+          </div>
+        </div>
+
+        <!-- 文本/音频：固定价 + 音频参数 -->
+        <div class="mt-3 hidden space-y-3" id="c-text">
+          <div class="rounded-lg bg-black/[0.03] p-3 text-xs leading-5 text-stone-500 dark:bg-white/[0.06] dark:text-stone-400">文本与音频能力使用无参数固定价，不涉及分辨率、时长等计价维度；音频可额外配置音色与语速供前端表单渲染。</div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">支持的音色（voices，逗号分隔）</label>
+            <input class="field-input" value="alloy, ash, ballad, coral, echo, fable" />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs text-stone-500 dark:text-stone-400">支持的语速（speeds，逗号分隔）</label>
+            <input class="field-input" value="0.75, 1, 1.25, 1.5" />
+          </div>
+        </div>
+      </div>
+      <div><label class="mb-1.5 block text-sm text-stone-600 dark:text-stone-300">模型简介</label><textarea rows="3" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm leading-6 outline-none focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500">综合质量最高的图像模型之一，提示词遵循度出色。</textarea></div>
+      <label class="flex cursor-pointer items-center justify-between rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-700" onclick="this.querySelector('.switch').classList.toggle('on')">
+        <div><p>在模型广场上架</p><p class="mt-0.5 text-xs text-stone-400">关闭后用户端不可见</p></div><span class="switch on"></span>
+      </label>
+      <label class="flex cursor-pointer items-center justify-between rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-700" onclick="this.querySelector('.switch').classList.toggle('on')">
+        <div><p>仅付费用户可用</p><p class="mt-0.5 text-xs text-stone-400">免费版用户不可选择</p></div><span class="switch on"></span>
+      </label>
+    </div>
+    <div class="flex shrink-0 justify-end gap-3 border-t border-stone-200 p-5 dark:border-stone-800">
+      <button class="btn-secondary" onclick="closeModal('m-model')">取消</button>
+      <button class="btn-primary" onclick="closeModal('m-model'); toast('模型配置已保存', 'success')">保存</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 自定义约束输入浮层 -->
+<div id="custom-pop" class="fixed z-[70] hidden w-64 rounded-xl border border-stone-200 bg-white p-3 shadow-lg dark:border-stone-700/60 dark:bg-[#292524]">
+  <p class="text-xs font-medium" id="custom-label">添加自定义值</p>
+  <p class="mt-1 text-[11px] leading-4 text-stone-400" id="custom-hint"></p>
+  <div class="mt-2 space-y-2" id="custom-single">
+    <div class="flex gap-1.5">
+      <input id="custom-input" type="text" inputmode="numeric" class="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 bg-transparent px-2.5 text-sm outline-none transition focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" />
+      <span class="hidden shrink-0 self-center text-xs text-stone-400" id="custom-suffix"></span>
+    </div>
+    <div class="flex gap-1.5" id="custom-label-row">
+      <input id="custom-label-input" type="text" class="h-8 min-w-0 flex-1 rounded-lg border border-stone-200 bg-transparent px-2.5 text-sm outline-none transition placeholder:text-stone-300 focus:border-stone-400 dark:border-stone-700 dark:placeholder:text-stone-600 dark:focus:border-stone-500" placeholder="展示名（可选）" />
+      <button type="button" class="btn-primary btn-sm shrink-0 self-center" onclick="confirmCustom()">确定</button>
+    </div>
+  </div>
+  <div class="mt-2 hidden space-y-2" id="custom-dual">
+    <label class="block"><span class="mb-1 block text-[11px] text-stone-400" id="custom-dual-label-a">宽（width）</span><input id="custom-input-a" type="number" min="1" class="h-8 w-full rounded-lg border border-stone-200 bg-transparent px-2.5 text-sm outline-none transition focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" /></label>
+    <label class="block"><span class="mb-1 block text-[11px] text-stone-400" id="custom-dual-label-b">高（height）</span><input id="custom-input-b" type="number" min="1" class="h-8 w-full rounded-lg border border-stone-200 bg-transparent px-2.5 text-sm outline-none transition focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" /></label>
+    <button type="button" class="btn-primary btn-sm w-full" onclick="confirmCustom()">确定</button>
+  </div>
+  <p class="mt-1.5 hidden text-[11px] text-red-600 dark:text-red-400" id="custom-error"></p>
+</div>
+
+
+<!-- 移除模型确认 -->
+<div id="m-remove-model" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+  <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-remove-model')"></div>
+  <div class="modal-open relative w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+    <div class="flex items-start gap-3">
+      <span class="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-red-50 dark:bg-red-950/50"><i data-lucide="trash-2" class="size-4 text-red-600 dark:text-red-400"></i></span>
+      <div>
+        <h3 class="text-lg font-semibold">移除模型？</h3>
+        <p class="mt-2 text-sm leading-6 text-stone-500 dark:text-stone-400">移除后用户端模型广场立即不可见；进行中的任务不受影响，历史生成记录仍可查看。</p>
+      </div>
+    </div>
+    <div class="mt-6 flex justify-end gap-3">
+      <button class="btn-secondary" onclick="closeModal('m-remove-model')">取消</button>
+      <button class="inline-flex h-9 items-center justify-center rounded-lg bg-red-600 px-4 text-sm font-medium text-white transition hover:bg-red-700" onclick="confirmRemoveModelGo()">确认移除</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden-t"></div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) { document.getElementById('drawer').classList.toggle('hidden', !open); }
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+    .overlay-open { animation: fade-in 0.2s ease-out; }
+    .drawer-open { animation: drawer-in 0.3s cubic-bezier(0.16,1,0.3,1); }
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(style);
+  function openModal(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('hidden');
+    const card = el.querySelector('.drawer-open, .modal-open');
+    if (card) { card.style.animation = 'none'; void card.offsetWidth; card.style.animation = ''; }
+  }
+  function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+  /* 能力切换 → 显示对应参数约束块 */
+  function switchCap(cap) {
+    document.querySelectorAll('#cap .seg').forEach((el) => {
+      const active = el.getAttribute('onclick').includes(`'${cap}')`);
+      el.classList.toggle('bg-black/5', active);
+      el.classList.toggle('dark:bg-white/10', active);
+      el.classList.toggle('font-medium', active);
+      el.classList.toggle('text-stone-500', !active);
+    });
+    document.getElementById('c-image').classList.toggle('hidden', cap !== 'image');
+    document.getElementById('c-video').classList.toggle('hidden', cap !== 'video');
+    document.getElementById('c-text').classList.toggle('hidden', cap === 'image' || cap === 'video');
+  }
+  /* 约束多选开关 */
+  function toggleConstraint(btn) { btn.classList.toggle('active'); }
+
+  /* ===== 自定义约束标签：添加 / 校验 / 删除 ===== */
+  const CUSTOM_RULES = {
+    size:  { label: '添加自定义分辨率档位', hint: '以短边像素定义档位（如 3072 ≈ 3K），实际宽高由该档位与所选比例换算；不超过最长边上限。展示名可选，如「3K」；留空则自动生成。', input: 'number', suffix: 'px', placeholder: '3072', withLabel: true, labelPlaceholder: '3K', autoLabel: (v) => v.length === 4 && v[0] !== '0' ? v[0] + 'K' : v + 'px', validate: (v) => /^\d{2,5}$/.test(v) ? '' : '请输入 2–5 位数字像素值，例如 3072' },
+    ratio: { label: '添加自定义比例', hint: '分别输入宽与高（正整数），服务端按宽:高整数对存储。', dual: ['宽（width）', '高（height）'], validate: (w, h) => /^\d{1,5}$/.test(w) && /^\d{1,5}$/.test(h) ? '' : '宽和高都需为 1–5 位正整数' },
+    p:     { label: '添加自定义清晰度（p 值）', hint: '输入垂直像素（正整数），如 1440；展示名可选（如「2K 宽屏」），留空展示为 1440p。', input: 'number', suffix: 'p', placeholder: '1440', withLabel: true, labelPlaceholder: '2K 宽屏', autoLabel: (v) => v + 'p', validate: (v) => /^\d{3,4}$/.test(v) ? '' : '请输入 3–4 位数字 p 值，例如 1440' },
+  };
+  let customTarget = null;
+  function positionCustomPop(btn) {
+    const pop = document.getElementById('custom-pop');
+    const rect = btn.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 272)) + 'px';
+    pop.style.top = Math.min(rect.bottom + 6, window.innerHeight - 190) + 'px';
+  }
+  /* 滚动/缩放时跟随锚点按钮重算位置，保证弹层钉在按钮旁 */
+  window.addEventListener('scroll', () => { if (customTarget && !document.getElementById('custom-pop').classList.contains('hidden')) positionCustomPop(customTarget.btn); }, true);
+  window.addEventListener('resize', () => { if (customTarget && !document.getElementById('custom-pop').classList.contains('hidden')) positionCustomPop(customTarget.btn); });
+  function openCustom(btn, kind) {
+    const rule = CUSTOM_RULES[kind];
+    const pop = document.getElementById('custom-pop');
+    const rect = btn.getBoundingClientRect();
+    positionCustomPop(btn);
+    pop.classList.remove('hidden');
+    document.getElementById('custom-label').textContent = rule.label;
+    document.getElementById('custom-hint').textContent = rule.hint;
+    document.getElementById('custom-error').classList.add('hidden');
+    document.getElementById('custom-single').classList.toggle('hidden', Boolean(rule.dual));
+    document.getElementById('custom-dual').classList.toggle('hidden', !rule.dual);
+    if (rule.dual) {
+      document.getElementById('custom-dual-label-a').textContent = rule.dual[0];
+      document.getElementById('custom-dual-label-b').textContent = rule.dual[1];
+      document.getElementById('custom-input-a').value = '';
+      document.getElementById('custom-input-b').value = '';
+      document.getElementById('custom-input-a').focus();
+    } else {
+      const input = document.getElementById('custom-input');
+      input.value = '';
+      input.type = rule.input || 'text';
+      input.placeholder = rule.placeholder || '';
+      const suffix = document.getElementById('custom-suffix');
+      suffix.textContent = rule.suffix || '';
+      suffix.classList.toggle('hidden', !rule.suffix);
+      const labelRow = document.getElementById('custom-label-row');
+      const labelInput = document.getElementById('custom-label-input');
+      labelRow.classList.toggle('hidden', !rule.withLabel);
+      labelInput.value = '';
+      labelInput.placeholder = rule.withLabel ? rule.labelPlaceholder || '展示名（可选）' : '';
+      customTarget = { kind, tagsEl: btn.parentElement.querySelector('.custom-tags'), btn };
+      input.focus();
+      return;
+    }
+    customTarget = { kind, tagsEl: btn.parentElement.querySelector('.custom-tags'), btn };
+  }
+  function addCustomTag(value, label) {
+    const existing = [...customTarget.tagsEl.querySelectorAll('[data-value]')].some((el) => el.dataset.value === value);
+    const errEl = document.getElementById('custom-error');
+    if (existing) { errEl.textContent = '该值已添加'; errEl.classList.remove('hidden'); return false; }
+    const tag = document.createElement('button');
+    tag.type = 'button';
+    tag.dataset.value = value;
+    tag.title = 'value: ' + value;
+    tag.className = 'group inline-flex h-7 items-center gap-1 rounded-md border border-stone-900 bg-stone-900 px-2 text-xs font-semibold leading-none text-white dark:border-stone-100 dark:bg-stone-100 dark:text-stone-900';
+    tag.innerHTML = `${label}<i data-lucide="x" class="size-3 opacity-70 group-hover:opacity-100"></i>`;
+    tag.onclick = () => tag.remove();
+    customTarget.btn.before(tag);
+    customTarget.tagsEl.classList.remove('hidden');
+    document.getElementById('custom-pop').classList.add('hidden');
+    customTarget = null;
+    lucide.createIcons();
+    return true;
+  }
+  function confirmCustom() {
+    const rule = CUSTOM_RULES[customTarget.kind];
+    const errEl = document.getElementById('custom-error');
+    errEl.classList.add('hidden');
+    if (rule.dual) {
+      const w = document.getElementById('custom-input-a').value.trim();
+      const h = document.getElementById('custom-input-b').value.trim();
+      const err = rule.validate(w, h);
+      if (err) { errEl.textContent = err; errEl.classList.remove('hidden'); return; }
+      addCustomTag(`${w}:${h}`, `${w}:${h}`);
+    } else {
+      const value = document.getElementById('custom-input').value.trim();
+      const err = rule.validate(value);
+      if (err) { errEl.textContent = err; errEl.classList.remove('hidden'); return; }
+      const labelInput = document.getElementById('custom-label-input');
+      const label = (labelInput.value || '').trim() || (rule.autoLabel ? rule.autoLabel(value) : value);
+      addCustomTag(value, label);
+    }
+  }
+  document.getElementById('custom-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmCustom(); });
+  document.getElementById('custom-input-b').addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmCustom(); });
+  document.addEventListener('click', (e) => {
+    const pop = document.getElementById('custom-pop');
+    if (!pop.classList.contains('hidden') && !pop.contains(e.target) && !e.target.closest('[data-kind]')) pop.classList.add('hidden');
+  });
+
+
+  /* ===== Mock：模型移除 / 开关联动 / 渠道测试 ===== */
+  let removeTarget = null;
+  function confirmRemoveModel(btn) {
+    removeTarget = btn.closest('tr');
+    openModal('m-remove-model');
+  }
+  function confirmRemoveModelGo() {
+    if (removeTarget) { removeTarget.remove(); removeTarget = null; }
+    closeModal('m-remove-model');
+    toast('模型已移除，用户端不可见', 'success');
+  }
+  function toggleModelSwitch(el) {
+    el.querySelector('.switch').classList.toggle('on');
+    const on = el.querySelector('.switch').classList.contains('on');
+    toast(on ? '模型已上架，用户端可见' : '模型已下架，进行中任务不受影响', on ? 'success' : 'info');
+  }
+  function testChannel(name) {
+    toast(`正在测试 ${name} …`, 'info');
+    setTimeout(() => {
+      Math.random() < 0.7
+        ? toast(`${name} 连通正常 · ${(0.8 + Math.random() * 2).toFixed(1)}s`, 'success')
+        : toast(`${name} 测试失败：连接超时`, 'error');
+    }, 800);
+  }
+
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const el = document.getElementById('toast');
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    el.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    el.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden-t'), 2500);
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

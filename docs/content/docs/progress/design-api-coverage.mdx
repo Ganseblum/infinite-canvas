@@ -1,0 +1,73 @@
+---
+title: Design-to-API Coverage
+description: Coverage review of the frontend design mockups (design/html) against the backend plan, with gap list
+---
+
+# Design-to-API Coverage
+
+This document maps every mockup under `design/html/` to the interfaces already defined in `我的规划/账号后端总规划.md` (and its phase 1–5 companion docs) at the repository root, marking coverage per page and listing gaps that require either new planning or mockup revisions. The backend has not been started; the repo currently only ships `canvas-proxy` (browser-direct forwarding) and the local agent service. "Covered" below means **defined in the plan**, not implemented.
+
+## Summary
+
+| Mockup | Key interfaces | Status |
+| --- | --- | --- |
+| `login.html` / `register.html` | `/api/auth/*` | Partially covered |
+| `account.html` | `/api/me`, `/api/credits/*`, `/api/canvases`, `/api/assets` | Partially covered, conflicts |
+| `pricing.html` | `/api/credit-packages`, `/api/orders` | **Conflict: no subscription model** |
+| `models.html` | `/api/models` | Covered |
+| `activity.html` | none | **Missing: only discount promotions have APIs** |
+| `community.html` | none | **Missing: no community APIs planned** |
+| `prompts.html` | existing `fetchPrompts` (third-party sources) | Covered |
+| `assets.html` | `/api/assets`, `/api/media/*` | Covered |
+| `image-workbench.html` / `video-workbench.html` | `/api/ai/*`, `/api/generations` | Covered (phase 4) |
+| `config.html` | — | **Conflict: user-managed keys will be removed** |
+| `admin.html` | `/api/admin/stats` | Partially covered (no revenue metrics) |
+| `admin-users.html` | `/api/admin/users*` | Covered |
+| `admin-billing.html` | `/api/admin/orders` | **Conflict: refunds explicitly unsupported** |
+| `admin-content.html` | `/api/admin/moderation/*` | Partially covered |
+| `admin-models.html` | `/api/admin/models`, `/api/admin/channels` | Covered |
+| `admin-docs-mgr.html` | none | **Missing: docs CMS not planned** |
+| `admin-system.html` | none | **Missing: site settings APIs not planned** |
+
+## Conflicts: mockups contradict the plan, mockups must change
+
+All three have been fixed in the mockups:
+
+1. **`config.html`** previously showed Base URL + API Key + connection test, conflicting with phase 4's removal of user-managed credentials. It is now preferences only (theme, language, notifications, local cache).
+2. **Subscription model in `pricing.html` / `account.html`** has been replaced with credit packages (entry/standard/bulk) plus a free-vs-paid entitlement comparison; paid identity is derived from top-ups with an expiry, matching the dual-bucket model. The account page now shows dual-bucket balance with a top-up entry.
+3. **Refund actions in `admin-billing.html`** have been removed and replaced with an "admin credit grant" dialog (into the `granted` bucket, mandatory note, no paid-identity side effects).
+
+## Content moderation (NSFW) presentation
+
+Phase 5 fully specifies content moderation (open-source stack: NSFWJS for images, Detoxify for text, frame sampling via NSFWJS for video, covering prompt / reference / artifact / upload stages); the mockups now reflect it:
+
+- Both workbenches: a pre-generation notice that rejected inputs cost nothing while rejected artifacts still cost credits; the mock flow includes a "content rejected" state distinct from generic failure, with no retry and a "modify content" entry.
+- `assets.html`: the upload zone notes inbound moderation; rejected uploads consume no quota.
+- `admin-content.html` gains a "Content Moderation" tab: stats (volume, hit rate, review backlog, overturn rate), a records table (four stages, labels, provider summary), and a review dialog (5-minute quarantine preview, overturn pass/reject, idempotent credit compensation into the granted bucket).
+
+## Gaps: mockups exist, no APIs planned
+
+Ordered by impact:
+
+1. **Community APIs** (`community.html`, moderation tab of `admin-content.html`): publishing, feed, likes, remix counts, reports and takedowns, user profiles. No community domain exists in the plan.
+2. **Operations activities** (`activity.html`, activity tab of `admin-content.html`): the plan only covers model discount promotions. Creation contests, daily check-in, and referral rewards are unplanned and involve anti-abuse work.
+3. **Site settings APIs** (`admin-system.html`): announcement, open-registration toggle, maintenance mode, generation limits. Limit values are behavior-changing boundary values requiring explicit confirmation before landing.
+4. **Admin account management** (`admin-system.html`): listing, inviting, permission changes, removal of admins.
+5. **Docs CMS** (`admin-docs-mgr.html`): consider dropping the online CMS and keeping the existing Fumadocs + Git flow.
+6. **Third-party login** (GitHub/Google buttons): no OAuth in the plan.
+7. **2FA and device management** (`account.html` security tab): unplanned.
+8. **Email code login** (`login.html` code tab): the plan only has password login plus password reset.
+9. **Revenue/conversion metrics in `admin.html`**: `/api/admin/stats` only defines users, storage, and daily generation counts.
+
+## Covered items (no changes needed)
+
+- Auth & account: register, login, dual tokens, email verification, password reset, profile, deletion with cooling period.
+- Resource domains: canvas CRUD with optimistic locking, assets CRUD, cursor-paginated generations, media upload and direct-read URLs.
+- AI forwarding: quote-and-reserve, image/video/audio/chat, video task polling, refund on failure — the mockup flows match the plan's state machine.
+- Model catalog & channels, credits & orders, payment callbacks, content moderation — all covered.
+
+## Suggested order
+
+1. ~~Fix the three conflicting mockups first (config page, pricing/subscription, refunds).~~ Done.
+2. Decide whether community and operations activities are in scope before planning their APIs.
+3. Site settings, admin management, OAuth, 2FA, and device management can be planned phase by phase after phase 5; the docs CMS should likely be dropped.

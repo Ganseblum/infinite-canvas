@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 图片工作台设计稿（现有架构 + 新样式）</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75; }
+  .btn-secondary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-stone-200 px-5 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12] dark:active:bg-white/[0.18]; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 active:scale-95 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .nav-link { @apply relative flex h-14 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px; }
+  .field-input { @apply h-10 w-full rounded-lg border border-stone-200 bg-transparent px-3 text-sm text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:text-stone-100 dark:focus:border-stone-500; }
+  .panel { @apply rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-[#292524]; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-blue { @apply inline-flex h-6 items-center rounded-md border border-stone-900 bg-stone-900 px-1.5 text-xs leading-none text-white dark:border-stone-100 dark:bg-stone-100 dark:text-stone-900; }
+  .chip-red { @apply inline-flex h-6 items-center rounded-md border border-red-200 bg-red-50 px-1.5 text-xs leading-none text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .seg { @apply flex-1 rounded-lg py-1.5 text-center text-[13px] text-stone-500 transition hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100; }
+  .seg.active { @apply bg-black/5 font-medium text-stone-950 dark:bg-white/10 dark:text-stone-50; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+  <!-- ========== 应用顶部导航（保持现有 UserLayout） ========== -->
+  <header class="sticky top-0 z-40 h-14 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl dark:border-stone-800 dark:bg-[#1c1917]/90">
+    <div class="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-4 sm:px-6">
+      <div class="flex min-w-0 items-center">
+        <a href="home.html" class="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight">
+          <span class="size-5 shrink-0 rounded bg-current"></span>
+          <span class="text-base font-medium">无限画布</span>
+        </a>
+        <nav class="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
+          <a href="home.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100">首页</a>
+          <a href="#" class="nav-link font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"><i data-lucide="image" class="size-4"></i>图片</a>
+          <a href="#" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="video" class="size-4"></i>视频</a>
+          <a href="prompts.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="library" class="size-4"></i>提示词库</a>
+          <a href="community.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="users" class="size-4"></i>社区</a>
+          <a href="pricing.html" class="nav-link text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100"><i data-lucide="credit-card" class="size-4"></i>定价</a>
+        </nav>
+      </div>
+      <div class="my-auto flex h-9 items-center justify-end gap-2">
+        <span class="hidden items-center gap-1 rounded-full border border-stone-200 px-2 py-0.5 text-[11px] text-stone-500 sm:inline-flex dark:border-stone-700 dark:text-stone-400"><i data-lucide="coins" class="size-3"></i>1,280 积分</span>
+        <button class="icon-btn" onclick="toggleTheme()" title="切换主题">
+          <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+          <i data-lucide="moon" class="size-4 dark:hidden"></i>
+        </button>
+        <a href="account.html"><img src="https://i.pravatar.cc/64?img=12" alt="头像" class="size-7 rounded-full object-cover" /></a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========== 主区域：左记录 / 中参数 / 右结果（现有架构） ========== -->
+  <main class="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+
+    <!-- 左：生成记录 -->
+    <aside class="thin-scrollbar hidden min-h-0 overflow-y-auto panel lg:block">
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <h2 class="text-base font-semibold">生成记录</h2>
+        <span class="chip">6</span>
+      </div>
+      <div class="mb-4 flex flex-wrap gap-2">
+        <button class="btn-secondary btn-sm" onclick="resetMock()"><i data-lucide="plus" class="size-3.5"></i>新建</button>
+        <button class="btn-secondary btn-sm">全选</button>
+        <button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400">删除</button>
+      </div>
+      <div class="space-y-3">
+        <button class="block w-full rounded-lg border border-stone-900 bg-blue-50 p-2 text-left transition dark:border-stone-100 dark:bg-blue-950/20" onclick="loadLog(0)">
+          <div class="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
+            <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
+              <input type="checkbox" class="mt-1 size-3.5 accent-stone-900 dark:accent-stone-100" onclick="event.stopPropagation()" />
+              <div class="min-w-0">
+                <div class="truncate text-sm font-semibold leading-5">黄昏逆光，天台边缘…</div>
+                <div class="mt-2 flex gap-1 overflow-hidden">
+                  <img src="https://picsum.photos/seed/r1/64/64" class="size-8 shrink-0 rounded-md object-cover" alt="" />
+                  <img src="https://picsum.photos/seed/r2/64/64" class="size-8 shrink-0 rounded-md object-cover" alt="" />
+                  <img src="https://picsum.photos/seed/r4/64/64" class="size-8 shrink-0 rounded-md object-cover" alt="" />
+                </div>
+              </div>
+            </div>
+            <div class="grid justify-items-end gap-2">
+              <div class="flex gap-1"><span class="chip-blue">成功 3</span></div>
+              <div class="flex flex-wrap justify-end gap-1"><span class="chip">4 张</span><span class="chip-green">8s</span></div>
+              <div class="flex justify-end"><span class="chip">09-12 14:32</span></div>
+            </div>
+          </div>
+        </button>
+        <button class="block w-full rounded-lg border border-stone-200 bg-white p-2 text-left transition hover:bg-stone-50 dark:border-stone-800 dark:bg-[#292524] dark:hover:bg-stone-900" onclick="loadLog(1)">
+          <div class="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
+            <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
+              <input type="checkbox" class="mt-1 size-3.5 accent-stone-900 dark:accent-stone-100" onclick="event.stopPropagation()" />
+              <div class="min-w-0">
+                <div class="truncate text-sm font-semibold leading-5">赛博城市夜景</div>
+                <div class="mt-2 flex gap-1 overflow-hidden">
+                  <img src="https://picsum.photos/seed/r5/64/64" class="size-8 shrink-0 rounded-md object-cover" alt="" />
+                </div>
+              </div>
+            </div>
+            <div class="grid justify-items-end gap-2">
+              <div class="flex gap-1"><span class="chip-blue">成功 1</span><span class="chip-red">失败 1</span></div>
+              <div class="flex flex-wrap justify-end gap-1"><span class="chip">2 张</span><span class="chip-green">12s</span></div>
+              <div class="flex justify-end"><span class="chip">09-12 10:08</span></div>
+            </div>
+          </div>
+        </button>
+        <button class="block w-full rounded-lg border border-stone-200 bg-white p-2 text-left transition hover:bg-stone-50 dark:border-stone-800 dark:bg-[#292524] dark:hover:bg-stone-900">
+          <div class="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
+            <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
+              <input type="checkbox" class="mt-1 size-3.5 accent-stone-900 dark:accent-stone-100" onclick="event.stopPropagation()" />
+              <div class="min-w-0">
+                <div class="truncate text-sm font-semibold leading-5">水彩风格橘猫</div>
+              </div>
+            </div>
+            <div class="grid justify-items-end gap-2">
+              <div class="flex gap-1"><span class="chip-blue">成功 4</span></div>
+              <div class="flex flex-wrap justify-end gap-1"><span class="chip">4 张</span><span class="chip-green">15s</span></div>
+              <div class="flex justify-end"><span class="chip">09-11 21:47</span></div>
+            </div>
+          </div>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 中：参数面板 -->
+    <section class="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
+      <div class="thin-scrollbar flex flex-col panel lg:min-h-0 lg:overflow-y-auto">
+        <div class="flex items-start justify-between gap-3">
+          <h1 class="text-2xl font-semibold">图片工作台</h1>
+          <div class="flex shrink-0 gap-2 lg:hidden">
+            <button class="btn-secondary btn-sm" onclick="openDrawer('dr-logs')"><i data-lucide="history" class="size-3.5"></i>记录</button>
+            <button class="btn-secondary btn-sm" onclick="openDrawer('dr-settings')"><i data-lucide="sliders-horizontal" class="size-3.5"></i>设置</button>
+          </div>
+        </div>
+
+        <div class="mt-6 space-y-5">
+          <!-- 提示词 -->
+          <div>
+            <div class="mb-2 flex items-center justify-between gap-3">
+              <span class="text-base font-semibold">提示词</span>
+              <div class="flex gap-2">
+                <button class="btn-secondary btn-sm" onclick="openModal('m-prompts')"><i data-lucide="book-open" class="size-3.5"></i>查看提示词</button>
+                <button class="btn-secondary btn-sm" onclick="openModal('m-assets')"><i data-lucide="folder-plus" class="size-3.5"></i>查看素材</button>
+              </div>
+            </div>
+            <textarea id="prompt" rows="7" class="w-full resize-none rounded-lg border border-stone-200 bg-transparent p-3 text-sm leading-6 outline-none transition placeholder:text-stone-400 focus:border-stone-400 dark:border-stone-700 dark:focus:border-stone-500" placeholder="描述你想要的画面…">黄昏逆光，天台边缘，35mm 胶片质感，浅景深</textarea>
+          </div>
+
+          <!-- 参考图 -->
+          <div class="min-w-0">
+            <div class="mb-2 flex items-center justify-between gap-3">
+              <span class="text-base font-semibold">参考图</span>
+              <div class="flex gap-2">
+                <button class="btn-secondary btn-sm"><i data-lucide="clipboard-paste" class="size-3.5"></i>剪贴板</button>
+                <button class="btn-secondary btn-sm"><i data-lucide="upload" class="size-3.5"></i>上传</button>
+              </div>
+            </div>
+            <div class="relative flex min-h-24 w-full gap-2 overflow-x-auto rounded-lg border border-dashed border-stone-300 p-2 pb-3 dark:border-stone-700">
+              <div class="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                <img src="https://picsum.photos/seed/ref1/160/160" class="size-full object-cover" alt="" />
+                <span class="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">@1</span>
+                <button class="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"><i data-lucide="trash-2" class="size-3.5"></i></button>
+              </div>
+              <div class="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                <img src="https://picsum.photos/seed/ref2/160/160" class="size-full object-cover" alt="" />
+                <span class="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">@2</span>
+                <button class="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"><i data-lucide="trash-2" class="size-3.5"></i></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 移动端参数摘要 -->
+          <div class="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-100 px-3 py-2 text-sm sm:hidden dark:border-stone-800 dark:bg-stone-900">
+            <span class="truncate text-stone-500 dark:text-stone-400">Flux 1.1 Pro · 1024x1024 · 高质量</span>
+            <button class="btn-secondary btn-sm" onclick="openDrawer('dr-settings')">调整</button>
+          </div>
+
+          <!-- 桌面端参数 -->
+          <div class="hidden gap-4 sm:grid sm:grid-cols-2">
+            <label class="col-span-2 block sm:col-span-1">
+              <span class="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
+              <button class="flex h-10 w-full items-center justify-between rounded-lg border border-stone-200 px-3 text-sm transition hover:border-stone-300 dark:border-stone-700 dark:hover:border-stone-600">
+                <span class="flex items-center gap-2"><i data-lucide="image" class="size-4 text-stone-400"></i>Flux 1.1 Pro</span>
+                <i data-lucide="chevron-down" class="size-4 text-stone-400"></i>
+              </button>
+            </label>
+            <div class="col-span-2 grid grid-cols-2 gap-4">
+              <label class="block">
+                <span class="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">尺寸</span>
+                <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800" id="size">
+                  <button class="seg active">1:1</button>
+                  <button class="seg">3:4</button>
+                  <button class="seg">16:9</button>
+                </div>
+              </label>
+              <label class="block">
+                <span class="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">质量</span>
+                <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800" id="quality">
+                  <button class="seg">标准</button>
+                  <button class="seg active">高</button>
+                </div>
+              </label>
+              <label class="col-span-2 block">
+                <span class="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">生成数量</span>
+                <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800" id="count">
+                  <button class="seg">1</button>
+                  <button class="seg active">4</button>
+                  <button class="seg">6</button>
+                  <button class="seg">8</button>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-auto pt-6">
+          <p class="mb-2.5 text-xs leading-5 text-stone-400 dark:text-stone-500">输入或参考图未通过安全审核时不扣点；生成完成后产物审核不通过仍会扣点。</p>
+          <button id="gen-btn" class="btn-primary w-full !h-11" onclick="runMock()"><i data-lucide="sparkles" class="size-4"></i>开始生成</button>
+        </div>
+      </div>
+
+      <!-- 右：结果 -->
+      <div class="thin-scrollbar panel lg:min-h-0 lg:overflow-y-auto lg:p-5">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="text-xl font-semibold">结果</h2>
+          <span class="chip" id="running-tag" style="display:none">等待中 · 0s</span>
+        </div>
+        <div id="results" class="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+          <div class="group overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-[#1c1917]">
+            <img src="https://picsum.photos/seed/r1/600/600" class="aspect-square w-full object-cover" alt="" />
+            <div class="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
+              <div class="flex gap-x-2 text-xs text-stone-500 dark:text-stone-400"><span>1024x1024</span><span>1.2MB</span><span>8s</span></div>
+              <div class="grid grid-cols-3 gap-2">
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="folder-plus" class="size-3.5 shrink-0"></i>入素材</button>
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="pen-line" class="size-3.5 shrink-0"></i>作参考</button>
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="download" class="size-3.5 shrink-0"></i>下载</button>
+              </div>
+            </div>
+          </div>
+          <div class="group overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-[#1c1917]">
+            <img src="https://picsum.photos/seed/r2/600/600" class="aspect-square w-full object-cover" alt="" />
+            <div class="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
+              <div class="flex gap-x-2 text-xs text-stone-500 dark:text-stone-400"><span>1024x1024</span><span>1.1MB</span><span>9s</span></div>
+              <div class="grid grid-cols-3 gap-2">
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="folder-plus" class="size-3.5 shrink-0"></i>入素材</button>
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="pen-line" class="size-3.5 shrink-0"></i>作参考</button>
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="download" class="size-3.5 shrink-0"></i>下载</button>
+              </div>
+            </div>
+          </div>
+          <!-- 失败卡（现有 FailedImageCard 结构） -->
+          <div class="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
+            <div class="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
+              <div class="text-sm font-medium text-red-600 dark:text-red-300">生成失败</div>
+              <p class="line-clamp-4 text-xs text-red-500 dark:text-red-300">Request timed out after 60s</p>
+            </div>
+            <div class="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
+              <button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400">重试</button>
+            </div>
+          </div>
+          <!-- 空态参考（默认隐藏） -->
+          <div class="hidden" id="empty-state"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+
+  </div>
+
+  <!-- ========== 右侧 Agent 面板（对齐现有 AgentPanel 架构位置，默认收起） ========== -->
+  <aside id="agent-panel" class="fixed inset-y-0 right-0 z-40 hidden w-80 max-w-full shrink-0 flex-col border-l border-stone-200 bg-white md:static md:flex dark:border-stone-800 dark:bg-[#292524]">
+    <div class="flex h-12 shrink-0 items-center justify-between border-b border-stone-200 px-4 dark:border-stone-800">
+      <span class="flex items-center gap-2 text-sm font-medium"><i data-lucide="bot" class="size-4"></i>AI 助手</span>
+      <button class="icon-btn" onclick="toggleAgentPanel()"><i data-lucide="x" class="size-4"></i></button>
+    </div>
+    <div class="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 text-sm leading-6">
+      <div class="rounded-lg bg-black/[0.03] p-3 text-xs text-stone-500 dark:bg-white/[0.06] dark:text-stone-400">发送指令即可操作当前工作台：填入提示词、调整参数或直接发起生成。</div>
+      <div class="mt-4 space-y-3">
+        <div class="flex justify-end"><span class="max-w-[80%] rounded-xl bg-stone-900 px-3 py-2 text-xs text-white dark:bg-stone-100 dark:text-stone-900">帮我用黄昏天台的风格生成 4 张图</span></div>
+        <div class="max-w-[85%] rounded-xl border border-stone-200 px-3 py-2 text-xs dark:border-stone-700">已填入提示词并设置数量为 4，点击「开始生成」即可执行。</div>
+      </div>
+    </div>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <div class="flex items-center gap-2 rounded-lg border border-stone-200 px-3 py-2 dark:border-stone-700">
+        <input class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-stone-400" placeholder="描述你的任务…" />
+        <button class="icon-btn"><i data-lucide="send" class="size-4"></i></button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========== 移动端底部抽屉：记录 ========== -->
+  <div id="dr-logs" class="fixed inset-0 z-50 hidden">
+    <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeDrawer('dr-logs')"></div>
+    <div class="drawer-up absolute inset-x-0 bottom-0 max-h-[80vh] rounded-t-2xl border-t border-stone-200 bg-white p-4 dark:border-stone-700/60 dark:bg-[#292524]">
+      <div class="mb-3 flex items-center justify-between">
+        <h3 class="font-semibold">生成记录</h3>
+        <button class="icon-btn" onclick="closeDrawer('dr-logs')"><i data-lucide="x" class="size-4"></i></button>
+      </div>
+      <div class="thin-scrollbar max-h-[60vh] space-y-3 overflow-y-auto">
+        <button class="block w-full rounded-lg border border-stone-900 bg-blue-50 p-2 text-left dark:border-stone-100 dark:bg-blue-950/20" onclick="closeDrawer('dr-logs'); loadLog(0)">
+          <div class="truncate text-sm font-semibold leading-5">黄昏逆光，天台边缘…</div>
+          <div class="mt-2 flex gap-1"><img src="https://picsum.photos/seed/r1/64/64" class="size-8 rounded-md object-cover" alt="" /><img src="https://picsum.photos/seed/r2/64/64" class="size-8 rounded-md object-cover" alt="" /></div>
+        </button>
+        <button class="block w-full rounded-lg border border-stone-200 p-2 text-left dark:border-stone-800" onclick="closeDrawer('dr-logs'); loadLog(1)">
+          <div class="truncate text-sm font-semibold leading-5">赛博城市夜景</div>
+          <div class="mt-2 flex gap-1"><img src="https://picsum.photos/seed/r5/64/64" class="size-8 rounded-md object-cover" alt="" /></div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 移动端底部抽屉：设置 ========== -->
+  <div id="dr-settings" class="fixed inset-0 z-50 hidden">
+    <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeDrawer('dr-settings')"></div>
+    <div class="drawer-up absolute inset-x-0 bottom-0 max-h-[82vh] rounded-t-2xl border-t border-stone-200 bg-white p-4 dark:border-stone-700/60 dark:bg-[#292524]">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="font-semibold">生成设置</h3>
+        <button class="icon-btn" onclick="closeDrawer('dr-settings')"><i data-lucide="x" class="size-4"></i></button>
+      </div>
+      <div class="grid grid-cols-2 gap-3 pb-4">
+        <label class="col-span-2 block sm:col-span-1">
+          <span class="mb-1.5 block text-sm font-semibold">模型</span>
+          <button class="flex h-10 w-full items-center justify-between rounded-lg border border-stone-200 px-3 text-sm dark:border-stone-700"><span class="flex items-center gap-2"><i data-lucide="image" class="size-4 text-stone-400"></i>Flux 1.1 Pro</span><i data-lucide="chevron-down" class="size-4 text-stone-400"></i></button>
+        </label>
+        <label class="block"><span class="mb-1.5 block text-sm font-semibold">尺寸</span>
+          <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800"><button class="seg active">1:1</button><button class="seg">3:4</button><button class="seg">16:9</button></div>
+        </label>
+        <label class="block"><span class="mb-1.5 block text-sm font-semibold">质量</span>
+          <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800"><button class="seg">标准</button><button class="seg active">高</button></div>
+        </label>
+        <label class="col-span-2 block"><span class="mb-1.5 block text-sm font-semibold">生成数量</span>
+          <div class="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800"><button class="seg">1</button><button class="seg active">4</button><button class="seg">6</button><button class="seg">8</button></div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Modal：提示词选择 ========== -->
+  <div id="m-prompts" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+    <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-prompts')"></div>
+    <div class="modal-open relative w-full max-w-lg rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+      <div class="flex items-start justify-between">
+        <h3 class="text-lg font-semibold">选择提示词</h3>
+        <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-prompts')"><i data-lucide="x" class="size-4"></i></button>
+      </div>
+      <div class="mt-4 space-y-2">
+        <button class="w-full rounded-lg border border-stone-200 p-3 text-left text-sm transition hover:bg-black/[0.03] dark:border-stone-700 dark:hover:bg-white/[0.06]" onclick="pickPrompt('黄昏逆光，天台边缘，35mm 胶片质感，浅景深')">黄昏逆光，天台边缘，35mm 胶片质感，浅景深…</button>
+        <button class="w-full rounded-lg border border-stone-200 p-3 text-left text-sm transition hover:bg-black/[0.03] dark:border-stone-700 dark:hover:bg-white/[0.06]" onclick="pickPrompt('赛博城市夜景，雨后地面反射，霓虹招牌')">赛博城市夜景，雨后地面反射，霓虹招牌…</button>
+        <button class="w-full rounded-lg border border-stone-200 p-3 text-left text-sm transition hover:bg-black/[0.03] dark:border-stone-700 dark:hover:bg-white/[0.06]" onclick="pickPrompt('水彩风格的橘猫，湿润笔触，纸张纹理')">水彩风格的橘猫，湿润笔触，纸张纹理…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Modal：素材选择 ========== -->
+  <div id="m-assets" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+    <div class="overlay-open absolute inset-0 bg-black/40" onclick="closeModal('m-assets')"></div>
+    <div class="modal-open relative w-full max-w-lg rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-700/60 dark:bg-[#292524]">
+      <div class="flex items-start justify-between">
+        <h3 class="text-lg font-semibold">从素材插入</h3>
+        <button class="icon-btn -mr-2 -mt-1" onclick="closeModal('m-assets')"><i data-lucide="x" class="size-4"></i></button>
+      </div>
+      <div class="mt-4 grid grid-cols-3 gap-3">
+        <button class="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700" onclick="closeModal('m-assets')"><img src="https://picsum.photos/seed/ins1/200/200" class="aspect-square w-full object-cover" alt="" /></button>
+        <button class="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700" onclick="closeModal('m-assets')"><img src="https://picsum.photos/seed/ins2/200/200" class="aspect-square w-full object-cover" alt="" /></button>
+        <button class="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700" onclick="closeModal('m-assets')"><img src="https://picsum.photos/seed/ins3/200/200" class="aspect-square w-full object-cover" alt="" /></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden-t"></div>
+</div>
+
+<script>
+  function toggleAgentPanel() {
+    document.getElementById('agent-panel').classList.toggle('hidden');
+  }
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  /* 分段控件 */
+  document.querySelectorAll('#size .seg, #quality .seg, #count .seg, #dr-settings .seg').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      btn.parentElement.querySelectorAll('.seg').forEach((el) => el.classList.toggle('active', el === btn));
+    });
+  });
+  /* Modal / Drawer 过渡 */
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes modal-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes drawer-up { from { transform: translateY(100%); } to { transform: none; } }
+    .overlay-open { animation: fade-in 0.2s ease-out; }
+    .modal-open { animation: modal-in 0.25s cubic-bezier(0.16,1,0.3,1); }
+    .drawer-up { animation: drawer-up 0.3s cubic-bezier(0.16,1,0.3,1); }
+    .toast { position: fixed; left: 50%; top: 4.5rem; z-index: 70; display: flex; align-items: center; gap: 0.625rem; border-radius: 0.5rem; border: 1px solid rgb(231 229 228); background: #fff; padding: 0.625rem 1rem; font-size: 0.875rem; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all .3s; }
+    .dark .toast { border-color: rgba(255,255,255,0.14); background: #292524; }
+    .hidden-t { transform: translate(-50%, -8px); opacity: 0; pointer-events: none; }
+  `;
+  document.head.appendChild(style);
+  function openModal(id) {
+    const el = document.getElementById(id);
+    el.classList.replace('hidden', 'flex');
+    const card = el.querySelector('.modal-open');
+    card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
+  }
+  function closeModal(id) { document.getElementById(id).classList.replace('flex', 'hidden'); }
+  function openDrawer(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('hidden');
+    const card = el.querySelector('.drawer-up');
+    card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
+  }
+  function closeDrawer(id) { document.getElementById(id).classList.add('hidden'); }
+  function pickPrompt(text) { document.getElementById('prompt').value = text; closeModal('m-prompts'); toast('已填入提示词', 'success'); }
+  /* Toast */
+  const toastIcons = { success: 'check-circle-2', error: 'alert-circle', info: 'info' };
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const el = document.getElementById('toast');
+    const color = type === 'error' ? 'text-red-600 dark:text-red-400' : type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400';
+    el.innerHTML = `<i data-lucide="${toastIcons[type]}" class="size-4 shrink-0 ${color}"></i><span>${msg}</span>`;
+    el.classList.remove('hidden-t');
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden-t'), 2500);
+  }
+  /* ===== Mock 生成流程（对应现有 pending/success/failed 三态卡片） ===== */
+  let mockTimer, elapsedTimer, elapsed = 0;
+  function currentCount() {
+    const active = document.querySelector('#count .seg.active');
+    return Number(active ? active.textContent.trim() : 4) || 4;
+  }
+  function runMock() {
+    const prompt = document.getElementById('prompt').value.trim();
+    if (!prompt) { toast('请先输入提示词', 'error'); return; }
+    clearInterval(mockTimer); clearInterval(elapsedTimer);
+    const n = currentCount();
+    const box = document.getElementById('results');
+    document.getElementById('running-tag').style.display = '';
+    elapsed = 0;
+    elapsedTimer = setInterval(() => {
+      elapsed++;
+      document.getElementById('running-tag').textContent = `等待中 · ${elapsed}s`;
+    }, 1000);
+    box.innerHTML = Array.from({ length: n }, (_, i) => `
+      <div class="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900" data-slot="${i}">
+        <div class="absolute inset-0 opacity-60" style="background-image:radial-gradient(circle, rgba(120,113,108,0.35) 1.4px, transparent 1.6px);background-size:16px 16px"></div>
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+          <i data-lucide="loader-circle" class="size-6 animate-spin"></i><span>生成中…</span>
+        </div>
+      </div>`).join('');
+    lucide.createIcons();
+    let done = 0;
+    mockTimer = setInterval(() => {
+      const slot = box.querySelector(`[data-slot="${done}"]`);
+      if (!slot) { clearInterval(mockTimer); return; }
+      const roll = Math.random();
+      const contentRejected = roll < 0.15;
+      const fail = roll >= 0.15 && roll < 0.3;
+      if (contentRejected) {
+        slot.outerHTML = `
+          <div class="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
+            <div class="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
+              <span class="inline-flex size-9 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/60"><i data-lucide="shield-x" class="size-4 text-red-600 dark:text-red-400"></i></span>
+              <div class="text-sm font-medium text-red-600 dark:text-red-300">内容未通过安全审核</div>
+              <p class="line-clamp-4 text-xs text-red-500 dark:text-red-300">检测到不适宜内容（风险类别：成人内容），请修改提示词后重试；本次不消耗积分。</p>
+            </div>
+            <div class="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
+              <button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400" onclick="document.getElementById('prompt').focus()">修改内容</button>
+            </div>
+          </div>`;
+      } else if (fail) {
+        slot.outerHTML = `
+          <div class="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
+            <div class="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
+              <div class="text-sm font-medium text-red-600 dark:text-red-300">生成失败</div>
+              <p class="line-clamp-4 text-xs text-red-500 dark:text-red-300">Request timed out after 60s</p>
+            </div>
+            <div class="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
+              <button class="btn-secondary btn-sm !border-red-200 !text-red-600 dark:!border-red-900/60 dark:!text-red-400">重试</button>
+            </div>
+          </div>`;
+      } else {
+        const seed = `mock-${Date.now()}-${done}`;
+        slot.outerHTML = `
+          <div class="group overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-[#1c1917]">
+            <img src="https://picsum.photos/seed/${seed}/600/600" class="aspect-square w-full object-cover" alt="" />
+            <div class="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
+              <div class="flex gap-x-2 text-xs text-stone-500 dark:text-stone-400"><span>1024x1024</span><span>1.2MB</span><span>8s</span></div>
+              <div class="grid grid-cols-3 gap-2">
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="folder-plus" class="size-3.5 shrink-0"></i>入素材</button>
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="pen-line" class="size-3.5 shrink-0"></i>作参考</button>
+                <button class="btn-secondary btn-sm min-w-0 truncate"><i data-lucide="download" class="size-3.5 shrink-0"></i>下载</button>
+              </div>
+            </div>
+          </div>`;
+      }
+      done++;
+      if (done >= n) {
+        clearInterval(mockTimer); clearInterval(elapsedTimer);
+        document.getElementById('running-tag').style.display = 'none';
+        toast('生成完成', 'success');
+      }
+    }, 900);
+  }
+  function loadLog(i) {
+    document.getElementById('prompt').value = i === 0 ? '黄昏逆光，天台边缘，35mm 胶片质感，浅景深' : '赛博城市夜景，雨后地面反射，霓虹招牌';
+    toast('已载入该次记录参数', 'info');
+  }
+  function resetMock() {
+    clearInterval(mockTimer); clearInterval(elapsedTimer);
+    document.getElementById('running-tag').style.display = 'none';
+    document.getElementById('results').innerHTML = `
+      <div class="col-span-full flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center lg:min-h-[420px] dark:border-stone-700">
+        <i data-lucide="image-plus" class="mb-4 size-11 text-stone-400"></i>
+        <p class="text-sm text-stone-500 dark:text-stone-400">输入提示词开始你的第一次生成</p>
+      </div>`;
+    lucide.createIcons();
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeModal('m-prompts'); closeModal('m-assets'); closeDrawer('dr-logs'); closeDrawer('dr-settings'); }
+  });
+  lucide.createIcons();
+</script>
+</body>
+</html>
