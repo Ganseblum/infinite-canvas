@@ -88,9 +88,9 @@ git push origin codex/account-backend-plan
 | --- | --- | --- | --- | --- |
 | 本地开发 | `http://localhost:3000`（vite dev） | 本机 MySQL `infinite_canvas` | 仓库下 `.local-media/` | 任意工作分支 |
 | 测试 / 预发布 | `https://sim-xxx.example.com` → 主机 `3100` | `infinite_canvas_test` | 测试环境独立目录或桶 | `codex/account-backend-plan` 或合并后的 `main` |
-| 正式 | `https://xxx.example.com` → 主机 `3000` | `infinite_canvas` | 正式环境独立目录或桶 | 经过验收的 `main` 提交或版本 tag |
+| 正式 | `https://xxx.example.com` → 主机 `3200` | `infinite_canvas` | 正式环境独立目录或桶 | 经过验收的 `main` 提交或版本 tag |
 
-**部署方式**：仓库根目录提供 `deploy.sh`，测试与正式用不同 compose 项目名（`infinite-canvas-test` / `infinite-canvas-prod`），容器、网络与命名卷（数据库、媒体）自动隔离；测试环境额外用 `deploy/compose.test.yml` 把对外端口错开到 3100。环境变量文件放 `deploy/env.test`、`deploy/env.prod`（已在 `.gitignore` 中，仓库只保留 `.example` 模板），域名与证书由主机上的反向代理处理，前端与接口同源、由容器内 nginx 反代 `/api`，因此不引入 CORS。
+**部署方式**：仓库根目录提供 `deploy.sh`，测试与正式用不同 compose 项目名（`infinite-canvas-test` / `infinite-canvas-prod`），容器、网络与命名卷（数据库、媒体）自动隔离；镜像在本机/服务器本地构建，tag 与对外端口由 env 文件提供（`APP_IMAGE` / `API_IMAGE` / `APP_PORT`，测试 `:test`+3100、正式 `:prod`+3200），app 端口只绑 `127.0.0.1`，公网访问一律走宿主机 nginx 的 443。测试环境额外用 `deploy/compose.test.yml` 给 db 加 `127.0.0.1:13306` 回环映射，供 Navicat 走 SSH 隧道查库。更新流程：`git pull` → `./deploy.sh <env> build` → `./deploy.sh <env> up -d`（up 固定 `--force-recreate app api`，app 容器内 nginx 缓存 api 容器 IP，api 重建后必须连带重建 app）。环境变量文件放 `deploy/env.test`、`deploy/env.prod`（已在 `.gitignore` 中，仓库只保留 `.example` 模板），域名与证书由主机上的反向代理处理，前端与接口同源、由容器内 nginx 反代 `/api`，因此不引入 CORS。
 
 **前端环境标识**：容器入口脚本会把 `SITE_ENV` 与 `API_BASE_URL` 注入 `config.js`。`SITE_ENV` 不是 `production` 时，页面顶栏显示环境标识（如「测试环境」），避免在测试站上误当成正式站操作；`API_BASE_URL` 留空表示同源 `/api`，只有前后端分开部署时才填。
 

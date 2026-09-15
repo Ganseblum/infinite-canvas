@@ -195,5 +195,6 @@ Canvas Agent 配置权限
 - 环境标识：本地开发访问 http://localhost:3000 时，顶栏（含画布编辑页）应显示「本地开发」标识；部署时把 `SITE_ENV` 设成 `test` 显示「测试环境」，设成 `production`（或不设）则不显示任何标识。
 - 测试数据导入：在测试环境把 `SEED_TEST_DATA=true` 打开并启动一次服务，应自动写入测试账号 `test@example.com`（密码 `test123456`，邮箱已验证）、一张「示例画布（测试数据）」（2 个文本节点 + 1 条连线）与一条带「测试数据」标签的示例素材；再次启动不应重复写入（可在 Navicat 里核对行数不变）。
 - 用测试账号登录后：画布列表能看到示例画布，素材页能看到示例素材且标签筛选可用；正式环境必须保持 `SEED_TEST_DATA=false`。
-- 部署脚本：`cp deploy/env.test.example deploy/env.test` 并填写后执行 `./deploy.sh test up -d`，测试环境应起在主机 3100 端口、容器名与数据卷带 `-test` 前缀；`./deploy.sh prod up -d` 起在 3000 端口。两个环境的数据库与媒体卷互不可见。
+- 部署脚本：`cp deploy/env.test.example deploy/env.test` 并填写后，先 `./deploy.sh test build` 在本地构建 `infinite-canvas:test` / `infinite-canvas-api:test` 镜像（不再使用上游 ghcr 镜像），再 `./deploy.sh test up -d` 启动；测试环境应只绑定在 `127.0.0.1:3100`（对外端口由 env 的 `APP_PORT` 指定），容器与数据卷带 `-test` 项目前缀，`./deploy.sh prod up -d` 起在 `127.0.0.1:3200`。两个环境的数据库与媒体卷互不可见。测试环境 db 额外映射 `127.0.0.1:13306`，供 Navicat 走 SSH 隧道查看。`up` 固定重建 app 与 api，更新 api 镜像后 `/api` 反代不会指向旧容器 IP。
+- 数据库版本：db 容器固定为 `mysql:8.4.11`（8.4 LTS），首次启动应自动建表并写入测试数据；本地、测试、正式三处应为同一版本，Navicat 需 12 及以上版本才能连接 8.4 的默认认证方式。
 - 两套环境变量里 `JWT_SECRET` 与 `CREDENTIAL_MASTER_KEY` 必须不同：在测试环境登录拿到的令牌，不应能在正式环境通过校验。

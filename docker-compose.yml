@@ -1,9 +1,14 @@
 services:
   app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
-    container_name: infinite-canvas
+    # 镜像 tag 按环境区分（测试 :test / 正式 :prod，由 env 文件提供），
+    # 避免测试构建覆盖正式正在用的镜像；本 Fork 的 web 必须自建镜像，不使用上游 ghcr 镜像。
+    image: ${APP_IMAGE:?需要在 env 文件里设置 APP_IMAGE}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 端口只绑回环，公网访问一律走宿主机 nginx 反代 443；对外端口由 env 文件的 APP_PORT 指定。
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${APP_PORT:?需要在 env 文件里设置 APP_PORT}:3000"
     restart: unless-stopped
     depends_on:
       api:
@@ -18,7 +23,8 @@ services:
     #   ANALYTICS_BAIDU_ID: xxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 百度统计站点 ID
 
   api:
-    image: infinite-canvas-api:latest
+    # tag 与 app 一样按环境区分，防止测试构建污染正式镜像
+    image: ${API_IMAGE:?需要在 env 文件里设置 API_IMAGE}
     build:
       context: ./server
       dockerfile: Dockerfile
@@ -111,7 +117,9 @@ services:
       start_period: 15s
 
   db:
-    image: mysql:8.0
+    # 8.4 是 MySQL 当前 LTS（支持到 2032；8.0 已过首选支持期，9.x 为短周期 innovation 版）。
+    # 钉死补丁号，保证测试与正式两套环境跑的是同一个版本，升级靠手动改这一行。
+    image: mysql:8.4.11
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}

@@ -73,7 +73,8 @@ services:
       start_period: 15s
 
   db:
-    image: mysql:8.0
+    # 与 docker-compose.yml 保持同一版本，避免本地与测试/正式环境出现版本差异
+    image: mysql:8.4.11
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}

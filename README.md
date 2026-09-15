@@ -112,7 +112,7 @@
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env          # 填写数据库、JWT、管理员与邮件配置
-docker compose up -d db       # 或用本机 MySQL 8.0
+docker compose up -d db       # 或用本机 MySQL 8.4
 cd server && go run ./cmd/server
 cd web && bun install && bun run dev
 ```

@@ -8,25 +8,37 @@
 | --- | --- | --- | --- | --- |
 | 本地开发 | `http://localhost:3000`（vite dev） | 本机 MySQL `infinite_canvas` | 仓库下 `.local-media/` | 任意工作分支 |
 | 测试/预发布 | `https://sim-xxx.example.com` → 主机 `3100` | `infinite_canvas_test` | 测试环境独立目录或桶 | 规划分支 / 合并后的 `main` |
-| 正式 | `https://xxx.example.com` → 主机 `3000` | `infinite_canvas` | 正式环境独立目录或桶 | `main` 的版本 tag（见《Fork同步与部署约定》） |
+| 正式 | `https://xxx.example.com` → 主机 `3200` | `infinite_canvas` | 正式环境独立目录或桶 | `main` 的版本 tag（见《Fork同步与部署约定》） |
 
 ## 用法
 
 ```bash
 cp deploy/env.test.example deploy/env.test   # 填写测试环境变量
+./deploy.sh test build                       # 构建测试镜像（infinite-canvas:test / infinite-canvas-api:test）
 ./deploy.sh test up -d
 
 cp deploy/env.prod.example deploy/env.prod   # 填写正式环境变量
+./deploy.sh prod build                       # 构建正式镜像（:prod）
 ./deploy.sh prod up -d
 ```
 
+更新流程：`git pull` → `./deploy.sh <env> build` → `./deploy.sh <env> up -d`。
 `deploy.sh` 内部就是 `docker compose -p infinite-canvas-test --env-file deploy/env.test …`。
-不同项目名让容器、网络、命名卷（`mysqldata`、`media`）自动隔离，测试环境清库不会碰到正式数据。
+不同项目名让容器、网络、命名卷（`mysqldata`、`media`）自动隔离，测试环境清库不会碰到正式数据；
+镜像 tag 也按环境区分（env 文件里的 `APP_IMAGE` / `API_IMAGE`），测试构建不会覆盖正式正在用的镜像。
+`up` 会固定 `--force-recreate app api`：app 容器内 nginx 启动时缓存了 api 容器 IP，api 重建后必须连带重建 app，否则 `/api` 反代仍指向旧 IP；db 不受影响。
 
-域名与证书由主机上的反向代理（nginx/Caddy 或云厂商负载均衡）处理，把两个域名分别指向 `127.0.0.1:3100` 与 `127.0.0.1:3000` 即可；前端与接口同源，容器内的 nginx 会把 `/api` 反代到 api 容器，因此不需要 CORS。
+app 对外端口由 env 文件的 `APP_PORT` 指定（测试 3100 / 正式 3200），只绑定 `127.0.0.1`，公网访问一律走宿主机反向代理。域名与证书由主机上的 nginx/Caddy 处理，把两个域名分别反代到 `127.0.0.1:3100` 与 `127.0.0.1:3200` 即可；前端与接口同源，容器内的 nginx 会把 `/api` 反代到 api 容器，因此不需要 CORS。宿主机反向代理要为 `/api/ai/` 关闭缓冲（`proxy_buffering off`）并放宽 `proxy_read_timeout`，`/api/media/` 放大 `client_max_body_size`；SSE 对话必须在反代后面验收，直连容器端口测不出问题。
+
+测试环境还会叠加 `deploy/compose.test.yml`，给 db 额外映射 `127.0.0.1:13306`，供本地 Navicat 通过 SSH 隧道查看测试库。
+
+## 数据库版本
+
+数据库是 compose 自带的 MySQL 容器，版本 `mysql:8.4.11`。选 8.4 是因为它是 MySQL 当前 LTS（首选支持到 2029-04、延长支持到 2032-04）；8.0 的首选支持期已在 2026-04 结束，9.x 属于短周期 innovation 版本，均不用于新部署。补丁号钉死不跟浮动 tag，好处是本地、测试、正式三处跑的是同一个版本，行为可复现；升级时改 `docker-compose.yml` 里这一行并重建 db 容器。两个环境的库各自在命名卷里，版本升级互不影响。
 
 ## 每个环境必须不同的项
 
+- `APP_IMAGE` / `API_IMAGE` 镜像 tag、`APP_PORT` 对外端口
 - `DATABASE_URL`（库名或实例不同）、`MEDIA_ROOT` / S3 桶
 - `JWT_SECRET`、`CREDENTIAL_MASTER_KEY`：**绝不能共用**，共用等于测试环境签发的令牌能在正式环境通过校验
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD`、`APP_BASE_URL`（邮件链接用它）、`SITE_ENV`
