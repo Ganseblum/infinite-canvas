@@ -6,8 +6,6 @@ node_modules/
 # 部署环境变量只保留 .example 模板，实际值不入库
 deploy/env.test
 deploy/env.prod
-# 本地实施手册含服务器地址与服务清单，只保存在本机，不提交公开仓库
-我的规划/部署方案（测试与正式环境）.md
 data/
 # 只忽略仓库根目录的 data/，前端资源类型目录要入库
 !web/src/services/data/

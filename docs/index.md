@@ -39,4 +39,4 @@
 
 - On this fork's account-backend branch, Go/MySQL stores business records and local/S3 storage holds media. Test and production are independent; local development shares test data without a third database.
 - AI channels are configured server-side and credentials are encrypted in the database. Full local/server Go sharing still requires media and execution-control prerequisites in the deployment guide.
-- Real server details are kept in the ignored local runbook `我的规划/部署方案（测试与正式环境）.md`, with no passwords or keys.
+- Real server details are documented in `我的规划/部署方案（测试与正式环境）.md`; it contains no passwords or keys. Environment files and actual secrets remain local-only.
