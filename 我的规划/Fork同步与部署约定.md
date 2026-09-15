@@ -76,21 +76,21 @@ git push origin codex/account-backend-plan
 
 账号体系与服务端第一期（账号与邮件）、第二期（画布、素材、生成记录与媒体）、第三期（双桶点数、充值订单与支付回调、档位与存储配额、模型目录与限时折扣、保留期清理、账号注销、管理后台）、第四期（AI 转发：报价预扣与失败退还、平台渠道加密与故障转移、异步视频任务、SSE 对话、删除浏览器直连与自定义脚本）已实现，服务放在本仓库的 `server/` 目录，由于它会和 `web/` 共用登录态、数据分发、存储和部署决策，没有必要一开始拆成独立仓库。最终形态预计使用 Docker Compose 管理 Web、API、数据库以及对象存储的连接。
 
-生产环境只从经过审查和验证的 `origin/main` 提交，或从该提交创建的版本 tag 部署。不要直接部署 `upstream/main` 或 `codex/account-backend-plan`。当前仓库主要仍是静态 Web 应用，Docker 静态资源路径尚需最终验证，暂不把生产部署描述为完全验证通过。
+生产环境只从经过审查和验证的 `origin/main` 提交，或从该提交创建的版本 tag 部署。不要直接部署 `upstream/main` 或 `codex/account-backend-plan`。当前实现分支已包含 Vite 前端与 Go 后端，Docker 静态资源路径和完整服务器部署尚需最终验证，暂不把生产部署描述为完全验证通过。
 
 服务端开发阶段可以使用规划分支做开发或预发布预览；当对应 Phase 的门禁和用户验收全部通过后，再合并到 `main`，然后从经过验证的 `main` 提交或 tag 部署。
 
 ## 环境与域名约定
 
-前后端都按「同一份代码 + 不同环境变量」区分环境，环境值只存在各自的服务器/本机上，不提交进 git。
+前后端按「同一份代码 + 环境变量」区分环境，环境值不提交进 git。服务器只部署测试、正式两套数据库，本地开发共用测试库；测试和正式使用独立 checkout，避免更新测试代码影响正式构建。完整步骤统一见 [部署手册](../deploy/README.md)。
 
 | 环境 | 前端地址 | 数据库 | 媒体 | 代码来源 |
 | --- | --- | --- | --- | --- |
-| 本地开发 | `http://localhost:3000`（vite dev） | 本机 MySQL `infinite_canvas` | 仓库下 `.local-media/` | 任意工作分支 |
+| 本地开发 | `http://localhost:3000`（Vite） | 共用服务器 `infinite_canvas_test` | 前端联调用测试媒体；双 Go 目标使用同一私有测试桶 | 与测试库结构兼容的工作分支 |
 | 测试 / 预发布 | `https://sim-xxx.example.com` → 主机 `3100` | `infinite_canvas_test` | 测试环境独立目录或桶 | `codex/account-backend-plan` 或合并后的 `main` |
 | 正式 | `https://xxx.example.com` → 主机 `3200` | `infinite_canvas` | 正式环境独立目录或桶 | 经过验收的 `main` 提交或版本 tag |
 
-**部署方式**：仓库根目录提供 `deploy.sh`，测试与正式用不同 compose 项目名（`infinite-canvas-test` / `infinite-canvas-prod`），容器、网络与命名卷（数据库、媒体）自动隔离；镜像在本机/服务器本地构建，tag 与对外端口由 env 文件提供（`APP_IMAGE` / `API_IMAGE` / `APP_PORT`，测试 `:test`+3100、正式 `:prod`+3200），app 端口只绑 `127.0.0.1`，公网访问一律走宿主机 nginx 的 443。测试环境额外用 `deploy/compose.test.yml` 给 db 加 `127.0.0.1:13306` 回环映射，供 Navicat 走 SSH 隧道查库。更新流程：`git pull` → `./deploy.sh <env> build` → `./deploy.sh <env> up -d`（up 固定 `--force-recreate app api`，app 容器内 nginx 缓存 api 容器 IP，api 重建后必须连带重建 app）。环境变量文件放 `deploy/env.test`、`deploy/env.prod`（已在 `.gitignore` 中，仓库只保留 `.example` 模板），域名与证书由主机上的反向代理处理，前端与接口同源、由容器内 nginx 反代 `/api`，因此不引入 CORS。
+**部署方式**：仓库根目录提供 `deploy.sh`，测试与正式用不同 compose 项目名（`infinite-canvas-test` / `infinite-canvas-prod`），容器、网络与命名卷（数据库、媒体）自动隔离；镜像在本机/服务器本地构建，tag 与对外端口由 env 文件提供（`APP_IMAGE` / `API_IMAGE` / `APP_PORT`，测试可用 `:test`+3100，正式使用已验收版本的镜像 tag+3200），app 端口只绑 `127.0.0.1`，公网访问一律走宿主机 nginx 的 443。测试环境额外用 `deploy/compose.test.yml` 给 db 加 `127.0.0.1:13306` 回环映射，供 DBeaver 等工具走 SSH 隧道查库。测试更新时检出目标提交，再执行 `./deploy.sh test build` → `./deploy.sh test up -d`；正式更新前先备份，检出已验收的版本 tag，在 `deploy/env.prod` 设置对应版本的镜像 tag，再执行 `./deploy.sh prod build` → `./deploy.sh prod up -d`，保留旧版本镜像；数据库结构变更不能仅靠回退镜像恢复。`up` 固定 `--force-recreate app api`，app 容器内 nginx 缓存 api 容器 IP，api 重建后必须连带重建 app。环境变量文件放 `deploy/env.test`、`deploy/env.prod`（已在 `.gitignore` 中，仓库只保留 `.example` 模板），域名与证书由主机上的反向代理处理，前端与接口同源、由容器内 nginx 反代 `/api`，因此不引入 CORS。
 
 **前端环境标识**：容器入口脚本会把 `SITE_ENV` 与 `API_BASE_URL` 注入 `config.js`。`SITE_ENV` 不是 `production` 时，页面顶栏显示环境标识（如「测试环境」），避免在测试站上误当成正式站操作；`API_BASE_URL` 留空表示同源 `/api`，只有前后端分开部署时才填。
 
@@ -100,7 +100,7 @@ git push origin codex/account-backend-plan
 
 **内容审核**：第五期起支持站内生成与上传链路审核。`MODERATION_ENABLED=true` 时 `MODERATION_FAIL_MODE` 必须显式配置（`reject` 为公开运营默认，`allow` 仅供私有化部署方明确选择），未配置会导致 api 启动失败。真实方案 `MODERATION_PROVIDER=nsfwjs+detoxify` 需要把 NSFWJS（Node + TF.js）与 Detoxify（Python）两个推理 sidecar 部署在同一 compose 内网，只监听内网、不经 nginx 暴露；视频审核还要求 api 容器内有 `ffmpeg`。测试环境可先用 `MODERATION_PROVIDER=fake`，并可用 `MODERATION_FAKE_REJECT_TEXTS` 触发拒绝联调。隔离原件按 `MODERATION_QUARANTINE_TTL`（默认 24 小时）自动删除，仅管理员可短期预览。
 
-**数据隔离要求**：`DATABASE_URL`、媒体目录/桶、`JWT_SECRET`、`CREDENTIAL_MASTER_KEY`、管理员账号、`APP_BASE_URL`、`MAIL_DRIVER` 每个环境必须不同。其中 `JWT_SECRET` 与 `CREDENTIAL_MASTER_KEY` **绝不能共用**：共用会让测试环境签发的令牌在正式环境通过校验，等于绕过登录。
+**数据隔离要求**：测试与正式的数据库、媒体、JWT/凭据主密钥、管理员和入口配置独立。本地与服务器测试属于同一逻辑测试环境，共用测试数据库、媒体与密钥；本地数据库通过 SSH 指向 `127.0.0.1:13306`，服务器仍连接 `db:3306`。本地与测试域名的 Cookie 不自动共享。完整双 Go 模式需先补共享媒体、启动维护/后台任务执行开关和设置缓存一致性，当前仍待实施；不要仅改连接串就启动两个完整后端。
 
 **测试数据**：固定的测试账号与示例画布/素材定义在 `server/internal/db/seed_test_data.go`，随代码进 git；任何环境把 `SEED_TEST_DATA=true` 打开、启动一次即可导入（幂等，重复执行不产生重复数据）。正式环境必须保持 `false`，测试账号的密码是公开的。
 

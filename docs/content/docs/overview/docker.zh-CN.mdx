@@ -1,91 +1,53 @@
 ---
 title: Docker 部署
-description: 使用 Docker Compose 部署无限画布
+description: 测试、正式双环境部署与本地联调
 ---
 
 # Docker 部署
 
-如果你希望在自己的机器或服务器上运行项目，可以直接使用 Docker Compose。
+本 Fork 的账号后端版本使用 Docker Compose 同时部署 Vite 静态前端、Go API 和 MySQL，自建当前源码的 app / api 镜像。不要用上游发布镜像代替这一版本，也不要直接执行未配置 env 的 `docker compose up -d`。
 
-## 使用发布镜像
+## 先部署测试环境
 
-```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-docker compose up -d
-```
-
-启动后访问：
-
-```text
-http://localhost:3000
-```
-
-## 本地构建镜像
-
-如果需要基于当前源码构建镜像：
+从你的 Fork 获取指定测试提交，分别准备测试、正式代码目录。测试目录执行：
 
 ```bash
-docker compose -f docker-compose.local.yml up -d --build
+cp deploy/env.test.example deploy/env.test
+# 填写真实数据库凭据、随机密钥、管理员与 APP_BASE_URL
+./deploy.sh test build
+./deploy.sh test up -d
 ```
 
-## 文档站镜像
+测试前端只绑定宿主机 `127.0.0.1:3100`。宿主机 Nginx 配置测试域名和 HTTPS，反代到该端口；容器内 Nginx 把 `/api` 原样转发到 Go。两层代理都需满足 SSE 与媒体上传需求。
 
-文档站位于 `docs/` 目录，按带服务端能力的 Next.js standalone 应用单独构建，不打进主应用镜像。
+测试 MySQL 只映射服务器回环 `13306`，本地通过 SSH 隧道连接。DBeaver 用于查看同一个测试库，电脑不必安装 MySQL。连接步骤见[本地开发](/zh-CN/docs/development/local-development)。
 
-使用发布镜像：
+## 正式环境
+
+测试通过、用户同意合入 `main` 后，正式目录检出已验收 tag，填写独立 `deploy/env.prod`，完成备份恢复准备，再执行：
+
+```bash
+./deploy.sh prod build
+./deploy.sh prod up -d
+```
+
+正式前端绑定 `127.0.0.1:3200`，由宿主机域名反代提供 HTTPS；正式数据库不映射宿主机端口。正式关闭测试 seed，使用独立数据库、密钥和媒体存储。正式镜像标签包含版本号并保留旧镜像，升级前备份；当前自动改表不能只靠切旧镜像回滚。
+
+## 数据与本地开发
+
+只保留测试、正式两套库。本地前端可以经 SSH 代理服务器测试 API；本地 Go 与测试 Go 共用测试库的完整模式，还需共享测试媒体桶和启动维护/后台任务执行开关，当前待实施。
+
+账号、画布、素材记录与生成记录由 Go / MySQL 保存；图片、视频等文件存在媒体卷或私有 S3 桶。联合备份包含数据库、媒体、env/密钥和版本记录。平台 AI 渠道密钥加密存库，不是浏览器直连渠道方案。
+
+完整部署顺序、DBeaver、共享数据前置条件与验收清单见仓库 `deploy/README.md`。真实服务器信息只保存在本地实施手册，服务器部署与 Docker 静态资源仍需实际验收。
+
+## 文档站与统计
+
+文档站位于 `docs/`，是独立 Next.js standalone 应用，不打入主应用镜像：
 
 ```bash
 cd docs
 docker compose up -d
 ```
 
-基于当前源码本地构建：
-
-```bash
-cd docs
-docker compose -f docker-compose.local.yml up -d --build
-```
-
-## 数据说明
-
-当前主应用镜像只启动 Next.js。画布、我的素材、生成记录和 AI API Key 默认保存在浏览器本地；第三方提示词由浏览器前端直连拉取，不需要额外挂载数据目录。
-
-## 统计分析（可选）
-
-项目**默认不接入任何统计**：不设置下列环境变量时，页面不会加载任何统计脚本，也不会发送任何外部请求。你在自己的部署上想查看流量时，设置对应环境变量即可，无需修改代码或重新构建镜像——镜像启动时会据此生成运行期配置。
-
-统计按「每家一个独立变量」配置：**填了谁就启用谁，可同时启用多家**（例如 GA4 + 百度一起开）。仅支持 GA4 与百度，两者都只接受 ID，脚本地址由代码固定拼接，不接受任意脚本地址或内联 JS。
-
-| 变量 | 说明 |
-| --- | --- |
-| `ANALYTICS_GA4_ID` | Google Analytics 4 衡量 ID（`G-XXXX`） |
-| `ANALYTICS_BAIDU_ID` | 百度统计站点 ID（`hm.js?` 后面那串 hash） |
-
-在 `docker-compose.yml` 的 `environment` 中配置（文件内已附注释示例），下例同时启用 GA4 与百度：
-
-```yaml
-services:
-  app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
-    ports:
-      - "3000:3000"
-    environment:
-      ANALYTICS_GA4_ID: G-XXXXXXXXXX
-      ANALYTICS_BAIDU_ID: e8263761cc5c32f5f7a855b8203b965a
-```
-
-或使用 `docker run`：
-
-```bash
-docker run -d -p 3000:3000 \
-  -e ANALYTICS_GA4_ID=G-XXXXXXXXXX \
-  -e ANALYTICS_BAIDU_ID=e8263761cc5c32f5f7a855b8203b965a \
-  ghcr.io/basketikun/infinite-canvas:latest
-```
-
-单页应用的路由切换会自动向所有已启用的统计上报 pageview。
-
-<Callout type="warn">
-请只在你自己的站点上配置统计 ID，不要把 ID 提交进仓库；fork 或自托管本项目的用户默认不会产生任何统计。
-</Callout>
+主应用统计默认关闭；可在 app 的环境变量中设置 `ANALYTICS_GA4_ID`、`ANALYTICS_BAIDU_ID`。配置由容器启动时写入 `config.js`，只在自己的站点使用，不提交真实统计 ID。

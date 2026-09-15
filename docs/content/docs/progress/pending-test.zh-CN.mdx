@@ -105,7 +105,7 @@ Canvas Agent 配置权限
 
 ## 账号后端与前端登录/会员中心
 
-- 后端部署：复制根 `.env.example` 为 `.env` 并填写数据库、JWT、管理员、SMTP 与存储配置后，`docker compose up -d` 应能启动 app / api / db 三个服务，`GET /healthz` 与 `GET /readyz` 正常；启用免费赠送但未配置活动 ID、风险阈值或每日预算时，api 应拒绝启动并给出明确错误。
+- 后端部署：从模板填写 `deploy/env.test`，先 `./deploy.sh test build` 再 `./deploy.sh test up -d`，验收 app / api / db 与容器内 `/healthz`、`/readyz`；测试通过后再按独立正式 env 部署。启用免费赠送但未配置活动 ID、风险阈值或每日预算时，api 应拒绝启动并给出明确错误。
 - 后端账号链路：注册后应收到验证邮件（`MAIL_DRIVER=log` 时在日志中），验证、登录、刷新、登出全链路正常；并发刷新只有一个请求成功且胜者会话继续有效；连续 5 次登录失败锁定 15 分钟、成功登录后计数清零；同一邮箱发送验证/重置邮件超过 3 次/小时、同一 IP 超过 10 次/小时应返回 429。
 - 后端资源与媒体：画布列表/详情/保存正常，保存时 revision 过期返回 409 并附当前 revision；跨用户访问画布、素材、生成记录、媒体均返回 404；未验证邮箱或超过单文件上限时上传被拒；本地上传的媒体可用返回地址直接访问，重复上传同一 storageKey 不产生重复记录。
 - 前端登录：未登录访问任意业务页面应重定向到 `/login`，登录成功后回到原路径；刷新已登录页面不闪登录页；注册成功提示验证邮件并可在用户菜单重发；忘记密码与重置密码、`/verify-email` 链接均可完成；`bun run test` 通过。
@@ -196,5 +196,7 @@ Canvas Agent 配置权限
 - 测试数据导入：在测试环境把 `SEED_TEST_DATA=true` 打开并启动一次服务，应自动写入测试账号 `test@example.com`（密码 `test123456`，邮箱已验证）、一张「示例画布（测试数据）」（2 个文本节点 + 1 条连线）与一条带「测试数据」标签的示例素材；再次启动不应重复写入（可在 Navicat 里核对行数不变）。
 - 用测试账号登录后：画布列表能看到示例画布，素材页能看到示例素材且标签筛选可用；正式环境必须保持 `SEED_TEST_DATA=false`。
 - 部署脚本：`cp deploy/env.test.example deploy/env.test` 并填写后，先 `./deploy.sh test build` 在本地构建 `infinite-canvas:test` / `infinite-canvas-api:test` 镜像（不再使用上游 ghcr 镜像），再 `./deploy.sh test up -d` 启动；测试环境应只绑定在 `127.0.0.1:3100`（对外端口由 env 的 `APP_PORT` 指定），容器与数据卷带 `-test` 项目前缀，`./deploy.sh prod up -d` 起在 `127.0.0.1:3200`。两个环境的数据库与媒体卷互不可见。测试环境 db 额外映射 `127.0.0.1:13306`，供 Navicat 走 SSH 隧道查看。`up` 固定重建 app 与 api，更新 api 镜像后 `/api` 反代不会指向旧容器 IP。
-- 数据库版本：db 容器固定为 `mysql:8.4.11`（8.4 LTS），首次启动应自动建表并写入测试数据；本地、测试、正式三处应为同一版本，Navicat 需 12 及以上版本才能连接 8.4 的默认认证方式。
-- 两套环境变量里 `JWT_SECRET` 与 `CREDENTIAL_MASTER_KEY` 必须不同：在测试环境登录拿到的令牌，不应能在正式环境通过校验。
+- 数据库版本：测试与正式 db 容器固定为 `mysql:8.4.11`（8.4 LTS），本地连接同一个测试库、不另起第三个实例；测试首次启动应自动建表并写入样例数据，DBeaver 应可通过 MySQL 驱动与 SSH 隧道连接。
+- 测试与正式的 `JWT_SECRET` / `CREDENTIAL_MASTER_KEY` 必须不同：测试令牌不应在正式通过校验；本地 Go 与服务器测试 Go 属于同一逻辑测试环境，完整模式前置条件完成后共用测试密钥。
+
+- 部署文档验收：`deploy/README.md`、Docker 与本地开发页明确两套数据库、SSH/DBeaver 和分阶段实施；本地服务器手册不保存密码。完整双 Go 共享模式仍明确列为 TODO，不应描述为已部署或已验收。本次变更是文档规划，不是服务器部署。

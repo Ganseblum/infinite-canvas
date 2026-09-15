@@ -36,11 +36,17 @@ Review conflicts and the source changelog before pushing. If `main` has not adde
 
 ## Development and deployment
 
-The account and backend plan is currently documentation only. The planned Go service belongs in this repository under `server/`, because it shares authentication, data routing, storage, and deployment decisions with `web/`. The eventual production stack is expected to use Docker Compose for the web app, API, database, and object storage integration.
+The implementation branch includes the Go service under `server/` and Vite frontend under `web/`. They share authentication, data, storage and deployment decisions, and use Compose for the app, API and MySQL. Complete server deployment and static resources still require acceptance.
 
-Deploy only from a reviewed commit on `origin/main` or from a release tag created from it. Do not deploy `upstream/main` or the planning branch directly. The current repository still primarily ships a static web application, and its production Docker static-resource path requires final verification before being treated as fully validated.
+Deploy only from a reviewed commit on `origin/main` or from a release tag created from it. Do not deploy `upstream/main` or the planning branch directly. The Docker static-resource path and full server deployment require final verification before being treated as validated.
 
 When backend work is ready, merge it into `main` only after the phase gate and user acceptance checks in the account backend plan pass. Then deploy that tested `main` commit or tag; use the planning branch only for development or staging previews.
+
+## Test/production and local development
+
+Keep only the server test and production databases. Local development shares `infinite_canvas_test` over SSH to loopback port `13306`; production data and JWT/credential master keys remain independent. Use separate test/production checkouts and an accepted release tag for production, preserving versioned images and backups.
+
+Local Vite can use the server test API through an SSH tunnel to port `3100`. Full local Go plus server test Go sharing requires the same private test media bucket and controls for a sole startup-maintenance/background-task executor, with schema and setting-cache consistency; those prerequisites remain TODO. Local and server test use the same test keys, while browser cookies stay scoped to each host. See [deployment guide](../deploy/README.md) for rollout and DBeaver configuration. Real server details are local-only.
 
 ## Divergence assessment and staged sync strategy (verified 2026-09)
 

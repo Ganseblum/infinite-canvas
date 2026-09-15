@@ -4,7 +4,6 @@
 
 - [Quick Start](/docs/overview/quick-start)
 - [Features](/docs/overview/features)
-- [Deploy on Render](/docs/overview/render)
 - [Docker Deployment](/docs/overview/docker)
 - [Third-party Prompt Sources](/docs/overview/third-party-prompt-repositories)
 
@@ -16,6 +15,7 @@
 ## Development and Data
 
 - [Local Development](/docs/development/local-development)
+- [Fork Deployment and Shared Test Data](../deploy/README.md)
 - [Canvas Data Structure](/docs/development/canvas-data-structure)
 - [How the Local Codex Connection Works](/docs/development/local-codex-canvas)
 
@@ -37,5 +37,6 @@
 
 ## Notes
 
-- Canvas projects and My Assets are primarily stored in the browser. WebDAV can be configured for cross-device synchronization.
-- The AI API key is stored in the browser, which sends requests directly to OpenAI-compatible endpoints.
+- On this fork's account-backend branch, Go/MySQL stores business records and local/S3 storage holds media. Test and production are independent; local development shares test data without a third database.
+- AI channels are configured server-side and credentials are encrypted in the database. Full local/server Go sharing still requires media and execution-control prerequisites in the deployment guide.
+- Real server details are kept in the ignored local runbook `我的规划/部署方案（测试与正式环境）.md`, with no passwords or keys.

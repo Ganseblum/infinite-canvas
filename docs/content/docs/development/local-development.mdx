@@ -1,24 +1,21 @@
 ---
 title: Local Development
-description: Full-stack local development
+description: Local code with shared server-side test data
 ---
 
 # Local Development
 
-The project is split between `web/` (frontend) and `server/` (Go backend). Canvases, assets, generations, and media are stored by the server.
+`web/` is the Vite frontend and `server/` is the Go API. The deployment has two databases: test and production. Local development shares the server's `infinite_canvas_test`; media binaries are stored separately from database records.
 
-## 1. Database and backend
+## Frontend changes
+
+After deploying the server test environment, leave local Go stopped and open an API tunnel:
 
 ```bash
-cp .env.example .env   # fill DATABASE_URL, JWT_SECRET, CREDENTIAL_MASTER_KEY, ADMIN_EMAIL, ADMIN_PASSWORD, MAIL_DRIVER at minimum
-docker compose up -d db
-cd server
-go run ./cmd/server
+ssh -N -L 127.0.0.1:8080:127.0.0.1:3100 root@SERVER_ADDRESS
 ```
 
-The API listens on `http://localhost:8080`, creates tables on startup, and seeds the default plans and admin account.
-
-## 2. Frontend
+Start the frontend in another terminal:
 
 ```bash
 cd web
@@ -26,18 +23,37 @@ bun install
 bun run dev
 ```
 
-Open `http://localhost:3000` and sign in with the admin account from `.env`.
+Open `http://localhost:3000` and leave `VITE_API_BASE_URL` empty. The existing Vite `/api` proxy reaches local port `8080`, then the server test app/API through SSH. Media stays on the server. Frontend edits hot-reload without publishing another test image.
 
-## 3. Documentation site
+Local port `8080` must be free. Verify refresh cookies, media and SSE; use local HTTPS if browser behavior requires it. Plain LAN HTTP addresses do not have the same behavior as localhost. The Go API currently has no CORS configuration, so do not switch browser requests directly to a cross-origin API base.
+
+## Inspect the test database
+
+The test MySQL is published only on the server's loopback port `13306`:
+
+```bash
+ssh -N -L 127.0.0.1:13306:127.0.0.1:13306 root@SERVER_ADDRESS
+```
+
+In DBeaver, create a MySQL connection to `127.0.0.1:13306`, database `infinite_canvas_test`, using the actual test `MYSQL_USER` / `MYSQL_PASSWORD`. Database credentials differ from SSH credentials. Disable DBeaver's SSH option when using this terminal tunnel. Community supports table inspection, SQL and ER diagrams; analytical chart availability depends on edition.
+
+## Full-stack changes: planned mode
+
+Local Go can connect to the shared test database through SSH, but merely changing `DATABASE_URL` is insufficient for two complete Go processes to run together:
+
+- Both use the same private test S3 bucket; their separate local media directories are not shared.
+- Add startup-maintenance and background-task controls first. The server test Go is the default sole executor of schema changes, seeds, admin initialization, startup request convergence and scheduled tasks. Local Go disables these actions; those controls are not implemented yet.
+- Share the test JWT and credential master keys, keep production keys independent, and keep both code versions compatible with the test schema. Define restart or refresh behavior for process-local setting caches.
+
+Once prerequisites are complete, prepare properly quoted shell assignments in the computer's repository-root `.env.local`, with database host `127.0.0.1:13306`, local `APP_BASE_URL=http://localhost:3000` and `COOKIE_SECURE=false` for local HTTP. Go reads process environment only; explicitly load/export configuration before running `go run ./cmd/server` from `server/`.
+
+Close the API tunnel occupying `8080` so local Go can use that port, retain the database tunnel, and keep Vite's same-origin `/api` proxy. Local data edits affect the test site. Publishing code does not copy test data into production.
+
+See the repository's `deploy/README.md` for the rollout, DBeaver's built-in SSH option, media and backup requirements. Real server details remain in the local-only runbook. HTTPS, payment callbacks and deployment acceptance still require the server test environment.
+
+## Documentation site
 
 ```bash
 cd docs
 bun run dev
 ```
-
-Common locations:
-
-- Canvas, pages, and interactions: `web/`
-- Accounts, resources, media, and billing APIs: `server/internal/`
-- Prompt caching: `web/src/services/api/prompts.ts`
-- Documentation content: `docs/content/docs/`

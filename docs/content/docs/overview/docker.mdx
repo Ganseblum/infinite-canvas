@@ -1,62 +1,53 @@
 ---
 title: Docker Deployment
-description: Deploy Infinite Canvas with Docker Compose
+description: Test/production deployment and local development
 ---
 
 # Docker Deployment
 
-## Use the published image
+This fork's account-backend version deploys the Vite static frontend, Go API and MySQL together using Compose and locally built app/API images. An upstream image does not include this version. Configure environment files before starting services.
+
+## Start with test
+
+Use the fork's selected test commit and separate test/production checkouts. From the test checkout:
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-docker compose up -d
+cp deploy/env.test.example deploy/env.test
+# Fill database credentials, random keys, admin and the real APP_BASE_URL
+./deploy.sh test build
+./deploy.sh test up -d
 ```
 
-Open `http://localhost:3000`.
+The test frontend binds only to host `127.0.0.1:3100`. Configure the host Nginx test domain and HTTPS to proxy that port. Container Nginx forwards `/api` unchanged to Go; both proxy layers must support SSE and media uploads.
 
-## Build locally
+Test MySQL binds to server loopback port `13306`, accessible locally through SSH. DBeaver inspects the same test database without installing local MySQL. See [Local Development](/docs/development/local-development).
+
+## Production
+
+After test acceptance and explicit approval to merge into `main`, check out the accepted release tag in the production directory, configure an independent `deploy/env.prod`, and complete backup/restore preparation:
 
 ```bash
-docker compose -f docker-compose.local.yml up -d --build
+./deploy.sh prod build
+./deploy.sh prod up -d
 ```
 
-## Documentation image
+Production binds the frontend to `127.0.0.1:3200` behind host HTTPS and does not publish a database host port. Disable test seeds; use independent database, keys and media. Use versioned image tags, preserve older images and back up before upgrades. Automatic schema changes cannot be rolled back merely by selecting an older image.
 
-The documentation in `docs/` is a separate Next.js standalone application with server capabilities.
+## Data and local development
+
+Keep two databases, test and production. Local Vite can proxy the server test API through SSH. The full mode with local Go sharing the test database still requires shared test media and startup-maintenance/background-task controls; those prerequisites are not implemented.
+
+Go/MySQL stores accounts, canvases, asset records and generations. Media binaries live in a volume or private S3 bucket. Back up database, media, env/keys and version records together. Platform AI credentials are encrypted in the database, rather than used by browser-direct channels.
+
+See the repository's `deploy/README.md` for rollout, DBeaver, shared-data prerequisites and acceptance. Server details remain in a local-only runbook; server deployment and Docker static resources still need actual acceptance.
+
+## Documentation and analytics
+
+`docs/` is a separate Next.js standalone application:
 
 ```bash
 cd docs
 docker compose up -d
 ```
 
-To build it from the current source:
-
-```bash
-cd docs
-docker compose -f docker-compose.local.yml up -d --build
-```
-
-The main application container only runs Next.js. Canvases, My Assets, generation history, and API keys are stored in the browser by default, while prompt repositories are fetched directly by the frontend. No persistent data volume is required for this data.
-
-## Optional analytics
-
-No analytics are enabled by default. A deployment can enable GA4, Baidu Analytics, or both at runtime:
-
-| Variable | Description |
-| --- | --- |
-| `ANALYTICS_GA4_ID` | Google Analytics 4 measurement ID (`G-XXXX`) |
-| `ANALYTICS_BAIDU_ID` | Baidu site ID, the hash after `hm.js?` |
-
-```yaml
-services:
-  app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
-    ports:
-      - "3000:3000"
-    environment:
-      ANALYTICS_GA4_ID: G-XXXXXXXXXX
-      ANALYTICS_BAIDU_ID: e8263761cc5c32f5f7a855b8203b965a
-```
-
-SPA route changes automatically report page views to enabled providers. Only configure analytics IDs on sites you control, and do not commit them to the repository.
+Main-app analytics are off by default. Set app environment variables `ANALYTICS_GA4_ID` and/or `ANALYTICS_BAIDU_ID` to enable them through startup-generated `config.js`. Use only your own site IDs and do not commit real values.
