@@ -58,6 +58,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 func testConfig() *config.Config {
 	return &config.Config{
 		JWTSecret:                  "test-secret-test-secret-test-secret",
+		CredentialKey:              "0123456789abcdef0123456789abcdef",
 		RegistrationEnabled:        true,
 		FreeGrantEnabled:           true,
 		FreeGrantCampaignID:        "signup-test",
@@ -303,6 +304,11 @@ func accessToken(t *testing.T, cfg *config.Config, user *model.User) string {
 
 // newResourceRouter 注册画布、素材、生成记录与媒体四组路由，媒体驱动可注入。
 func newResourceRouter(t *testing.T, g *gorm.DB, cfg *config.Config, stor storage.Storage) *gin.Engine {
+	return newResourceRouterWithModeration(t, g, cfg, stor, nil)
+}
+
+// newResourceRouterWithModeration 允许注入审核服务，用于上传审核测试。
+func newResourceRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Config, stor storage.Storage, moderationService *service.ModerationService) *gin.Engine {
 	t.Helper()
 	r := gin.New()
 	if err := r.SetTrustedProxies(nil); err != nil {
@@ -312,7 +318,7 @@ func newResourceRouter(t *testing.T, g *gorm.DB, cfg *config.Config, stor storag
 	canvasH := NewCanvasHandler(g)
 	assetH := NewAssetHandler(g)
 	genH := NewGenerationHandler(g)
-	mediaH := NewMediaHandler(g, stor)
+	mediaH := NewMediaHandler(g, stor, moderationService)
 
 	api := r.Group("/api")
 	canvases := api.Group("/canvases", middleware.Auth(secret))

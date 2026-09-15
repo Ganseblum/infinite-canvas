@@ -1,0 +1,1468 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+
+	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/moderation"
+	"github.com/infinite-canvas/server/internal/provider"
+	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/storage"
+)
+
+// AIHandler 是报价与全部生成/查询接口的入口。
+// 顺序固定为：鉴权 → 模型和参数校验 → 报价凭证校验 → 邮箱与存储预检 → 并发槽位 →
+// 预扣或占用免费额度 → 调用上游 → 落盘与写生成记录 → 失败退还。
+type AIHandler struct {
+	db         *gorm.DB
+	catalog    *service.CatalogService
+	quotes     *service.QuoteService
+	requests   *service.AIRequestService
+	media      *service.MediaWriteService
+	upstream   *service.UpstreamService
+	store      storage.Storage
+	slots      *concurrencySlots
+	tasks      *service.AITaskService
+	moderation *service.ModerationService
+	appURL     string
+}
+
+func NewAIHandler(db *gorm.DB, catalog *service.CatalogService, quotes *service.QuoteService, upstream *service.UpstreamService, store storage.Storage, appURL string, moderation *service.ModerationService) *AIHandler {
+	media := service.NewMediaWriteService(db, store)
+	return &AIHandler{
+		db:         db,
+		catalog:    catalog,
+		quotes:     quotes,
+		requests:   service.NewAIRequestService(db),
+		media:      media,
+		upstream:   upstream,
+		store:      store,
+		slots:      newConcurrencySlots(),
+		tasks:      service.NewAITaskService(db, upstream, media),
+		moderation: moderation,
+		appURL:     appURL,
+	}
+}
+
+// Slots 供健康检查与测试观察并发占用。
+func (h *AIHandler) Slots() *concurrencySlots { return h.slots }
+
+// ===== 报价 =====
+
+type quoteRequest struct {
+	Model      string         `json:"model"`
+	Capability string         `json:"capability"`
+	Params     map[string]any `json:"params"`
+}
+
+func (h *AIHandler) Quote(c *gin.Context) {
+	user, ok := h.currentUser(c)
+	if !ok {
+		return
+	}
+	var req quoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	catalogItem, ok := h.loadModel(c, req.Model, req.Capability)
+	if !ok {
+		return
+	}
+	params := stringifyParams(req.Params)
+	n := parseIntDefault(req.Params["n"], 1)
+	quote, err := h.quotes.BuildQuote(c.Request.Context(), user.ID, catalogItem, req.Capability, params, n, time.Now())
+	if err != nil {
+		h.abortQuoteError(c, err)
+		return
+	}
+
+	available, err := h.availableMicros(user.ID)
+	if err != nil {
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	shortfall := quote.FinalCostMicros - available
+	if shortfall < 0 {
+		shortfall = 0
+	}
+	payload := gin.H{
+		"billingMode":      quote.BillingMode,
+		"baseCostMicros":   quote.BaseCostMicros,
+		"discount":         quote.Discount,
+		"finalCostMicros":  quote.FinalCostMicros,
+		"finalCostPoints":  quote.FinalCostMicros,
+		"finalCostYuan":    microsToYuan(quote.FinalCostMicros),
+		"availableMicros":  available,
+		"affordable":       shortfall == 0,
+		"shortfallMicros":  shortfall,
+		"priceVersion":     quote.PriceVersion,
+		"promotionVersion": quote.PromotionVersion,
+		"quoteToken":       quote.Token,
+		"expiresAt":        formatTime(quote.ExpiresAt),
+	}
+	if quote.BillingMode == service.BillingModeFreeTrial {
+		payload["freeTrialsLeft"] = quote.FreeTrialsLeft
+	}
+	c.JSON(http.StatusOK, payload)
+}
+
+// ===== 图像 =====
+
+type imageRequest struct {
+	Model          string   `json:"model"`
+	Prompt         string   `json:"prompt"`
+	N              *int     `json:"n"`
+	Size           string   `json:"size"`
+	Quality        string   `json:"quality"`
+	Background     string   `json:"background"`
+	References     []string `json:"references"`
+	Mask           string   `json:"mask"`
+	QuoteToken     string   `json:"quoteToken"`
+	IdempotencyKey string   `json:"idempotencyKey"`
+}
+
+func (h *AIHandler) Images(c *gin.Context) {
+	user, ok := h.currentUser(c)
+	if !ok {
+		return
+	}
+	var req imageRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Prompt) == "" {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	if !requireIdempotencyKey(c, req.IdempotencyKey) {
+		return
+	}
+	catalogItem, ok := h.loadModel(c, req.Model, "image")
+	if !ok {
+		return
+	}
+	if !h.checkReferences(c, catalogItem, req.References, req.Mask) {
+		return
+	}
+	params := map[string]string{}
+	if req.Size != "" {
+		params["size"] = req.Size
+	}
+	if req.Quality != "" {
+		params["quality"] = req.Quality
+	}
+	n := 1
+	if req.N != nil {
+		n = *req.N
+	}
+	if n < 1 {
+		n = 1
+	}
+	payload, ok := h.verifyQuote(c, user, catalogItem, "image", params, n, req.QuoteToken)
+	if !ok {
+		return
+	}
+	// 参考素材先读出来，既用于审核也用于后续生成；读取失败不进入预扣。
+	refs, err := h.loadInlineMedia(user.ID, req.References)
+	if err != nil {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"references": err.Error()}))
+		return
+	}
+	// 输入预审必须在预扣之前：被拒输入不占免费次数、不写流水、不调上游。
+	if !h.moderateInput(c, user, req.Prompt, refs) {
+		return
+	}
+	if !h.precheck(c, user) {
+		return
+	}
+	// 并发槽位在进入上游前占用，defer 释放，避免任何提前返回泄漏槽位。
+	if !h.slots.acquire("image", user.ID.String(), 3) {
+		h.abortConcurrency(c)
+		return
+	}
+	defer h.slots.release("image", user.ID.String())
+
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "image", payload, req.IdempotencyKey)
+	if !ok {
+		return
+	}
+
+	started := time.Now()
+	var mask *provider.InlineMedia
+	if req.Mask != "" {
+		maskMedia, err := h.loadInlineMedia(user.ID, []string{req.Mask})
+		if err != nil || len(maskMedia) == 0 {
+			h.failRequest(c, request, reserved, errors.New("蒙版文件不可读"), 0)
+			return
+		}
+		mask = &maskMedia[0]
+	}
+
+	result, err := h.callImages(c.Request.Context(), catalogItem, provider.ImageRequest{
+		Model:      catalogItem.Name,
+		Prompt:     req.Prompt,
+		N:          n,
+		Size:       req.Size,
+		Quality:    req.Quality,
+		Background: req.Background,
+		References: refs,
+		Mask:       mask,
+	})
+	if err != nil {
+		h.failRequest(c, request, reserved, err, service.UpstreamStatus(err))
+		return
+	}
+	if err := h.persistImages(c, user, request, catalogItem, req.Prompt, result, n, started); err != nil {
+		if errors.Is(err, service.ErrContentRejected) {
+			// 产物拒绝不退点：上游成本已经发生；误判走人工复核与赠送补偿。
+			_ = h.markRequestRejected(request)
+			errs.Abort(c, errs.ErrContentRejected)
+			return
+		}
+		if errors.Is(err, service.ErrModerationUnavailable) {
+			h.failRequest(c, request, reserved, err, 0)
+			errs.Abort(c, errs.ErrModerationUnavailable)
+			return
+		}
+		h.failRequest(c, request, reserved, err, 0)
+		return
+	}
+}
+
+// writeRejectedGeneration 为被拒产物补一条生成记录，状态与审核结论都标记为拒绝。
+func (h *AIHandler) writeRejectedGeneration(user model.User, request *model.AIRequest, catalogItem model.ModelCatalog, prompt string, durationMs int) {
+	generation := &model.Generation{
+		ID:               uuid.New(),
+		UserID:           user.ID,
+		Kind:             "image",
+		Status:           "failed",
+		Prompt:           prompt,
+		Model:            catalogItem.Name,
+		Config:           request.PricingSnapshot,
+		Result:           []byte(`{}`),
+		DurationMs:       durationMs,
+		ModerationStatus: "rejected",
+	}
+	if err := h.db.Create(generation).Error; err != nil {
+		slog.Error("写入被拒生成记录失败", "err", err)
+	}
+}
+
+// markRequestRejected 把请求与生成记录标记为拒绝，保留已发生的消费。
+func (h *AIHandler) markRequestRejected(request *model.AIRequest) error {
+	if request == nil {
+		return nil
+	}
+	if err := h.db.Model(&model.AIRequest{}).Where("id = ?", request.ID).Update("status", "failed").Error; err != nil {
+		return err
+	}
+	return h.db.Model(&model.Generation{}).
+		Where("user_id = ? AND kind = ? AND status = ?", request.UserID, "image", "pending").
+		Updates(map[string]any{"status": "failed", "moderation_status": "rejected"}).Error
+}
+
+func (h *AIHandler) callImages(ctx context.Context, catalogItem model.ModelCatalog, req provider.ImageRequest) (provider.ImageResult, error) {
+	channels, err := h.channelsFor(catalogItem)
+	if err != nil {
+		return provider.ImageResult{}, err
+	}
+	timeout := h.upstream.Timeouts()
+	ctx, cancel := context.WithTimeout(ctx, timeout.ImageTotal)
+	defer cancel()
+	var lastErr error
+	attempts := 0
+	for _, channel := range channels {
+		if attempts >= 2 {
+			break
+		}
+		attempts++
+		result, err := channel.Provider.Images(ctx, req)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if errors.Is(err, provider.ErrCapabilityUnsupported) {
+			break
+		}
+		// 尚未产生任何输出时才重试一次，再决定是否切换渠道。
+		if service.IsRetryableUpstream(err) && attempts < 2 {
+			if result, retryErr := channel.Provider.Images(ctx, req); retryErr == nil {
+				return result, nil
+			} else {
+				lastErr = retryErr
+			}
+		}
+		if !service.ShouldFailover(err) {
+			break
+		}
+		slog.Warn("图像请求切换渠道", "channel", channel.Channel.ID, "err", err)
+	}
+	return provider.ImageResult{}, lastErr
+}
+
+// persistImages 下载或解码产物、审核通过后落盘、写生成记录并返回响应。
+// 产物先进入隔离区；审核拒绝时不进入正式存储，点数不自动退还。
+func (h *AIHandler) persistImages(c *gin.Context, user model.User, request *model.AIRequest, catalogItem model.ModelCatalog, prompt string, result provider.ImageResult, n int, started time.Time) error {
+	maxFile, err := h.maxFileBytes(user.ID)
+	if err != nil {
+		return err
+	}
+	moderating := h.moderation != nil && h.moderation.Enabled()
+	images := make([]gin.H, 0, len(result.Images))
+	for _, image := range result.Images {
+		var media gin.H
+		if moderating {
+			media, err = h.moderateAndStoreArtifact(c, user, "image", image, maxFile, 60*time.Second)
+		} else {
+			media, err = h.materialize(c.Request.Context(), user.ID, "image", image, maxFile, 60*time.Second)
+		}
+		if err != nil {
+			if errors.Is(err, service.ErrContentRejected) {
+				// 拒绝也要留一条生成记录，让用户看得到这次生成发生过、点数为何没退。
+				h.writeRejectedGeneration(user, request, catalogItem, prompt, int(time.Since(started).Milliseconds()))
+			}
+			return err
+		}
+		images = append(images, media)
+	}
+	if len(images) == 0 {
+		return errors.New("上游未返回图片")
+	}
+
+	durationMs := int(time.Since(started).Milliseconds())
+	resultPayload, _ := json.Marshal(gin.H{"images": images})
+	generation := &model.Generation{
+		ID:               uuid.New(),
+		UserID:           user.ID,
+		Kind:             "image",
+		Status:           "success",
+		Prompt:           prompt,
+		Model:            catalogItem.Name,
+		Config:           request.PricingSnapshot,
+		Result:           resultPayload,
+		DurationMs:       durationMs,
+		ModerationStatus: moderationStatusOf(moderating),
+	}
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(generation).Error; err != nil {
+			return err
+		}
+		return h.requests.MarkSucceeded(tx, request.ID, durationMs)
+	}); err != nil {
+		return err
+	}
+
+	remaining, err := h.availableMicros(user.ID)
+	if err != nil {
+		return err
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"model":        catalogItem.Name,
+		"credits":      h.creditsPayload(request, remaining),
+		"images":       images,
+		"generationId": generation.ID.String(),
+		"durationMs":   durationMs,
+	})
+	return nil
+}
+
+// moderateAndStoreArtifact 把产物写入隔离区、送审，通过后才提交正式存储。
+// 拒绝时返回 ErrContentRejected，由调用方按「产物拒绝不自动退点」处理。
+func (h *AIHandler) moderateAndStoreArtifact(c *gin.Context, user model.User, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {
+	data := image.Data
+	mimeType := image.MimeType
+	if len(data) == 0 && image.URL != "" {
+		downloaded, contentType, err := h.upstream.Download(c.Request.Context(), image.URL, maxBytes, downloadTimeout)
+		if err != nil {
+			return nil, err
+		}
+		data = downloaded
+		if contentType != "" {
+			mimeType = contentType
+		}
+	}
+	if len(data) == 0 {
+		return nil, errors.New("上游产物为空")
+	}
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = defaultMime(prefix)
+	}
+	quarantine, err := h.moderation.Quarantine().Put(c.Request.Context(), user.ID, data, mimeType)
+	if err != nil {
+		return nil, err
+	}
+	verdict, err := h.moderation.CheckArtifact(c.Request.Context(), user.ID, moderation.ContentType(prefix), quarantine.Key, data, mimeType)
+	if err != nil {
+		return nil, err
+	}
+	_ = verdict
+	// 审核通过：先写正式存储，再删除隔离原件。
+	objectID := randomKey()
+	file, err := h.media.Save(c.Request.Context(), service.SaveGeneratedMediaInput{
+		UserID:     user.ID,
+		StorageKey: fmt.Sprintf("%s:%s", prefix, objectID),
+		MimeType:   mimeType,
+		Data:       data,
+		MaxBytes:   maxBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	_ = h.moderation.Quarantine().Delete(c.Request.Context(), user.ID, quarantine.Key)
+	return gin.H{
+		"storageKey": file.StorageKey,
+		"bytes":      file.Bytes,
+		"mimeType":   file.MimeType,
+	}, nil
+}
+
+func moderationStatusOf(moderating bool) string {
+	if moderating {
+		return "passed"
+	}
+	return "skipped"
+}
+
+// materialize 把上游产物（base64 或 URL）转成 storageKey 并落盘。
+func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {
+	data := image.Data
+	mimeType := image.MimeType
+	if len(data) == 0 && image.URL != "" {
+		downloaded, contentType, err := h.upstream.Download(ctx, image.URL, maxBytes, downloadTimeout)
+		if err != nil {
+			return nil, err
+		}
+		data = downloaded
+		if contentType != "" {
+			mimeType = contentType
+		}
+	}
+	if len(data) == 0 {
+		return nil, errors.New("上游产物为空")
+	}
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = defaultMime(prefix)
+	}
+	storageKey := fmt.Sprintf("%s:%s", prefix, randomKey())
+	file, err := h.media.Save(ctx, service.SaveGeneratedMediaInput{
+		UserID:     userID,
+		StorageKey: storageKey,
+		MimeType:   mimeType,
+		Data:       data,
+		MaxBytes:   maxBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return gin.H{
+		"storageKey": file.StorageKey,
+		"bytes":      file.Bytes,
+		"mimeType":   file.MimeType,
+	}, nil
+}
+
+// ===== 语音 =====
+
+type speechRequest struct {
+	Model          string  `json:"model"`
+	Input          string  `json:"input"`
+	Voice          string  `json:"voice"`
+	Format         string  `json:"format"`
+	Speed          float64 `json:"speed"`
+	Instructions   string  `json:"instructions"`
+	QuoteToken     string  `json:"quoteToken"`
+	IdempotencyKey string  `json:"idempotencyKey"`
+}
+
+func (h *AIHandler) Speech(c *gin.Context) {
+	user, ok := h.currentUser(c)
+	if !ok {
+		return
+	}
+	var req speechRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Input) == "" {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	if !requireIdempotencyKey(c, req.IdempotencyKey) {
+		return
+	}
+	catalogItem, ok := h.loadModel(c, req.Model, "audio")
+	if !ok {
+		return
+	}
+	payload, ok := h.verifyQuote(c, user, catalogItem, "audio", nil, 1, req.QuoteToken)
+	if !ok {
+		return
+	}
+	if !h.moderateInput(c, user, req.Input, nil) {
+		return
+	}
+	if !h.precheck(c, user) {
+		return
+	}
+	if !h.slots.acquire("audio", user.ID.String(), 2) {
+		h.abortConcurrency(c)
+		return
+	}
+	defer h.slots.release("audio", user.ID.String())
+
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "audio", payload, req.IdempotencyKey)
+	if !ok {
+		return
+	}
+	started := time.Now()
+	format := req.Format
+	if format == "" {
+		format = "mp3"
+	}
+	result, err := h.callSpeech(c.Request.Context(), catalogItem, provider.SpeechRequest{
+		Model:        catalogItem.Name,
+		Input:        req.Input,
+		Voice:        req.Voice,
+		Format:       format,
+		Speed:        req.Speed,
+		Instructions: req.Instructions,
+	})
+	if err != nil {
+		h.failRequest(c, request, reserved, err, service.UpstreamStatus(err))
+		return
+	}
+	maxFile, err := h.maxFileBytes(user.ID)
+	if err != nil {
+		h.failRequest(c, request, reserved, err, 0)
+		return
+	}
+	media, err := h.materialize(c.Request.Context(), user.ID, "audio", provider.GeneratedImage{Data: result.Data, MimeType: result.MimeType, URL: result.URL}, maxFile, 120*time.Second)
+	if err != nil {
+		h.failRequest(c, request, reserved, err, 0)
+		return
+	}
+	durationMs := int(time.Since(started).Milliseconds())
+	if err := h.requests.MarkSucceeded(nil, request.ID, durationMs); err != nil {
+		slog.Error("收敛语音请求失败", "request", request.ID, "err", err)
+	}
+	remaining, _ := h.availableMicros(user.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"model":      catalogItem.Name,
+		"credits":    h.creditsPayload(request, remaining),
+		"audio":      media,
+		"durationMs": durationMs,
+	})
+}
+
+func (h *AIHandler) callSpeech(ctx context.Context, catalogItem model.ModelCatalog, req provider.SpeechRequest) (provider.SpeechResult, error) {
+	channels, err := h.channelsFor(catalogItem)
+	if err != nil {
+		return provider.SpeechResult{}, err
+	}
+	timeout := h.upstream.Timeouts()
+	ctx, cancel := context.WithTimeout(ctx, timeout.SpeechTotal)
+	defer cancel()
+	var lastErr error
+	for index, channel := range channels {
+		if index >= 2 {
+			break
+		}
+		result, err := channel.Provider.Speech(ctx, req)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if errors.Is(err, provider.ErrCapabilityUnsupported) {
+			break
+		}
+		if !service.ShouldFailover(err) {
+			break
+		}
+	}
+	return provider.SpeechResult{}, lastErr
+}
+
+// ===== 视频 =====
+
+type videoRequest struct {
+	Model           string   `json:"model"`
+	Prompt          string   `json:"prompt"`
+	Duration        *int     `json:"duration"`
+	Ratio           string   `json:"ratio"`
+	Resolution      string   `json:"resolution"`
+	GenerateAudio   *bool    `json:"generateAudio"`
+	Watermark       *bool    `json:"watermark"`
+	Mode            string   `json:"mode"`
+	References      []string `json:"references"`
+	VideoReferences []string `json:"videoReferences"`
+	AudioReferences []string `json:"audioReferences"`
+	QuoteToken      string   `json:"quoteToken"`
+	IdempotencyKey  string   `json:"idempotencyKey"`
+}
+
+func (h *AIHandler) CreateVideo(c *gin.Context) {
+	user, ok := h.currentUser(c)
+	if !ok {
+		return
+	}
+	var req videoRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Prompt) == "" {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	if !requireIdempotencyKey(c, req.IdempotencyKey) {
+		return
+	}
+	catalogItem, ok := h.loadModel(c, req.Model, "video")
+	if !ok {
+		return
+	}
+	if !h.checkVideoReferences(c, catalogItem, req) {
+		return
+	}
+	params := map[string]string{}
+	if req.Ratio != "" {
+		params["ratio"] = req.Ratio
+	}
+	if req.Resolution != "" {
+		params["resolution"] = req.Resolution
+	}
+	duration := 5
+	if req.Duration != nil && *req.Duration > 0 {
+		duration = *req.Duration
+	}
+	params["duration"] = strconv.Itoa(duration)
+	payload, ok := h.verifyQuote(c, user, catalogItem, "video", params, 1, req.QuoteToken)
+	if !ok {
+		return
+	}
+	media, err := h.loadInlineMedia(user.ID, append(append(append([]string{}, req.References...), req.VideoReferences...), req.AudioReferences...))
+	if err != nil {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"references": err.Error()}))
+		return
+	}
+	images := media[:len(req.References)]
+	videos := media[len(req.References) : len(req.References)+len(req.VideoReferences)]
+	audios := media[len(req.References)+len(req.VideoReferences):]
+	if !h.moderateInput(c, user, req.Prompt, images) {
+		return
+	}
+	if !h.precheck(c, user) {
+		return
+	}
+	// 视频任务的并发单独计算，不占 HTTP 连接。
+	pending, err := h.pendingVideoTasks(user.ID)
+	if err != nil {
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	if pending >= 3 {
+		h.abortConcurrency(c)
+		return
+	}
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "video", payload, req.IdempotencyKey)
+	if !ok {
+		return
+	}
+
+	mode := req.Mode
+	if mode == "" {
+		mode = "reference"
+	}
+	generateAudio := req.GenerateAudio == nil || *req.GenerateAudio
+	watermark := req.Watermark != nil && *req.Watermark
+	task, generationID, err := h.createUpstreamVideoTask(c, user, request, catalogItem, provider.VideoRequest{
+		Model:           catalogItem.Name,
+		Prompt:          req.Prompt,
+		Duration:        duration,
+		Ratio:           req.Ratio,
+		Resolution:      req.Resolution,
+		GenerateAudio:   generateAudio,
+		Watermark:       watermark,
+		Mode:            mode,
+		References:      images,
+		VideoReferences: videos,
+		AudioReferences: audios,
+	}, req.Prompt)
+	if err != nil {
+		h.failRequest(c, request, reserved, err, service.UpstreamStatus(err))
+		return
+	}
+	remaining, _ := h.availableMicros(user.ID)
+	c.JSON(http.StatusAccepted, gin.H{
+		"taskId":       task.ID.String(),
+		"status":       task.Status,
+		"credits":      h.creditsPayload(request, remaining),
+		"generationId": generationID.String(),
+		"pollAfterMs":  task.PollAfterMs(),
+	})
+}
+
+func (h *AIHandler) createUpstreamVideoTask(c *gin.Context, user model.User, request *model.AIRequest, catalogItem model.ModelCatalog, videoReq provider.VideoRequest, prompt string) (*model.AITask, uuid.UUID, error) {
+	channels, err := h.channelsFor(catalogItem)
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), h.upstream.Timeouts().VideoCreate)
+	defer cancel()
+	var upstream provider.VideoTask
+	var lastErr error
+	usedChannel := uuid.Nil
+	for index, channel := range channels {
+		if index >= 2 {
+			break
+		}
+		task, err := channel.Provider.CreateVideo(ctx, videoReq)
+		if err == nil {
+			upstream = task
+			usedChannel = channel.Channel.ID
+			break
+		}
+		lastErr = err
+		if errors.Is(err, provider.ErrCapabilityUnsupported) || !service.ShouldFailover(err) {
+			break
+		}
+	}
+	if upstream.UpstreamTaskID == "" {
+		if lastErr == nil {
+			lastErr = errors.New("创建视频任务失败")
+		}
+		return nil, uuid.Nil, lastErr
+	}
+	if upstream.PollAfterMs <= 0 {
+		upstream.PollAfterMs = 5000
+	}
+
+	task := &model.AITask{
+		ID:             uuid.New(),
+		UserID:         user.ID,
+		RequestID:      request.ID,
+		Provider:       upstream.Provider,
+		UpstreamTaskID: upstream.UpstreamTaskID,
+		Status:         "pending",
+		GenerationID:   uuid.New(),
+	}
+	config, _ := json.Marshal(gin.H{
+		"ratio":      videoReq.Ratio,
+		"resolution": videoReq.Resolution,
+		"duration":   videoReq.Duration,
+	})
+	// 生成记录带上任务句柄：前端刷新后据此恢复轮询，服务端后台任务本身不受页面影响。
+	// 形状与前端 VideoGenerationTask 对齐（id + model），直接复用轮询逻辑。
+	resultPayload, _ := json.Marshal(gin.H{"task": gin.H{"id": task.ID.String(), "model": catalogItem.Name}})
+	generation := &model.Generation{
+		ID:               task.GenerationID,
+		UserID:           user.ID,
+		Kind:             "video",
+		Status:           "pending",
+		Prompt:           prompt,
+		Model:            catalogItem.Name,
+		Config:           config,
+		Result:           resultPayload,
+		ModerationStatus: "skipped",
+	}
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(generation).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.AIRequest{}).Where("id = ?", request.ID).Update("channel_id", usedChannel).Error
+	}); err != nil {
+		return nil, uuid.Nil, err
+	}
+	return task, generation.ID, nil
+}
+
+func (h *AIHandler) pendingVideoTasks(userID uuid.UUID) (int64, error) {
+	var count int64
+	err := h.db.Model(&model.AITask{}).Where("user_id = ? AND status = ?", userID, "pending").Count(&count).Error
+	return count, err
+}
+
+// VideoTask 查询视频任务状态。任务归属当前用户，查别人的任务返回 404。
+func (h *AIHandler) VideoTask(c *gin.Context) {
+	user, ok := h.currentUser(c)
+	if !ok {
+		return
+	}
+	taskID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		errs.Abort(c, errs.ErrNotFound)
+		return
+	}
+	view, err := h.tasks.ViewTask(c.Request.Context(), user.ID, taskID)
+	if err != nil {
+		if errors.Is(err, service.ErrTaskNotFound) {
+			errs.Abort(c, errs.ErrNotFound)
+			return
+		}
+		slog.Error("查询视频任务失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	credits := gin.H{
+		"baseCostMicros":  view.BaseCostMicros,
+		"finalCostMicros": view.FinalCostMicros,
+		"finalCostYuan":   microsToYuan(view.FinalCostMicros),
+		"refundedMicros":  view.RefundedMicros,
+	}
+	if view.PromotionID != "" {
+		credits["discount"] = gin.H{"promotionId": view.PromotionID, "discountBps": 0}
+	} else {
+		credits["discount"] = nil
+	}
+	payload := gin.H{
+		"taskId":       view.TaskID,
+		"status":       view.Status,
+		"credits":      credits,
+		"generationId": view.GenerationID,
+		"pollAfterMs":  view.PollAfterMs,
+	}
+	if view.Status == "succeeded" {
+		payload["video"] = gin.H{
+			"storageKey": view.StorageKey,
+			"bytes":      view.Bytes,
+			"mimeType":   view.MimeType,
+		}
+	}
+	if view.Status == "failed" {
+		payload["error"] = gin.H{"code": "UPSTREAM_ERROR", "message": view.Error}
+	}
+	c.JSON(http.StatusOK, payload)
+}
+
+// ===== 对话 =====
+
+type chatRequest struct {
+	Model           string                 `json:"model"`
+	Messages        []provider.ChatMessage `json:"messages"`
+	ReasoningEffort string                 `json:"reasoningEffort"`
+	Tools           []provider.ChatTool    `json:"tools"`
+	ToolChoice      any                    `json:"toolChoice"`
+	Stream          *bool                  `json:"stream"`
+	QuoteToken      string                 `json:"quoteToken"`
+	IdempotencyKey  string                 `json:"idempotencyKey"`
+}
+
+func (h *AIHandler) Chat(c *gin.Context) {
+	user, ok := h.currentUser(c)
+	if !ok {
+		return
+	}
+	var req chatRequest
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Messages) == 0 {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	if !requireIdempotencyKey(c, req.IdempotencyKey) {
+		return
+	}
+	catalogItem, ok := h.loadModel(c, req.Model, "text")
+	if !ok {
+		return
+	}
+	payload, ok := h.verifyQuote(c, user, catalogItem, "text", nil, 1, req.QuoteToken)
+	if !ok {
+		return
+	}
+	promptText := chatPromptText(req.Messages)
+	if !h.moderateInput(c, user, promptText, nil) {
+		return
+	}
+	if !h.precheck(c, user) {
+		return
+	}
+	if !h.slots.acquire("text", user.ID.String(), 2) {
+		h.abortConcurrency(c)
+		return
+	}
+	defer h.slots.release("text", user.ID.String())
+
+	stream := req.Stream == nil || *req.Stream
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "text", payload, req.IdempotencyKey)
+	if !ok {
+		return
+	}
+	if !stream {
+		h.chatNonStream(c, user, request, reserved, catalogItem, req)
+		return
+	}
+	h.chatStream(c, user, request, reserved, catalogItem, req)
+}
+
+func (h *AIHandler) chatNonStream(c *gin.Context, user model.User, request *model.AIRequest, reserved *service.ReserveResult, catalogItem model.ModelCatalog, req chatRequest) {
+	started := time.Now()
+	sink := &collectSink{}
+	err := h.callChat(c.Request.Context(), catalogItem, provider.ChatRequest{
+		Model:           catalogItem.Name,
+		Messages:        req.Messages,
+		ReasoningEffort: req.ReasoningEffort,
+		Tools:           req.Tools,
+		ToolChoice:      req.ToolChoice,
+		Stream:          false,
+	}, sink)
+	if err != nil {
+		h.failRequest(c, request, reserved, err, service.UpstreamStatus(err))
+		return
+	}
+	durationMs := int(time.Since(started).Milliseconds())
+	if err := h.requests.MarkSucceeded(nil, request.ID, durationMs); err != nil {
+		slog.Error("收敛文本请求失败", "request", request.ID, "err", err)
+	}
+	remaining, _ := h.availableMicros(user.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"credits":      h.creditsPayload(request, remaining),
+		"content":      sink.text.String(),
+		"toolCalls":    sink.calls,
+		"finishReason": sink.finishReason,
+	})
+}
+
+// collectSink 收集非流式对话的输出。
+type collectSink struct {
+	text         strings.Builder
+	calls        []provider.ToolCall
+	finishReason string
+}
+
+func (s *collectSink) Delta(text string) error {
+	s.text.WriteString(text)
+	return nil
+}
+
+func (s *collectSink) ToolCall(call provider.ToolCall) error {
+	s.calls = append(s.calls, call)
+	return nil
+}
+
+func (s *collectSink) Done(finishReason string) {
+	s.finishReason = finishReason
+}
+
+func (h *AIHandler) callChat(ctx context.Context, catalogItem model.ModelCatalog, req provider.ChatRequest, sink provider.StreamSink) error {
+	channels, err := h.channelsFor(catalogItem)
+	if err != nil {
+		return err
+	}
+	timeout := h.upstream.Timeouts()
+	ctx, cancel := context.WithTimeout(ctx, timeout.StreamTotal)
+	defer cancel()
+	var lastErr error
+	for index, channel := range channels {
+		if index >= 2 {
+			break
+		}
+		err := channel.Provider.ChatStream(ctx, req, sink)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if errors.Is(err, provider.ErrCapabilityUnsupported) || !service.ShouldFailover(err) {
+			break
+		}
+	}
+	return lastErr
+}
+
+// ===== 公共辅助 =====
+
+func (h *AIHandler) currentUser(c *gin.Context) (model.User, bool) {
+	uid, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		errs.Abort(c, errs.ErrUnauthorized)
+		return model.User{}, false
+	}
+	var user model.User
+	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
+		errs.Abort(c, errs.ErrUnauthorized)
+		return user, false
+	}
+	if user.EmailVerifiedAt == nil {
+		errs.Abort(c, errs.ErrEmailNotVerif)
+		return user, false
+	}
+	return user, true
+}
+
+// loadModel 校验模型存在、启用且能力匹配。目录外与带渠道前缀痕迹的标识一律拒绝。
+// 同时接受目录 id 与模型名：前端目录用 id 选择，管理后台与调用脚本用 name。
+func (h *AIHandler) loadModel(c *gin.Context, name, capability string) (model.ModelCatalog, bool) {
+	clean := strings.TrimSpace(name)
+	if clean == "" || strings.Contains(clean, "::") {
+		h.abortModel(c, clean)
+		return model.ModelCatalog{}, false
+	}
+	var catalogItem model.ModelCatalog
+	query := h.db.Where("enabled = ? AND (name = ? OR id = ?)", true, clean, clean)
+	if parsed, err := uuid.Parse(clean); err == nil {
+		query = h.db.Where("enabled = ? AND (name = ? OR id = ?)", true, clean, parsed)
+	}
+	if err := query.First(&catalogItem).Error; err != nil {
+		h.abortModel(c, clean)
+		return model.ModelCatalog{}, false
+	}
+	if capability != "" && catalogItem.Capability != capability {
+		h.abortModel(c, clean)
+		return model.ModelCatalog{}, false
+	}
+	return catalogItem, true
+}
+
+func (h *AIHandler) abortModel(c *gin.Context, name string) {
+	errs.Abort(c, errs.WithExtra(errs.ErrModelNotSupported, gin.H{"model": name}))
+}
+
+func (h *AIHandler) abortQuoteError(c *gin.Context, err error) {
+	var paramErr *service.ParamNotSupportedError
+	switch {
+	case errors.As(err, &paramErr):
+		errs.Abort(c, errs.WithExtra(errs.ErrParamNotSupported, gin.H{"param": paramErr.Param, "allowed": paramErr.Allowed}))
+	default:
+		errs.Abort(c, errs.ErrValidation)
+	}
+}
+
+func (h *AIHandler) abortConcurrency(c *gin.Context) {
+	c.Header("Retry-After", "5")
+	errs.Abort(c, errs.ErrConcurrencyLimited)
+}
+
+func (h *AIHandler) checkReferences(c *gin.Context, catalogItem model.ModelCatalog, references []string, mask string) bool {
+	constraints, err := service.ParseConstraints(catalogItem.Constraints)
+	if err != nil {
+		errs.Abort(c, errs.ErrInternal)
+		return false
+	}
+	if len(references) > 0 && !constraints.HasFeature("referenceImage") {
+		errs.Abort(c, errs.WithExtra(errs.ErrParamNotSupported, gin.H{"param": "references", "allowed": []string{}}))
+		return false
+	}
+	if mask != "" && !constraints.HasFeature("mask") {
+		errs.Abort(c, errs.WithExtra(errs.ErrParamNotSupported, gin.H{"param": "mask", "allowed": []string{}}))
+		return false
+	}
+	return true
+}
+
+func (h *AIHandler) checkVideoReferences(c *gin.Context, catalogItem model.ModelCatalog, req videoRequest) bool {
+	constraints, err := service.ParseConstraints(catalogItem.Constraints)
+	if err != nil {
+		errs.Abort(c, errs.ErrInternal)
+		return false
+	}
+	if len(req.References) > 0 && !constraints.HasFeature("referenceImage") {
+		errs.Abort(c, errs.WithExtra(errs.ErrParamNotSupported, gin.H{"param": "references", "allowed": []string{}}))
+		return false
+	}
+	if len(req.VideoReferences) > 0 && !constraints.HasFeature("referenceVideo") {
+		errs.Abort(c, errs.WithExtra(errs.ErrParamNotSupported, gin.H{"param": "videoReferences", "allowed": []string{}}))
+		return false
+	}
+	if len(req.AudioReferences) > 0 && !constraints.HasFeature("referenceAudio") {
+		errs.Abort(c, errs.WithExtra(errs.ErrParamNotSupported, gin.H{"param": "audioReferences", "allowed": []string{}}))
+		return false
+	}
+	return true
+}
+
+// verifyQuote 校验报价凭证，失败返回 false 并已写入错误响应。
+func (h *AIHandler) verifyQuote(c *gin.Context, user model.User, catalogItem model.ModelCatalog, capability string, params map[string]string, n int, token string) (service.QuotePayload, bool) {
+	if token == "" {
+		errs.Abort(c, errs.ErrQuoteStale)
+		return service.QuotePayload{}, false
+	}
+	payload, err := h.quotes.VerifyQuote(c.Request.Context(), user.ID, token, catalogItem, capability, params, n, time.Now())
+	if err != nil {
+		if errors.Is(err, service.ErrQuoteStale) {
+			errs.Abort(c, errs.ErrQuoteStale)
+			return service.QuotePayload{}, false
+		}
+		errs.Abort(c, errs.ErrValidation)
+		return service.QuotePayload{}, false
+	}
+	return payload.ToPayload(), true
+}
+
+// precheck 邮箱已在 currentUser 校验；这里补存储配额预检，避免生成后才发现存不下。
+func (h *AIHandler) precheck(c *gin.Context, user model.User) bool {
+	now := time.Now()
+	credit, plan, err := service.NewQuotaService(h.db).DerivePlan(c.Request.Context(), user.ID, now)
+	if err != nil {
+		errs.Abort(c, errs.ErrInternal)
+		return false
+	}
+	used, err := service.NewQuotaService(h.db).StorageBytes(c.Request.Context(), user.ID)
+	if err != nil {
+		errs.Abort(c, errs.ErrInternal)
+		return false
+	}
+	if used > plan.StorageBytes {
+		errs.Abort(c, errs.WithExtra(errs.ErrReadOnly, gin.H{"planId": plan.ID, "used": used, "limit": plan.StorageBytes}))
+		return false
+	}
+	_ = credit
+	return true
+}
+
+// beginRequest 预扣或占用免费额度并落 ai_requests 行。
+// 重复的 idempotencyKey 会返回既有请求，此时不重复扣点。
+func (h *AIHandler) beginRequest(c *gin.Context, user model.User, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload, idempotencyKey string) (*model.AIRequest, *service.ReserveResult, bool) {
+	reserved, err := h.reserve(c.Request.Context(), user, catalogItem, capability, payload)
+	if err != nil {
+		if errors.Is(err, service.ErrFreeTrialTaken) || errors.Is(err, service.ErrQuoteStale) {
+			errs.Abort(c, errs.ErrQuoteStale)
+			return nil, nil, false
+		}
+		if errors.Is(err, service.ErrInsufficientCredits) {
+			available, _ := h.availableMicros(user.ID)
+			required := payload.FinalCostMicros
+			shortfall := required - available
+			if shortfall < 0 {
+				shortfall = 0
+			}
+			errs.Abort(c, errs.WithExtra(errs.ErrInsufficientCredits, gin.H{
+				"requiredMicros":  required,
+				"availableMicros": available,
+				"shortfallMicros": shortfall,
+			}))
+			return nil, nil, false
+		}
+		if errors.Is(err, service.ErrMediaQuotaExceeded) {
+			errs.Abort(c, errs.ErrStorageQuota)
+			return nil, nil, false
+		}
+		slog.Error("预扣点数失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return nil, nil, false
+	}
+
+	key := idempotencyKey
+	snapshot, _ := json.Marshal(gin.H{
+		"model":            catalogItem.Name,
+		"capability":       capability,
+		"baseCostMicros":   payload.BaseCostMicros,
+		"finalCostMicros":  payload.FinalCostMicros,
+		"priceVersion":     payload.PriceVersion,
+		"promotionId":      payload.PromotionID,
+		"promotionVersion": payload.PromotionVersion,
+		"billingMode":      payload.BillingMode,
+	})
+	request := &model.AIRequest{
+		ID:               uuid.New(),
+		UserID:           user.ID,
+		IdempotencyKey:   &key,
+		Capability:       capability,
+		Model:            catalogItem.Name,
+		BaseCostMicros:   payload.BaseCostMicros,
+		FinalCostMicros:  payload.FinalCostMicros,
+		PriceVersion:     payload.PriceVersion,
+		PromotionID:      payload.PromotionID,
+		PromotionVersion: payload.PromotionVersion,
+		PromotionEnabled: payload.PromotionEnabled,
+		PricingSnapshot:  snapshot,
+		Status:           "running",
+	}
+	if reserved != nil && len(reserved.Transactions) > 0 {
+		ids := make([]uuid.UUID, 0, len(reserved.Transactions))
+		for _, transaction := range reserved.Transactions {
+			ids = append(ids, transaction.ID)
+		}
+		raw, _ := json.Marshal(ids)
+		request.ConsumeTransactionIDs = raw
+	}
+	existing, created, err := h.requests.CreateOrGet(request)
+	if err != nil {
+		slog.Error("写入生成请求失败", "err", err)
+		// 请求行写不进去就把预扣的点数退回去，不能让用户白扣。
+		if reserved != nil && len(reserved.Transactions) > 0 {
+			_ = h.requests.Refund(c.Request.Context(), request)
+		}
+		errs.Abort(c, errs.ErrInternal)
+		return nil, nil, false
+	}
+	if !created {
+		// 重复提交：退掉这次预扣，直接返回既有请求的状态。
+		if reserved != nil && len(reserved.Transactions) > 0 {
+			_ = service.NewCreditService(h.db).Refund(c.Request.Context(), user.ID, transactionIDs(reserved.Transactions), "重复请求退还")
+		}
+		switch existing.Status {
+		case "succeeded":
+			errs.Abort(c, errs.WithExtra(errs.ErrQuoteStale, gin.H{"duplicate": true, "requestId": existing.ID.String()}))
+		default:
+			errs.Abort(c, errs.WithExtra(errs.ErrConcurrencyLimited, gin.H{"duplicate": true, "requestId": existing.ID.String()}))
+		}
+		return nil, nil, false
+	}
+	return request, reserved, true
+}
+
+func transactionIDs(transactions []model.CreditTransaction) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(transactions))
+	for _, transaction := range transactions {
+		ids = append(ids, transaction.ID)
+	}
+	return ids
+}
+
+// reserve 原子占用免费额度或按报价预扣。免费额度被并发占用时返回 ErrFreeTrialTaken。
+func (h *AIHandler) reserve(ctx context.Context, user model.User, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload) (*service.ReserveResult, error) {
+	if payload.BillingMode == service.BillingModeFreeTrial {
+		metric := ""
+		switch capability {
+		case "image":
+			metric = service.MetricFreeImageTrial
+		case "video":
+			metric = service.MetricFreeVideoTrial
+		default:
+			return nil, service.ErrQuoteStale
+		}
+		err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return service.NewQuotaService(h.db).ConsumeFreeTrial(tx, user.ID, metric)
+		})
+		if err != nil {
+			if errors.Is(err, service.ErrFreeTrialTaken) {
+				return nil, service.ErrFreeTrialTaken
+			}
+			return nil, err
+		}
+		return &service.ReserveResult{UsedFreeTrial: true}, nil
+	}
+	if payload.FinalCostMicros <= 0 {
+		return &service.ReserveResult{}, nil
+	}
+	transactions, err := service.NewCreditService(h.db).Reserve(ctx, user.ID, payload.FinalCostMicros, "", catalogItem.Name)
+	if err != nil {
+		return nil, err
+	}
+	return &service.ReserveResult{ConsumedMicros: payload.FinalCostMicros, Transactions: transactions}, nil
+}
+
+// failRequest 收敛失败请求并原桶退还点数。
+func (h *AIHandler) failRequest(c *gin.Context, request *model.AIRequest, reserved *service.ReserveResult, err error, upstreamStatus int) {
+	h.abortUpstream(c, err, upstreamStatus)
+	if request == nil {
+		return
+	}
+	if request.Status != "running" {
+		return
+	}
+	if refundErr := h.requests.MarkFailed(c.Request.Context(), request, upstreamStatus); refundErr != nil {
+		slog.Error("失败退还点数出错", "request", request.ID, "err", refundErr)
+	}
+	_ = reserved
+}
+
+// moderateInput 审核提示词与参考图。被拒返回 422，服务不可用按 fail mode 返回 503 或放行。
+func (h *AIHandler) moderateInput(c *gin.Context, user model.User, prompt string, references []provider.InlineMedia) bool {
+	if h.moderation == nil || !h.moderation.Enabled() {
+		return true
+	}
+	inputs := make([]service.ReferenceInput, 0, len(references))
+	for _, reference := range references {
+		inputs = append(inputs, service.ReferenceInput{
+			ContentType: "image",
+			MimeType:    reference.MimeType,
+			Data:        reference.Data,
+		})
+	}
+	_, err := h.moderation.CheckInput(c.Request.Context(), user.ID, prompt, inputs)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, service.ErrContentRejected):
+		errs.Abort(c, errs.ErrContentRejected)
+		return false
+	case errors.Is(err, service.ErrModerationUnavailable):
+		errs.Abort(c, errs.ErrModerationUnavailable)
+		return false
+	default:
+		slog.Error("输入审核失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return false
+	}
+}
+
+// chatPromptText 把消息里的文本拼成审核输入，图片只审参考图阶段已有的内容。
+func chatPromptText(messages []provider.ChatMessage) string {
+	var builder strings.Builder
+	for _, message := range messages {
+		switch typed := message.Content.(type) {
+		case string:
+			builder.WriteString(typed)
+			builder.WriteString("\n")
+		case []any:
+			for _, item := range typed {
+				if record, ok := item.(map[string]any); ok {
+					if text, ok := record["text"].(string); ok {
+						builder.WriteString(text)
+						builder.WriteString("\n")
+					}
+				}
+			}
+		}
+	}
+	return builder.String()
+}
+
+// abortUpstream 把上游错误映射成本站错误响应。
+func (h *AIHandler) abortUpstream(c *gin.Context, err error, upstreamStatus int) {
+	switch {
+	case errors.Is(err, provider.ErrCapabilityUnsupported):
+		errs.Abort(c, errs.ErrModelNotSupported)
+	case errors.Is(err, service.ErrMediaQuotaExceeded):
+		errs.Abort(c, errs.ErrStorageQuota)
+	case upstreamStatus >= 400:
+		errs.Abort(c, errs.WithExtra(errs.ErrUpstreamError, gin.H{"upstreamStatus": upstreamStatus}))
+	case isTimeout(err):
+		errs.Abort(c, errs.WithExtra(errs.ErrUpstreamTimeout, gin.H{"phase": "response"}))
+	default:
+		slog.Error("上游请求失败", "err", err)
+		errs.Abort(c, errs.WithExtra(errs.ErrUpstreamError, gin.H{"upstreamStatus": upstreamStatus}))
+	}
+}
+
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "timeout") || strings.Contains(message, "deadline exceeded")
+}
+
+func (h *AIHandler) channelsFor(catalogItem model.ModelCatalog) ([]service.ChannelWithProvider, error) {
+	var ids []uuid.UUID
+	if len(catalogItem.ChannelIDs) > 0 {
+		if err := json.Unmarshal(catalogItem.ChannelIDs, &ids); err != nil {
+			return nil, fmt.Errorf("模型渠道绑定不合法: %w", err)
+		}
+	}
+	return h.upstream.LoadChannels(context.Background(), ids)
+}
+
+// loadInlineMedia 按 storageKey 从媒体存储读取参考素材。
+// 传别人的 storageKey 一律按不存在处理，与媒体接口的约定一致。
+func (h *AIHandler) loadInlineMedia(userID uuid.UUID, keys []string) ([]provider.InlineMedia, error) {
+	media := make([]provider.InlineMedia, 0, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		var file model.MediaFile
+		if err := h.db.Where("user_id = ? AND storage_key = ?", userID, key).First(&file).Error; err != nil {
+			return nil, fmt.Errorf("参考素材不存在: %s", key)
+		}
+		reader, err := h.store.Get(context.Background(), file.ObjectPath)
+		if err != nil {
+			return nil, fmt.Errorf("读取参考素材失败: %w", err)
+		}
+		data, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			return nil, fmt.Errorf("读取参考素材失败: %w", err)
+		}
+		media = append(media, provider.InlineMedia{Data: data, MimeType: file.MimeType, Name: file.StorageKey})
+	}
+	return media, nil
+}
+
+func (h *AIHandler) maxFileBytes(userID uuid.UUID) (int64, error) {
+	now := time.Now()
+	_, plan, err := service.NewQuotaService(h.db).DerivePlan(context.Background(), userID, now)
+	if err != nil {
+		return 0, err
+	}
+	return plan.MaxFileBytes, nil
+}
+
+func (h *AIHandler) availableMicros(userID uuid.UUID) (int64, error) {
+	credit, err := service.NewCreditService(h.db).Balance(context.Background(), userID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return credit.PurchasedMicros + credit.GrantedMicros, nil
+}
+
+func (h *AIHandler) creditsPayload(request *model.AIRequest, remaining int64) gin.H {
+	payload := gin.H{
+		"baseCostMicros":  request.BaseCostMicros,
+		"finalCostMicros": request.FinalCostMicros,
+		"finalCostYuan":   microsToYuan(request.FinalCostMicros),
+		"remainingMicros": remaining,
+	}
+	if request.PromotionID != nil {
+		discount := gin.H{"promotionId": request.PromotionID.String(), "discountBps": 0}
+		payload["discount"] = discount
+	} else {
+		payload["discount"] = nil
+	}
+	return payload
+}
+
+func requireIdempotencyKey(c *gin.Context, key string) bool {
+	if strings.TrimSpace(key) == "" {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"idempotencyKey": "生成接口必须携带 idempotencyKey"}))
+		return false
+	}
+	return true
+}
+
+func stringifyParams(params map[string]any) map[string]string {
+	out := make(map[string]string, len(params))
+	for key, value := range params {
+		if key == "n" {
+			continue
+		}
+		out[key] = fmt.Sprint(value)
+	}
+	return out
+}
+
+func parseIntDefault(value any, fallback int) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case string:
+		if parsed, err := strconv.Atoi(typed); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func microsToYuan(micros int64) string {
+	return strconv.FormatFloat(float64(micros)/1_000_000, 'f', 2, 64)
+}
+
+func randomKey() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")[:21]
+}
+
+// randomStorageID 给生成产物分配 storageKey 的对象段。
+func randomStorageID() string { return randomKey() }
+
+func defaultMime(prefix string) string {
+	switch prefix {
+	case "image":
+		return "image/png"
+	case "video":
+		return "video/mp4"
+	case "audio":
+		return "audio/mpeg"
+	default:
+		return "application/octet-stream"
+	}
+}
