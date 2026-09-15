@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -48,6 +49,45 @@ type Config struct {
 	FreeGrantDailyBudgetMicros int64
 	FreeGrantRiskThreshold     int
 
+	// 点数与支付（第三期）
+	EntitlementDays     int
+	PromotionEnabled    bool
+	PaymentNotifyURL    string
+	AlipayAppID         string
+	AlipayPrivateKey    string
+	AlipayPublicKey     string
+	AlipayReturnURL     string
+	AlipayProduction    bool
+	WechatAppID         string
+	WechatMchID         string
+	WechatMchSerialNo   string
+	WechatMchPrivateKey string
+	WechatAPIv3Key      string
+
+	// 内容审核（第五期）
+	ModerationEnabled          bool
+	ModerationProvider         string // fake | nsfwjs+detoxify
+	ModerationNSFWJSEndpoint   string
+	ModerationDetoxifyEndpoint string
+	ModerationImageThreshold   float64
+	ModerationTextThreshold    float64
+	ModerationVideoSampleFPS   float64
+	ModerationFailMode         string // reject | allow，无默认值
+	ModerationTimeout          time.Duration
+	ModerationPolicyVersion    string
+	ModerationQuarantineTTL    time.Duration
+	ModerationCacheTTL         time.Duration
+	// ModerationFakeRejectTexts 仅在 MODERATION_PROVIDER=fake 时用于触发拒绝的文本片段，逗号分隔。
+	ModerationFakeRejectTexts string
+
+	// AI 转发与并发（第四期）
+	AIImageTimeout         time.Duration
+	AIAudioTimeout         time.Duration
+	AIStreamTimeout        time.Duration
+	AIStreamIdleTimeout    time.Duration
+	AIVideoTaskTimeout     time.Duration
+	AIAllowPrivateUpstream bool
+
 	// 媒体存储（第二期）
 	StorageDriver string // local | s3
 	MediaRoot     string // local 驱动的落盘根目录
@@ -88,6 +128,38 @@ func Load() (*Config, error) {
 		FreeGrantCampaignID:        os.Getenv("FREE_GRANT_CAMPAIGN_ID"),
 		FreeGrantDailyBudgetMicros: getenvInt64("FREE_GRANT_DAILY_BUDGET_MICROS", 0),
 		FreeGrantRiskThreshold:     getenvInt("FREE_GRANT_RISK_THRESHOLD", 0),
+		EntitlementDays:            getenvInt("ENTITLEMENT_DAYS", 30),
+		PromotionEnabled:           getenvBool("PRICING_PROMOTION_ENABLED", true),
+		PaymentNotifyURL:           os.Getenv("PAYMENT_NOTIFY_URL"),
+		AlipayAppID:                os.Getenv("ALIPAY_APP_ID"),
+		AlipayPrivateKey:           os.Getenv("ALIPAY_PRIVATE_KEY"),
+		AlipayPublicKey:            os.Getenv("ALIPAY_PUBLIC_KEY"),
+		AlipayReturnURL:            os.Getenv("ALIPAY_RETURN_URL"),
+		AlipayProduction:           getenvBool("ALIPAY_PRODUCTION", false),
+		WechatAppID:                os.Getenv("WECHATPAY_APP_ID"),
+		WechatMchID:                os.Getenv("WECHATPAY_MCH_ID"),
+		WechatMchSerialNo:          os.Getenv("WECHATPAY_MCH_SERIAL_NO"),
+		WechatMchPrivateKey:        os.Getenv("WECHATPAY_MCH_PRIVATE_KEY"),
+		WechatAPIv3Key:             os.Getenv("WECHATPAY_API_V3_KEY"),
+		ModerationEnabled:          getenvBool("MODERATION_ENABLED", false),
+		ModerationProvider:         getenv("MODERATION_PROVIDER", "fake"),
+		ModerationNSFWJSEndpoint:   os.Getenv("MODERATION_NSFWJS_ENDPOINT"),
+		ModerationDetoxifyEndpoint: os.Getenv("MODERATION_DETOXIFY_ENDPOINT"),
+		ModerationImageThreshold:   getenvFloat("MODERATION_IMAGE_THRESHOLD", 0.6),
+		ModerationTextThreshold:    getenvFloat("MODERATION_TEXT_THRESHOLD", 0.8),
+		ModerationVideoSampleFPS:   getenvFloat("MODERATION_VIDEO_SAMPLE_FPS", 1),
+		ModerationFailMode:         os.Getenv("MODERATION_FAIL_MODE"),
+		ModerationTimeout:          getenvDurationOr("MODERATION_TIMEOUT", 5*time.Second),
+		ModerationPolicyVersion:    getenv("MODERATION_POLICY_VERSION", "v1"),
+		ModerationQuarantineTTL:    getenvDurationOr("MODERATION_QUARANTINE_TTL", 24*time.Hour),
+		ModerationCacheTTL:         getenvDurationOr("MODERATION_CACHE_TTL", 10*time.Minute),
+		ModerationFakeRejectTexts:  os.Getenv("MODERATION_FAKE_REJECT_TEXTS"),
+		AIImageTimeout:             getenvDurationOr("AI_IMAGE_TIMEOUT", 180*time.Second),
+		AIAudioTimeout:             getenvDurationOr("AI_AUDIO_TIMEOUT", 120*time.Second),
+		AIStreamTimeout:            getenvDurationOr("AI_STREAM_TIMEOUT", 600*time.Second),
+		AIStreamIdleTimeout:        getenvDurationOr("AI_STREAM_IDLE_TIMEOUT", 60*time.Second),
+		AIVideoTaskTimeout:         getenvDurationOr("AI_VIDEO_TASK_TIMEOUT", 20*time.Minute),
+		AIAllowPrivateUpstream:     getenvBool("AI_ALLOW_PRIVATE_UPSTREAM", false),
 		StorageDriver:              getenv("STORAGE_DRIVER", "local"),
 		MediaRoot:                  getenv("MEDIA_ROOT", "/data/media"),
 		S3Endpoint:                 os.Getenv("S3_ENDPOINT"),
@@ -167,6 +239,14 @@ func (c *Config) validate() error {
 	if c.AdminEmail == "" || c.AdminPassword == "" {
 		return errors.New("ADMIN_EMAIL 与 ADMIN_PASSWORD 必须配置")
 	}
+	// 支付回调地址默认由 APP_BASE_URL 推导，可显式覆盖以指向独立域名。
+	if c.PaymentNotifyURL == "" {
+		c.PaymentNotifyURL = strings.TrimRight(c.AppBaseURL, "/") + "/api/payments/webhook"
+	}
+	// 零值视同未配置，回落到默认 30 天，兼容直接构造 Config 的调用方。
+	if c.EntitlementDays <= 0 {
+		c.EntitlementDays = 30
+	}
 	if c.FreeGrantEnabled {
 		if c.FreeGrantCampaignID == "" {
 			return errors.New("FREE_GRANT_ENABLED=true 时 FREE_GRANT_CAMPAIGN_ID 必填（无默认值，需运营提供）")
@@ -180,6 +260,41 @@ func (c *Config) validate() error {
 	}
 	if err := c.validateStorage(); err != nil {
 		return err
+	}
+	if err := c.validateModeration(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateModeration 校验审核配置。fail mode 必须显式配置：
+// 放行还是拒绝是业务与合规的取舍，不该由框架替部署方决定。
+func (c *Config) validateModeration() error {
+	if !c.ModerationEnabled {
+		return nil
+	}
+	if c.ModerationFailMode != "reject" && c.ModerationFailMode != "allow" {
+		return errors.New("MODERATION_ENABLED=true 时 MODERATION_FAIL_MODE 必须显式配置为 reject 或 allow")
+	}
+	if c.ModerationProvider != "fake" && c.ModerationProvider != "nsfwjs+detoxify" {
+		return fmt.Errorf("MODERATION_PROVIDER 取值非法: %s（只能是 fake 或 nsfwjs+detoxify）", c.ModerationProvider)
+	}
+	if c.ModerationProvider == "nsfwjs+detoxify" {
+		if c.ModerationNSFWJSEndpoint == "" || c.ModerationDetoxifyEndpoint == "" {
+			return errors.New("MODERATION_PROVIDER=nsfwjs+detoxify 时 MODERATION_NSFWJS_ENDPOINT 与 MODERATION_DETOXIFY_ENDPOINT 不能为空")
+		}
+	}
+	if c.ModerationImageThreshold <= 0 || c.ModerationImageThreshold > 1 {
+		return errors.New("MODERATION_IMAGE_THRESHOLD 必须在 (0,1] 之间")
+	}
+	if c.ModerationTextThreshold <= 0 || c.ModerationTextThreshold > 1 {
+		return errors.New("MODERATION_TEXT_THRESHOLD 必须在 (0,1] 之间")
+	}
+	if c.ModerationTimeout <= 0 {
+		return errors.New("MODERATION_TIMEOUT 必须大于 0")
+	}
+	if c.ModerationQuarantineTTL <= 0 {
+		return errors.New("MODERATION_QUARANTINE_TTL 必须大于 0")
 	}
 	return nil
 }
@@ -230,6 +345,18 @@ func getenvBool(key string, fallback bool) bool {
 	return strings.EqualFold(v, "true") || v == "1"
 }
 
+func getenvFloat(key string, fallback float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 func getenvInt(key string, fallback int) int {
 	v := os.Getenv(key)
 	if v == "" {
@@ -252,6 +379,19 @@ func getenvInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	return n
+}
+
+// getenvDurationOr 读取时长配置，非法时回落到默认值（AI 超时允许用默认值兜底）。
+func getenvDurationOr(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func getenvDuration(key string, fallback time.Duration) (time.Duration, error) {

@@ -18,6 +18,7 @@ import (
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/service"
 )
 
 const (
@@ -36,6 +37,20 @@ type AuthHandler struct {
 	mail         *mail.Mailer
 	failLim      *middleware.Limiter // 账号连续失败锁定
 	mailEmailLim *middleware.Limiter // 同邮箱发信限流（3 次/小时，verify 与 forgot 共用）
+	settings     *service.SiteSettingService
+}
+
+// SetSettings 注入站点设置：开放注册开关可在管理后台实时切换。
+func (h *AuthHandler) SetSettings(settings *service.SiteSettingService) {
+	h.settings = settings
+}
+
+// registrationEnabled 优先取站点设置，未注入时回落到环境变量。
+func (h *AuthHandler) registrationEnabled() bool {
+	if h.settings != nil {
+		return h.settings.Bool(service.SettingRegistrationEnabled, h.cfg.RegistrationEnabled)
+	}
+	return h.cfg.RegistrationEnabled
 }
 
 func NewAuthHandler(db *gorm.DB, cfg *config.Config, mailer *mail.Mailer) *AuthHandler {
@@ -134,7 +149,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, fields))
 		return
 	}
-	if !h.cfg.RegistrationEnabled {
+	if !h.registrationEnabled() {
 		errs.Abort(c, errs.ErrRegDisabled)
 		return
 	}
@@ -160,6 +175,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	var verifyToken string
 	err = h.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		// 账本行随注册一起建，后续任何读余额的地方都不需要处理「行不存在」。
+		if err := service.NewCreditService(h.db).EnsureCredit(tx, user.ID); err != nil {
 			return err
 		}
 		var err error

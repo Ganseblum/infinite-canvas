@@ -7,18 +7,21 @@ import (
 )
 
 type User struct {
-	ID              uuid.UUID `gorm:"type:char(36);primaryKey"`
-	Email           string    `gorm:"type:varchar(255);uniqueIndex;not null"`
-	Username        string    `gorm:"type:varchar(64);uniqueIndex;not null"`
-	PasswordHash    string    `gorm:"type:varchar(100);not null"`
-	DisplayName     string    `gorm:"type:varchar(64);not null;default:''"`
-	AvatarURL       string    `gorm:"type:varchar(512);not null;default:''"`
-	Role            string    `gorm:"type:varchar(16);not null;default:user"`
-	Status          string    `gorm:"type:varchar(24);not null;default:active"`
-	EmailVerifiedAt *time.Time
-	LastLoginAt     *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID           uuid.UUID `gorm:"type:char(36);primaryKey"`
+	Email        string    `gorm:"type:varchar(255);uniqueIndex;not null"`
+	Username     string    `gorm:"type:varchar(64);uniqueIndex;not null"`
+	PasswordHash string    `gorm:"type:varchar(100);not null"`
+	DisplayName  string    `gorm:"type:varchar(64);not null;default:''"`
+	AvatarURL    string    `gorm:"type:varchar(512);not null;default:''"`
+	Role         string    `gorm:"type:varchar(16);not null;default:user"`
+	Status       string    `gorm:"type:varchar(24);not null;default:active"` // active | disabled | pending_deletion
+	// InviteCode 可空：唯一索引允许多行 NULL；注册时生成，用于邀请返利。
+	InviteCode          *string `gorm:"type:varchar(16);uniqueIndex"`
+	DeletionScheduledAt *time.Time
+	EmailVerifiedAt     *time.Time
+	LastLoginAt         *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type RefreshToken struct {

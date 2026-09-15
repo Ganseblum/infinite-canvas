@@ -19,14 +19,25 @@ import (
 )
 
 type AccountHandler struct {
-	db    *gorm.DB
-	cfg   *config.Config
-	grant *service.FreeGrantService
-	authH *AuthHandler
+	db       *gorm.DB
+	cfg      *config.Config
+	grant    *service.FreeGrantService
+	authH    *AuthHandler
+	credits  *service.CreditService
+	quota    *service.QuotaService
+	deletion *service.DeletionService
 }
 
 func NewAccountHandler(db *gorm.DB, cfg *config.Config, grant *service.FreeGrantService, authH *AuthHandler) *AccountHandler {
-	return &AccountHandler{db: db, cfg: cfg, grant: grant, authH: authH}
+	return &AccountHandler{
+		db:       db,
+		cfg:      cfg,
+		grant:    grant,
+		authH:    authH,
+		credits:  service.NewCreditService(db),
+		quota:    service.NewQuotaService(db),
+		deletion: service.NewDeletionService(db),
+	}
 }
 
 func (h *AccountHandler) GetMe(c *gin.Context) {
@@ -36,11 +47,34 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
 	}
-	var plan model.Plan
-	if err := h.db.First(&plan, "id = ?", "free").Error; err != nil {
+	now := time.Now()
+	credit, plan, err := h.quota.DerivePlan(c.Request.Context(), uid, now)
+	if err != nil {
+		slog.Error("读取档位失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
+	storageBytes, err := h.quota.StorageBytes(c.Request.Context(), uid)
+	if err != nil {
+		slog.Error("读取存储用量失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	readOnly := storageBytes > plan.StorageBytes
+	expiry, err := h.quota.ExpiringMedia(c.Request.Context(), uid, plan.RetentionDays, now)
+	if err != nil {
+		slog.Error("计算媒体到期时间失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	imageTrials, _ := h.usageValue(uid, service.MetricFreeImageTrial)
+	videoTrials, _ := h.usageValue(uid, service.MetricFreeVideoTrial)
+
+	deletion := gin.H{"status": "none", "scheduledAt": nil}
+	if user.Status == "pending_deletion" {
+		deletion = gin.H{"status": "pending", "scheduledAt": formatTimePtr(user.DeletionScheduledAt)}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{
 			"id":            user.ID.String(),
@@ -59,7 +93,41 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 			"maxFileBytes":  plan.MaxFileBytes,
 			"retentionDays": plan.RetentionDays,
 		},
+		"credits": gin.H{
+			"purchasedMicros": credit.PurchasedMicros,
+			"grantedMicros":   credit.GrantedMicros,
+			"totalMicros":     credit.PurchasedMicros + credit.GrantedMicros,
+			"paidUntil":       formatTimePtr(credit.PaidUntil),
+		},
+		"usage": gin.H{
+			"storageBytes":        storageBytes,
+			"freeImageTrialsUsed": imageTrials,
+			"freeVideoTrialsUsed": videoTrials,
+		},
+		"mediaExpiry": gin.H{
+			"nearestAt":     formatTimePtr(expiry.NearestAt),
+			"expiringCount": expiry.ExpiringCount,
+		},
+		"deletion":    deletion,
+		"readOnly":    readOnly,
+		"graceEndsAt": formatTimePtr(service.GraceEndsAt(credit, now)),
 	})
+}
+
+func (h *AccountHandler) usageValue(uid uuid.UUID, metric string) (int64, error) {
+	var record model.UsageRecord
+	err := h.db.Where("user_id = ? AND metric = ? AND period = ?", uid, metric, service.PeriodTotal).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	return record.Value, err
+}
+
+func formatTimePtr(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 type updateMeReq struct {
@@ -227,6 +295,52 @@ func (h *AccountHandler) recordDenied(uid uuid.UUID, reason string) {
 		Status:     "denied",
 		Reason:     reason,
 	})
+}
+
+type deletionReq struct {
+	Password string `json:"password"`
+}
+
+// RequestDeletion 校验密码后把账号置为 pending_deletion，预约 7 天后的匿名化任务。
+// 效果立即生效：生成与下单被 403 ACCOUNT_PENDING_DELETION 拦截；重复调用幂等，不重置倒计时。
+func (h *AccountHandler) RequestDeletion(c *gin.Context) {
+	var req deletionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	uid, _ := uuid.Parse(c.GetString("user_id"))
+	var user model.User
+	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
+		errs.Abort(c, errs.ErrUnauthorized)
+		return
+	}
+	if !auth.CheckPassword(user.PasswordHash, req.Password) {
+		errs.Abort(c, errs.ErrInvalidCreds)
+		return
+	}
+	scheduledAt, err := h.deletion.Request(c.Request.Context(), uid, time.Now())
+	if err != nil {
+		slog.Error("申请注销失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"scheduledAt": scheduledAt.UTC().Format(time.RFC3339Nano)})
+}
+
+// CancelDeletion 撤销注销申请，仅当处于冷静期时有效。
+func (h *AccountHandler) CancelDeletion(c *gin.Context) {
+	uid, _ := uuid.Parse(c.GetString("user_id"))
+	if err := h.deletion.Cancel(c.Request.Context(), uid); err != nil {
+		if errors.Is(err, service.ErrNotPendingDeletion) {
+			errs.Abort(c, errs.ErrDeletionNotPending)
+			return
+		}
+		slog.Error("撤销注销失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "active"})
 }
 
 func grantPayload(claim model.FreeGrantClaim) gin.H {

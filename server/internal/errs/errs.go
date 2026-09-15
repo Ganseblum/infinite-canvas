@@ -65,7 +65,32 @@ var (
 	ErrRateLimited      = New(429, "RATE_LIMITED", "请求过于频繁，请稍后重试")
 	ErrRegDisabled      = New(503, "REGISTRATION_DISABLED", "注册暂时关闭")
 	ErrInternal         = New(500, "INTERNAL_ERROR", "服务暂时不可用，请稍后重试")
+	// 第三期启用
+	ErrInsufficientCredits    = New(402, "INSUFFICIENT_CREDITS", "点数余额不足")
+	ErrReadOnly               = New(403, "READ_ONLY", "当前用量超过档位上限，处于只读状态")
+	ErrAccountPendingDeletion = New(403, "ACCOUNT_PENDING_DELETION", "账号处于注销冷静期，暂时无法生成或充值")
+	ErrOrderAlreadyPaid       = New(409, "ORDER_ALREADY_PAID", "订单已支付，无法取消")
+	ErrPromotionConflict      = New(409, "PROMOTION_CONFLICT", "折扣活动与既有规则冲突")
+	ErrDeletionNotPending     = New(409, "DELETION_NOT_PENDING", "账号未处于注销冷静期")
+	ErrInvalidSignature       = New(400, "INVALID_SIGNATURE", "回调验签失败")
+	ErrStorageQuota           = New(507, "STORAGE_QUOTA_EXCEEDED", "存储配额不足")
+	// 第四期启用
+	ErrModelNotSupported  = New(400, "MODEL_NOT_SUPPORTED", "该模型暂不可用")
+	ErrParamNotSupported  = New(400, "PARAM_NOT_SUPPORTED", "参数不在该模型允许范围内")
+	ErrQuoteStale         = New(409, "QUOTE_STALE", "报价已失效，请重新报价")
+	ErrConcurrencyLimited = New(429, "CONCURRENCY_LIMITED", "同时进行的生成任务过多，请稍后再试")
+	ErrUpstreamError      = New(502, "UPSTREAM_ERROR", "上游服务返回异常，请稍后重试")
+	ErrUpstreamTimeout    = New(504, "UPSTREAM_TIMEOUT", "上游服务响应超时，请稍后重试")
+	// 第五期启用
+	ErrContentRejected       = New(422, "CONTENT_REJECTED", "内容未通过审核")
+	ErrModerationUnavailable = New(503, "MODERATION_UNAVAILABLE", "内容审核服务暂不可用，请稍后重试")
+	ErrModerationReviewed    = New(409, "MODERATION_ALREADY_REVIEWED", "该审核记录已被复核")
 )
+
+// AddConflict 返回带冲突说明的 VALIDATION_FAILED 副本，用于需要附带业务原因的 409 场景。
+func AddConflict(message string) *AppError {
+	return New(409, "VALIDATION_FAILED", message)
+}
 
 // Abort 中止请求并写统一错误响应。
 func Abort(c *gin.Context, e *AppError) {

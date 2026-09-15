@@ -4,19 +4,29 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
 	"github.com/infinite-canvas/server/internal/model"
 )
 
+// Connect 打开数据库连接。DATABASE_URL 以 sqlite: 前缀时使用 SQLite 文件，
+// 便于本地快速起一个不依赖 MySQL 的验证实例；其余情况一律走 MySQL。
 func Connect(databaseURL string) (*gorm.DB, error) {
-	gormDB, err := gorm.Open(mysql.Open(databaseURL), &gorm.Config{
+	var dialector gorm.Dialector
+	if strings.HasPrefix(databaseURL, "sqlite:") {
+		dialector = sqlite.Open(strings.TrimPrefix(databaseURL, "sqlite:"))
+	} else {
+		dialector = mysql.Open(databaseURL)
+	}
+	gormDB, err := gorm.Open(dialector, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
@@ -26,8 +36,13 @@ func Connect(databaseURL string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("获取底层连接失败: %w", err)
 	}
-	sqlDB.SetMaxOpenConns(20)
-	sqlDB.SetMaxIdleConns(5)
+	if strings.HasPrefix(databaseURL, "sqlite:") {
+		// SQLite 只允许单写连接，避免并发写入锁冲突。
+		sqlDB.SetMaxOpenConns(1)
+	} else {
+		sqlDB.SetMaxOpenConns(20)
+		sqlDB.SetMaxIdleConns(5)
+	}
 	sqlDB.SetConnMaxLifetime(time.Hour)
 	return gormDB, nil
 }
@@ -44,6 +59,24 @@ func Migrate(gormDB *gorm.DB) error {
 		&model.AssetTag{},
 		&model.Generation{},
 		&model.MediaFile{},
+		&model.Credit{},
+		&model.CreditTransaction{},
+		&model.UsageRecord{},
+		&model.CreditPackage{},
+		&model.Order{},
+		&model.ModelCatalog{},
+		&model.ModelPricePromotion{},
+		&model.AdminAuditLog{},
+		&model.PlatformChannel{},
+		&model.AIRequest{},
+		&model.AITask{},
+		&model.ModerationRecord{},
+		&model.SiteSetting{},
+		&model.CommunityWork{},
+		&model.CommunityLike{},
+		&model.CommunityReport{},
+		&model.CheckinRecord{},
+		&model.UserInvite{},
 	)
 }
 

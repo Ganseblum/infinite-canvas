@@ -7,9 +7,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/auth"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/model"
 )
 
 // Limiter 进程内滑动窗口限流（单实例够用，多实例时换 Redis）。
@@ -168,6 +171,41 @@ func AdminOnly() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.GetString("user_role") != "admin" {
 			errs.Abort(c, errs.ErrForbidden)
+			return
+		}
+		c.Next()
+	}
+}
+
+// VerifyExistingUser 加载当前用户并拒绝已封禁或已注销的账号。
+// 第一期签发的 access token 在封禁后 15 分钟内仍有效，这里按库里的最新状态拦截，
+// 撤销 refresh token 负责让会话在那之后彻底失效。
+func RequireActiveUser(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		uid, err := uuid.Parse(c.GetString("user_id"))
+		if err != nil {
+			errs.Abort(c, errs.ErrUnauthorized)
+			return
+		}
+		var user model.User
+		if err := db.First(&user, "id = ?", uid).Error; err != nil {
+			errs.Abort(c, errs.ErrUnauthorized)
+			return
+		}
+		if user.Status == "disabled" {
+			errs.Abort(c, errs.ErrAccountDisabled)
+			return
+		}
+		c.Set("user_status", user.Status)
+		c.Next()
+	}
+}
+
+// RequireNotPendingDeletion 拦截注销冷静期内的写操作（生成、下单）。
+func RequireNotPendingDeletion() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetString("user_status") == "pending_deletion" {
+			errs.Abort(c, errs.ErrAccountPendingDeletion)
 			return
 		}
 		c.Next()
