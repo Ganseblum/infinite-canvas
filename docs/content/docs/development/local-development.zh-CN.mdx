@@ -1,13 +1,24 @@
 ---
 title: 本地开发
-description: 前端优先的本地开发方式
+description: 前后端一体的本地开发方式
 ---
 
 # 本地开发
 
-当前主应用以 `web/` 前端为主，AI 请求由浏览器前台直连用户自己的 OpenAI 兼容接口。
+主要目录是 `web/`（前端）与 `server/`（Go 后端），画布、素材、生成记录与媒体都由服务端保存。
 
-## 1. 启动前端
+## 1. 准备数据库与后端
+
+```bash
+cp .env.example .env   # 至少填写 DATABASE_URL、JWT_SECRET、CREDENTIAL_MASTER_KEY、ADMIN_EMAIL、ADMIN_PASSWORD、MAIL_DRIVER
+docker compose up -d db
+cd server
+go run ./cmd/server
+```
+
+后端默认监听 `http://localhost:8080`，启动时会自动建表并写入默认档位与管理员。
+
+## 2. 启动前端
 
 ```bash
 cd web
@@ -15,15 +26,7 @@ bun install
 bun run dev
 ```
 
-前端默认访问：
-
-```text
-http://localhost:3000
-```
-
-## 2. 配置模型
-
-打开右上角配置弹窗，填写自己的 `Base URL`、`API Key` 和模型名。第三方提示词和 WebDAV 都由浏览器前端直连。
+前端默认访问 `http://localhost:3000`，使用 `.env` 中配置的管理员账号登录。
 
 ## 3. 启动文档站
 
@@ -36,5 +39,6 @@ bun run dev
 ## 常见场景
 
 - 改画布、页面和交互：主要看 `web/`
+- 改账号、资源、媒体与计费接口：主要看 `server/internal/`
 - 改提示词缓存：主要看 `web/src/services/api/prompts.ts`
 - 改文档站内容：主要看 `docs/content/docs/`

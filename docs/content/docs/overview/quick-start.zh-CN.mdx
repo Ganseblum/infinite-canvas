@@ -5,20 +5,15 @@ description: 用最少步骤把无限画布跑起来
 
 # 快速开始
 
-如果你只是想先把项目跑起来，优先部署或启动 `web/` 前端。
+全站功能登录后使用，画布、素材、生成记录与媒体都由服务端保存。
 
-## Vercel 部署
-
-在 Vercel 中导入仓库即可，根目录 `vercel.json` 会构建 `web/`。当前版本的 AI 请求由浏览器前台直连用户自己的 OpenAI 兼容地址，不需要额外配置服务端。
-
-## 本地启动
+## Docker 启动
 
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
-cd web
-bun install
-bun run dev
+cp .env.example .env
+docker compose up -d
 ```
 
 启动后访问：
@@ -27,22 +22,25 @@ bun run dev
 http://localhost:3000
 ```
 
-## Docker 启动
+`.env` 中必须填写数据库、`JWT_SECRET`、`CREDENTIAL_MASTER_KEY`、管理员账号与邮件配置；完整变量说明见仓库根目录 `.env.example`。
 
-如果你需要基于当前源码构建镜像：
+## 本地启动
 
 ```bash
-docker build -t infinite-canvas .
-docker run --rm -p 3000:3000 infinite-canvas
+git clone git@github.com:basketikun/infinite-canvas.git
+cd infinite-canvas
+cp .env.example .env
+docker compose up -d db
+cd server && go run ./cmd/server
+cd web && bun install && bun run dev
 ```
 
 ## 首次使用建议
 
-- 先打开右上角配置弹窗，填入自己的 `Base URL`、`API Key` 和模型名。
-- 如果需要提示词仓库内容，打开 `/prompts` 会由浏览器前端直连拉取并缓存到 IndexedDB。
-- 如果需要跨设备同步画布、素材和生成记录，可在配置弹窗中填写 WebDAV。
+- 使用 `.env` 里配置的管理员邮箱与密码登录。
+- 服务端启动时会自动建表，并写入 `free` / `paid` / `sunset` 三档默认档位。
 
 ## 说明
 
-- 当前画布项目和“我的素材”主要保存在浏览器本地，WebDAV 同步需要用户自行配置。
-- AI API Key 保存在浏览器本地，并由前端直接请求 OpenAI 兼容接口。
+- 创建账号需要完成邮箱验证，验证邮件由 `MAIL_DRIVER` 指定的方式发出；本地开发可用 `log` 驱动，邮件内容直接打到后端日志。
+- 生产部署请使用仓库根目录的 `deploy.sh` 与 `deploy/env.prod`，不要直接部署规划分支。

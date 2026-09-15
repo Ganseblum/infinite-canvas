@@ -5,34 +5,38 @@ description: Run Infinite Canvas in a few steps
 
 # Quick Start
 
-To try the project, deploy or start the `web/` frontend.
+Everything requires signing in. Canvases, assets, generations, and media are stored by the server.
 
-## Deploy with Vercel
+## Run with Docker
 
-Import the repository into Vercel. The root `vercel.json` builds `web/`. AI requests are sent directly from the browser to your OpenAI-compatible endpoint, so no additional application server is required.
+```bash
+git clone git@github.com:basketikun/infinite-canvas.git
+cd infinite-canvas
+cp .env.example .env
+docker compose up -d
+```
+
+Open `http://localhost:3000`.
+
+Fill in the database, `JWT_SECRET`, `CREDENTIAL_MASTER_KEY`, admin account, and mail settings in `.env`; the full list is documented in `.env.example`.
 
 ## Run locally
 
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas/web
-bun install
-bun run dev
-```
-
-Open `http://localhost:3000`.
-
-## Run with Docker
-
-```bash
-docker build -t infinite-canvas .
-docker run --rm -p 3000:3000 infinite-canvas
+cd infinite-canvas
+cp .env.example .env
+docker compose up -d db
+cd server && go run ./cmd/server
+cd web && bun install && bun run dev
 ```
 
 ## First-time setup
 
-- Open Settings and enter your `Base URL`, `API Key`, and model names.
-- Open `/prompts` to fetch prompt repositories directly from the browser and cache them in IndexedDB.
-- Configure WebDAV if you want to synchronize canvases, assets, and generation history across devices.
+- Sign in with the admin email and password from `.env`.
+- The server creates tables on startup and seeds the default `free` / `paid` / `sunset` plans.
 
-Canvas projects and My Assets are primarily stored in the browser. The API key is also stored locally and used by the browser to call OpenAI-compatible endpoints directly.
+## Notes
+
+- Registration requires email verification. Local development can use `MAIL_DRIVER=log` to print emails to the backend log.
+- For production, use `deploy.sh` with `deploy/env.prod`; do not deploy the planning branch directly.

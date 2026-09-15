@@ -31,6 +31,7 @@ export async function importAppConfig(file: File) {
         throw new Error(i18n.t("config.invalidFile"));
     }
     if (data.app !== "infinite-canvas" || data.version !== 1 || !data.config || !data.promptSources) throw new Error(i18n.t("config.invalidFile"));
-    useConfigStore.setState({ config: data.config });
+    // 只按白名单回填偏好，旧文件里可能残留的渠道与密钥字段会被丢弃。
+    useConfigStore.getState().replaceConfig(data.config);
     usePromptSourceStore.setState(data.promptSources);
 }

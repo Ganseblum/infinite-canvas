@@ -8,7 +8,7 @@ description: Major features available in the current project
 ## Canvas projects
 
 - Create, rename, duplicate, delete, import, and export canvas projects.
-- Persist projects in the browser and optionally synchronize them with WebDAV.
+- Persist projects on the server; every signed-in device picks up where you left off, with autosave and conflict prompts.
 - Keep viewport, background, nodes, connections, and assistant sessions with each project.
 
 ## Infinite canvas
@@ -27,10 +27,14 @@ description: Major features available in the current project
 
 ## AI generation
 
-- Connect to user-provided OpenAI-compatible endpoints directly from the browser.
-- Configure multiple channels, fetch or enter model names, and choose default text, image, and video models.
-- Support image count, aspect ratio, quality, transparent backgrounds, reasoning effort, and custom invocation scripts.
-- Support OpenAI-style video endpoints.
+Generation is routed through the server: the browser only talks to `/api/ai/*`, models come from the server catalog, channel keys are encrypted server-side, and no credentials exist in the browser.
+
+- Quote first so the cost and any active discount are known before generating; insufficient credits are rejected before the upstream call.
+- Credits spend the granted bucket before the purchased one and refund to the original bucket on failure; an idempotency key deduplicates retries.
+- Video runs as an async task polled by the server, so closing the page still lets it finish, and failures refund automatically.
+- Chat uses a single event stream with incremental output; stopping also cancels the upstream request.
+- Generated results are stored server-side and served from `/api/media/...` instead of expiring third-party URLs.
+- In-site generation and uploads are moderated: prompts and references are checked before credits are reserved, artifacts and uploads pass through a quarantine area before normal storage, rejected inputs cost nothing, rejected artifacts are not refunded, and false rejections can be reviewed and compensated by admins.
 
 ## Canvas Agent
 
@@ -54,14 +58,20 @@ Canvas plugins can contribute node types, rendering, inspectors, serialization, 
 
 See [Third-party Prompt Sources](/docs/overview/third-party-prompt-repositories) for the complete built-in list.
 
-## Configuration and synchronization
+## Accounts and credits
 
-- Export and import channel, model, generation, prompt-source, and WebDAV settings.
-- Store application data and API credentials locally in the browser.
-- Use WebDAV for optional cross-device synchronization.
+- Everything requires signing in. Registration sends a verification email, and password reset, the profile page, and account deletion (7-day cooling period with undo) are available.
+- Credits are split into purchased and granted buckets. Generations spend granted first and refund to the original bucket on failure; granted credits never make an account paid.
+- Top-ups are packaged orders paid with Alipay or WeChat; credits land in the same transaction as the order state change, and repeated callbacks never credit twice.
+- The profile page shows the current plan, both buckets, recent transactions, and storage usage; media expiring within two days is surfaced on the profile and canvas list pages.
+
+## Configuration and administration
+
+- Export and import channel, model, generation, and prompt-source settings.
+- The platform model catalog, promotions, and price matrix are served by the API; the models page, pricing page, and admin pages read from it.
+- Manage users, the model catalog, promotions, packages, and orders from `/admin`; non-admins are redirected and rejected by the API.
 
 ## Current limitations
 
-- The project is frontend-first and does not provide built-in cloud accounts or cloud storage.
-- API keys remain in browser storage and requests are sent directly to configured providers.
+- Canvases, assets, generations, and media live on the server; AI requests are routed through the backend and the browser holds no channel credentials.
 - Production Docker static-resource paths still require broader deployment verification.
