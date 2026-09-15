@@ -74,7 +74,7 @@ git push origin codex/account-backend-plan
 
 ## 开发与部署规则
 
-账号体系与服务端第一期（账号与邮件）、第二期（画布、素材、生成记录与媒体）已实现，服务放在本仓库的 `server/` 目录，由于它会和 `web/` 共用登录态、数据分发、存储和部署决策，没有必要一开始拆成独立仓库。最终形态预计使用 Docker Compose 管理 Web、API、数据库以及对象存储的连接。
+账号体系与服务端第一期（账号与邮件）、第二期（画布、素材、生成记录与媒体）、第三期（双桶点数、充值订单与支付回调、档位与存储配额、模型目录与限时折扣、保留期清理、账号注销、管理后台）、第四期（AI 转发：报价预扣与失败退还、平台渠道加密与故障转移、异步视频任务、SSE 对话、删除浏览器直连与自定义脚本）已实现，服务放在本仓库的 `server/` 目录，由于它会和 `web/` 共用登录态、数据分发、存储和部署决策，没有必要一开始拆成独立仓库。最终形态预计使用 Docker Compose 管理 Web、API、数据库以及对象存储的连接。
 
 生产环境只从经过审查和验证的 `origin/main` 提交，或从该提交创建的版本 tag 部署。不要直接部署 `upstream/main` 或 `codex/account-backend-plan`。当前仓库主要仍是静态 Web 应用，Docker 静态资源路径尚需最终验证，暂不把生产部署描述为完全验证通过。
 
@@ -93,6 +93,12 @@ git push origin codex/account-backend-plan
 **部署方式**：仓库根目录提供 `deploy.sh`，测试与正式用不同 compose 项目名（`infinite-canvas-test` / `infinite-canvas-prod`），容器、网络与命名卷（数据库、媒体）自动隔离；测试环境额外用 `deploy/compose.test.yml` 把对外端口错开到 3100。环境变量文件放 `deploy/env.test`、`deploy/env.prod`（已在 `.gitignore` 中，仓库只保留 `.example` 模板），域名与证书由主机上的反向代理处理，前端与接口同源、由容器内 nginx 反代 `/api`，因此不引入 CORS。
 
 **前端环境标识**：容器入口脚本会把 `SITE_ENV` 与 `API_BASE_URL` 注入 `config.js`。`SITE_ENV` 不是 `production` 时，页面顶栏显示环境标识（如「测试环境」），避免在测试站上误当成正式站操作；`API_BASE_URL` 留空表示同源 `/api`，只有前后端分开部署时才填。
+
+**支付渠道**：第三期起服务端支持支付宝与微信，两组变量都留空时充值页不出现任何渠道，配置了就必须完整（否则 api 启动失败）。支付宝需要 `ALIPAY_APP_ID`、`ALIPAY_PRIVATE_KEY`、`ALIPAY_PUBLIC_KEY`，微信需要 `WECHATPAY_APP_ID`、`WECHATPAY_MCH_ID`、`WECHATPAY_MCH_SERIAL_NO`、`WECHATPAY_MCH_PRIVATE_KEY`（PEM 文件路径）、`WECHATPAY_API_V3_KEY`（32 字节）。**支付回调地址必须公网可达且能被渠道服务器直接访问**，默认由 `APP_BASE_URL` 推导为 `{APP_BASE_URL}/api/payments/webhook/alipay|wechat`，需要独立域名时用 `PAYMENT_NOTIFY_URL` 覆盖；纯内网部署无法完成支付闭环。`ENTITLEMENT_DAYS`（缺省 30）控制充值默认延长的付费权益天数，`PRICING_PROMOTION_ENABLED` 控制限时折扣总开关。
+
+**AI 转发**：平台渠道（上游地址与 Key）在管理后台 `/api/admin/channels` 配置，Key 用 `CREDENTIAL_MASTER_KEY` 加密落库，接口只返回 `hasKey`；`AI_IMAGE_TIMEOUT`、`AI_AUDIO_TIMEOUT`、`AI_STREAM_TIMEOUT`、`AI_STREAM_IDLE_TIMEOUT`、`AI_VIDEO_TASK_TIMEOUT` 覆盖各能力的超时（缺省 180s / 120s / 600s / 60s / 20m），`AI_ALLOW_PRIVATE_UPSTREAM` 仅本地调试内网上游时开启。反向代理必须为 `/api/ai/` 关闭缓冲（`proxy_buffering off`）并放宽 `proxy_read_timeout`，SSE 的验收必须在 nginx 后面做，直连 8080 测不出问题。
+
+**内容审核**：第五期起支持站内生成与上传链路审核。`MODERATION_ENABLED=true` 时 `MODERATION_FAIL_MODE` 必须显式配置（`reject` 为公开运营默认，`allow` 仅供私有化部署方明确选择），未配置会导致 api 启动失败。真实方案 `MODERATION_PROVIDER=nsfwjs+detoxify` 需要把 NSFWJS（Node + TF.js）与 Detoxify（Python）两个推理 sidecar 部署在同一 compose 内网，只监听内网、不经 nginx 暴露；视频审核还要求 api 容器内有 `ffmpeg`。测试环境可先用 `MODERATION_PROVIDER=fake`，并可用 `MODERATION_FAKE_REJECT_TEXTS` 触发拒绝联调。隔离原件按 `MODERATION_QUARANTINE_TTL`（默认 24 小时）自动删除，仅管理员可短期预览。
 
 **数据隔离要求**：`DATABASE_URL`、媒体目录/桶、`JWT_SECRET`、`CREDENTIAL_MASTER_KEY`、管理员账号、`APP_BASE_URL`、`MAIL_DRIVER` 每个环境必须不同。其中 `JWT_SECRET` 与 `CREDENTIAL_MASTER_KEY` **绝不能共用**：共用会让测试环境签发的令牌在正式环境通过校验，等于绕过登录。
 

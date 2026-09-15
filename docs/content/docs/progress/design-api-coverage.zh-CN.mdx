@@ -15,19 +15,19 @@ description: 前端设计稿（design/html）与账号后端规划的接口覆�
 | `account.html` 个人中心 | `/api/me`、`/api/credits/*`、`/api/canvases`、`/api/assets` | 部分覆盖，有冲突 |
 | `pricing.html` 定价 | `/api/credit-packages`、`/api/orders` | **冲突：订阅模型不存在** |
 | `models.html` 模型广场 | `/api/models` | 已覆盖 |
-| `activity.html` 活动中心 | 无 | **缺失：仅折扣活动有接口** |
-| `community.html` 社区 | 无 | **缺失：整套社区接口未规划** |
+| `activity.html` 活动中心 | `/api/activity/*` | 已覆盖（签到与邀请返利） |
+| `community.html` 社区 | `/api/community/*`、`/api/admin/community/*` | 已覆盖 |
 | `prompts.html` 提示词库 | 现有 `fetchPrompts`（第三方源） | 已覆盖（现状可用） |
 | `assets.html` 我的素材 | `/api/assets`、`/api/media/*` | 已覆盖 |
 | `image-workbench.html` / `video-workbench.html` | `/api/ai/*`、`/api/generations` | 已覆盖（第四期） |
 | `config.html` 配置页 | — | **冲突：用户自配 Key 将被移除** |
-| `admin.html` 后台总览 | `/api/admin/stats` | 部分覆盖（缺收入指标） |
+| `admin.html` 后台总览 | `/api/admin/stats`、`/api/admin/stats/revenue` | 已覆盖 |
 | `admin-users.html` 用户管理 | `/api/admin/users*` | 已覆盖 |
 | `admin-billing.html` 订单与收入 | `/api/admin/orders` | **冲突：规划明确不支持退款** |
-| `admin-content.html` 内容管理 | `/api/admin/moderation/*` | 部分覆盖，社区/活动部分缺失 |
+| `admin-content.html` 内容管理 | `/api/admin/moderation/*`、`/api/admin/community/*` | 已覆盖（审核、社区作品与举报） |
 | `admin-models.html` 模型与渠道 | `/api/admin/models`、`/api/admin/channels` | 已覆盖 |
 | `admin-docs-mgr.html` 文档管理 | 无 | **缺失：文档 CMS 未规划** |
-| `admin-system.html` 系统设置 | 无 | **缺失：站点设置类接口未规划** |
+| `admin-system.html` 系统设置 | `/api/admin/settings`、`/api/admin/admins`、`/api/admin/audit-logs` | 已覆盖（站点设置、管理员管理与审计） |
 
 ## 冲突项：设计稿与规划矛盾，需改设计稿
 
@@ -71,5 +71,6 @@ description: 前端设计稿（design/html）与账号后端规划的接口覆�
 ## 建议处理顺序
 
 1. ~~先改三处冲突设计稿（配置页、定价/订阅、退款）~~ 已完成。
-2. 社区与运营活动是否做、做到什么程度，需要先做需求决策再补接口规划——不建议先写接口。
-3. 系统设置、管理员管理、OAuth、2FA、设备管理按第五期之后的排期逐期补规划；文档 CMS 建议评估后直接砍掉。
+2. ~~社区与运营活动~~ 已交付（社区复用 `assets` 与媒体/审核链路，签到与邀请返利只进 `granted` 桶；创作比赛未做）。
+3. ~~系统设置与管理员管理~~ 已交付（含审计日志与后台收入指标）。
+4. 仍未做：OAuth 第三方登录、两步验证与登录设备管理、验证码登录、创作比赛、文档 CMS。前四项需要先定安全与产品口径（OAuth 需要 Client ID/Secret，2FA 需要恢复码策略，验证码登录需要防刷），文档 CMS 建议评估后直接砍掉。
