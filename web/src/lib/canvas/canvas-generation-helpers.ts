@@ -1,4 +1,6 @@
-import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelConstraints, resolveModelForCapability } from "@/stores/use-model-catalog-store";
+import { constraintValues } from "@/lib/model-constraints";
 import i18n from "@/i18n";
 import { mediaUrl } from "@/services/api/media";
 import { referenceUrl } from "@/lib/canvas/canvas-node-factory";
@@ -77,15 +79,26 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 }
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
+    const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
+    const model = resolveModelForCapability(node?.metadata?.model, mode, defaultModel);
+    const constraints = modelConstraints(model);
+    const legalSizes = [...constraintValues(constraints?.size), ...constraintValues(constraints?.ratio)];
+    const legalResolutions = constraintValues(constraints?.resolution);
+    const legalDurations = constraintValues(constraints?.duration);
+    const maxCount = constraints?.n?.max && constraints.n.max > 0 ? constraints.n.max : undefined;
+    const size = node?.metadata?.size || config.size || defaultConfig.size;
+    const vquality = node?.metadata?.vquality || config.vquality || defaultConfig.vquality;
+    const videoSeconds = node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds;
+    const count = String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count);
     return {
         ...config,
-        model: resolveModelForCapability(config, node?.metadata?.model, mode),
+        model,
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
-        size: node?.metadata?.size || config.size || defaultConfig.size,
+        size: legalSizes.length && !legalSizes.includes(size) ? legalSizes[0] : size,
         background: node?.metadata?.background ?? config.background ?? defaultConfig.background,
-        videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
+        videoSeconds: legalDurations.length && !legalDurations.includes(videoSeconds) ? legalDurations[0] : videoSeconds,
+        vquality: legalResolutions.length && !legalResolutions.includes(vquality) ? legalResolutions[0] : vquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
         videoMode: node?.metadata?.videoMode || config.videoMode || defaultConfig.videoMode,
@@ -93,7 +106,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
-        count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
+        count: maxCount ? String(Math.min(maxCount, Math.max(1, Math.floor(Math.abs(Number(count)) || 1)))) : count,
     };
 }
 
@@ -156,7 +169,12 @@ export function isAudioFile(file: File) {
 }
 
 export function buildAngleLabel(params: CanvasImageAngleParams) {
-    const horizontal = params.horizontalAngle === 0 ? i18n.t("canvas.generation.front") : params.horizontalAngle > 0 ? i18n.t("canvas.generation.rotateRight", { angle: params.horizontalAngle }) : i18n.t("canvas.generation.rotateLeft", { angle: Math.abs(params.horizontalAngle) });
+    const horizontal =
+        params.horizontalAngle === 0
+            ? i18n.t("canvas.generation.front")
+            : params.horizontalAngle > 0
+              ? i18n.t("canvas.generation.rotateRight", { angle: params.horizontalAngle })
+              : i18n.t("canvas.generation.rotateLeft", { angle: Math.abs(params.horizontalAngle) });
     const pitch = params.pitchAngle === 0 ? i18n.t("canvas.generation.level") : params.pitchAngle > 0 ? i18n.t("canvas.generation.topDown", { angle: params.pitchAngle }) : i18n.t("canvas.generation.lowAngle", { angle: Math.abs(params.pitchAngle) });
     return i18n.t("canvas.generation.angleLabel", { horizontal, pitch, distance: params.cameraDistance.toFixed(1), lens: i18n.t(params.wideAngle ? "canvas.editors.wide" : "canvas.editors.standard") });
 }

@@ -1,29 +1,28 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Cpu } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import i18n from "@/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { estimateModelPoints, useModelOptions } from "@/hooks/use-model-catalog";
 import { cn } from "@/lib/utils";
-import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import type { CatalogModel, ModelCapability } from "@/services/api/catalog";
 
 type ModelPickerProps = {
-    config: AiConfig;
     value?: string;
     onChange: (model: string) => void;
     capability?: ModelCapability;
     className?: string;
     fullWidth?: boolean;
     placeholder?: string;
-    onMissingConfig?: () => void;
 };
 
-export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder, onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ value, onChange, capability, className, fullWidth = false, placeholder }: ModelPickerProps) {
     const { t } = useTranslation();
     const pickerId = useId();
     const [open, setOpen] = useState(false);
-    const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
+    const options = useModelOptions(capability);
     const current = value || "";
+    const currentModel = options.find((model) => model.id === current);
     const pickerPlaceholder = placeholder || t("settingsPanels.model.select");
 
     useEffect(() => {
@@ -39,7 +38,6 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             open={open}
             value={current}
             onOpenChange={(nextOpen) => {
-                if (nextOpen && !options.length && config.channelMode === "local") onMissingConfig?.();
                 if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
                 setOpen(nextOpen);
             }}
@@ -54,10 +52,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 )}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
-                title={current ? modelOptionLabel(config, current) : pickerPlaceholder}
+                title={currentModel ? modelLabel(currentModel) : pickerPlaceholder}
             >
-                <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : pickerPlaceholder}</span>
+                <ModelIcon model={currentModel} />
+                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{currentModel ? modelLabel(currentModel) : pickerPlaceholder}</span>
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
@@ -71,13 +69,17 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             >
                 {options.length ? (
                     options.map((model) => (
-                        <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model)}>
-                            <ModelLabel config={config} model={model} />
+                        <SelectItem key={model.id} value={model.id} textValue={modelLabel(model)}>
+                            <span className="flex min-w-0 flex-1 items-center gap-2">
+                                <ModelIcon model={model} />
+                                <span className="min-w-0 flex-1 truncate">{model.displayName || model.id}</span>
+                                <ModelPoints model={model} />
+                            </span>
                         </SelectItem>
                     ))
                 ) : (
                     <SelectItem value="__empty__" disabled>
-                        {emptyModelLabel(config, capability)}
+                        {t("settingsPanels.model.empty")}
                     </SelectItem>
                 )}
             </SelectContent>
@@ -85,23 +87,20 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     );
 }
 
-function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
-    const label = capability ? i18n.t(`settingsPanels.model.capabilities.${capability}`) : "";
-    if (capability && config.models.length) return i18n.t("settingsPanels.model.assign", { capability: label });
-    return config.models.length ? i18n.t("settingsPanels.model.noMatch", { capability: label }) : i18n.t("settingsPanels.model.addFirst");
+function modelLabel(model: CatalogModel) {
+    return model.displayName || model.id;
 }
 
-function ModelLabel({ config, model }: { config: AiConfig; model: string }) {
-    return (
-        <span className="flex min-w-0 items-center gap-2">
-            <ModelIcon model={model} />
-            <span className="truncate">{modelOptionLabel(config, model)}</span>
-        </span>
-    );
+function ModelPoints({ model }: { model: CatalogModel }) {
+    const { t } = useTranslation();
+    const points = estimateModelPoints(model);
+    if (typeof points !== "number" || !Number.isFinite(points)) return null;
+    return <span className="shrink-0 text-xs text-muted-foreground">{t("settingsPanels.model.points", { points: Math.round(points).toLocaleString() })}</span>;
 }
 
-function ModelIcon({ model }: { model: string }) {
-    const icon = resolveModelIcon(modelOptionName(model));
+function ModelIcon({ model }: { model?: CatalogModel }) {
+    if (!model) return <Cpu className="size-4 shrink-0 opacity-70" />;
+    const icon = resolveModelIcon(`${model.id} ${model.provider}`);
     return icon ? <img src={icon} alt="" className="size-4 shrink-0 dark:invert" /> : <Cpu className="size-4 shrink-0 opacity-70" />;
 }
 
@@ -110,8 +109,8 @@ function resolveModelIcon(model: string) {
     if (name.includes("claude") || name.includes("anthropic")) return "/icons/claude.svg";
     if (name.includes("gemini") || name.includes("google")) return "/icons/gemini.svg";
     if (name.includes("gpt") || name.includes("openai")) return "/icons/openai.svg";
-    if (name.includes("grok") || name.includes("grok")) return "/icons/grok.svg";
-    if (name.includes("deepseek") || name.includes("deepseek")) return "/icons/deepseek.svg";
-    if (name.includes("glm") || name.includes("glm")) return "/icons/glm.svg";
+    if (name.includes("grok")) return "/icons/grok.svg";
+    if (name.includes("deepseek")) return "/icons/deepseek.svg";
+    if (name.includes("glm")) return "/icons/glm.svg";
     return "";
 }

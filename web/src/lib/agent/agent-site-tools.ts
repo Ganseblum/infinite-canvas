@@ -6,27 +6,16 @@ import { createAsset, listAssets as listAssetItems } from "@/services/api/assets
 import { listCanvases } from "@/services/api/canvas";
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/media-ingest";
-import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
-import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
+import { constraintOptions, constraintValues } from "@/lib/model-constraints";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
-import { clampVideoSeconds } from "@/lib/media-size";
-import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
+import { catalogModelsFor, ensureModelCatalogLoaded, modelConstraints, resolveModelForCapability } from "@/stores/use-model-catalog-store";
+import { modelOptionLabel, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
 // Execute site-level Agent tools in the browser: canvas lists, workbench generation, prompt search, and asset operations.
 // Canvas and asset data now live on the server, so these tools call the resource clients directly.
 
-export const SITE_TOOL_NAMES = [
-    "canvas_list_projects",
-    "generation_get_status",
-    "workbench_image_get_config",
-    "workbench_image_generate",
-    "workbench_video_get_config",
-    "workbench_video_generate",
-    "prompts_search",
-    "assets_list",
-    "assets_add",
-] as const;
+export const SITE_TOOL_NAMES = ["canvas_list_projects", "generation_get_status", "workbench_image_get_config", "workbench_image_generate", "workbench_video_get_config", "workbench_video_generate", "prompts_search", "assets_list", "assets_add"] as const;
 
 export type SiteToolName = (typeof SITE_TOOL_NAMES)[number];
 
@@ -39,21 +28,52 @@ function siteText(key: string, options?: Record<string, unknown>) {
 }
 
 export const SITE_TOOL_LABELS: Record<SiteToolName, string> = {
-    get canvas_list_projects() { return siteText("canvasList"); },
-    get generation_get_status() { return siteText("generationStatus"); },
-    get workbench_image_get_config() { return siteText("imageConfig"); },
-    get workbench_image_generate() { return siteText("imageGenerate"); },
-    get workbench_video_get_config() { return siteText("videoConfig"); },
-    get workbench_video_generate() { return siteText("videoGenerate"); },
-    get prompts_search() { return siteText("promptSearch"); },
-    get assets_list() { return siteText("assetList"); },
-    get assets_add() { return siteText("assetAdd"); },
+    get canvas_list_projects() {
+        return siteText("canvasList");
+    },
+    get generation_get_status() {
+        return siteText("generationStatus");
+    },
+    get workbench_image_get_config() {
+        return siteText("imageConfig");
+    },
+    get workbench_image_generate() {
+        return siteText("imageGenerate");
+    },
+    get workbench_video_get_config() {
+        return siteText("videoConfig");
+    },
+    get workbench_video_generate() {
+        return siteText("videoGenerate");
+    },
+    get prompts_search() {
+        return siteText("promptSearch");
+    },
+    get assets_list() {
+        return siteText("assetList");
+    },
+    get assets_add() {
+        return siteText("assetAdd");
+    },
 };
 
 type SiteToolInput = Record<string, unknown>;
 type SiteToolContext = { canvasSnapshot?: CanvasAgentSnapshot | null };
 type GenerationStatus = "idle" | "queued" | "running" | "succeeded" | "failed";
-type GenerationStatusItem = { id: string; source: "canvas" | "image" | "video"; status: GenerationStatus; kind?: string; title?: string; prompt?: string; projectId?: string; createdAt?: string; updatedAt?: string; successCount?: number; failCount?: number; error?: string };
+type GenerationStatusItem = {
+    id: string;
+    source: "canvas" | "image" | "video";
+    status: GenerationStatus;
+    kind?: string;
+    title?: string;
+    prompt?: string;
+    projectId?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    successCount?: number;
+    failCount?: number;
+    error?: string;
+};
 
 export async function runSiteTool(name: SiteToolName, input: SiteToolInput, navigate: NavigateFunction, context: SiteToolContext = {}): Promise<unknown> {
     switch (name) {
@@ -95,7 +115,16 @@ function getGenerationStatus(input: SiteToolInput, canvasSnapshot?: CanvasAgentS
             if (!status || (nodeIds.size && !nodeIds.has(node.id))) return;
             const metadata = node.metadata || {};
             if (!nodeIds.size && node.type !== "config" && status !== "running" && status !== "failed" && !metadata.generationMode && !metadata.generationType && !metadata.model) return;
-            tasks.push({ id: node.id, source: "canvas", status, kind: metadata.generationMode || node.type, title: node.title, prompt: compactPrompt(metadata.prompt || metadata.composerContent), projectId: canvasSnapshot.projectId, error: metadata.errorDetails });
+            tasks.push({
+                id: node.id,
+                source: "canvas",
+                status,
+                kind: metadata.generationMode || node.type,
+                title: node.title,
+                prompt: compactPrompt(metadata.prompt || metadata.composerContent),
+                projectId: canvasSnapshot.projectId,
+                error: metadata.errorDetails,
+            });
         });
     }
 
@@ -145,25 +174,30 @@ async function listCanvasProjects(input: SiteToolInput) {
 }
 
 function getImageConfig() {
+    ensureModelCatalogLoaded();
     const { config } = useConfigStore.getState();
-    const model = config.imageModel || config.model;
+    const model = resolveModelForCapability(config.imageModel || config.model, "image", config.imageModel);
+    const constraints = modelConstraints(model);
     return {
-        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
-        models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        qualityOptions: imageQualityOptions,
-        scaleOptions: imageScaleOptions,
-        sizeOptions: imageAspectOptions,
-        countRange: { min: 1, max: 15 },
+        current: { model, modelName: modelOptionLabel(config, model), quality: config.quality || "auto", size: config.size || "", count: config.count || "1" },
+        models: catalogModelsFor("image").map((item) => ({ value: item.id, label: item.displayName || item.id })),
+        qualityOptions: constraintOptions(constraints?.quality),
+        sizeOptions: constraintOptions(constraints?.size),
+        ratioOptions: constraintOptions(constraints?.ratio),
+        countRange: { min: 1, max: constraints?.n?.max || 15 },
     };
 }
 
 function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
+    ensureModelCatalogLoaded();
     if (typeof input.model === "string" && input.model.trim()) {
-        const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
-        configStore.updateConfig("imageModel", value);
-        applied.model = value;
+        const value = catalogModelsFor("image").some((item) => item.id === input.model) ? input.model : catalogModelsFor("image")[0]?.id;
+        if (value) {
+            configStore.updateConfig("imageModel", value);
+            applied.model = value;
+        }
     }
     if (typeof input.quality === "string" && input.quality.trim()) {
         configStore.updateConfig("quality", input.quality);
@@ -186,23 +220,25 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
 }
 
 function getVideoConfig() {
+    ensureModelCatalogLoaded();
     const { config } = useConfigStore.getState();
-    const model = config.videoModel || config.model;
+    const model = resolveModelForCapability(config.videoModel || config.model, "video", config.videoModel);
+    const constraints = modelConstraints(model);
     return {
         current: {
             model,
-            modelName: modelOptionName(model),
-            size: config.size || "1280x720",
+            modelName: modelOptionLabel(config, model),
+            size: config.size || "",
             seconds: config.videoSeconds || "6",
-            resolution: config.vquality || "720",
+            resolution: config.vquality || "720p",
             generateAudio: config.videoGenerateAudio !== "false",
             watermark: config.videoWatermark === "true",
             mode: config.videoMode === "reference" ? "reference" : "frames",
         },
-        models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        sizeOptions: videoSizeOptions,
-        secondsRange: videoSecondsRange,
-        resolutionOptions: videoResolutionOptions,
+        models: catalogModelsFor("video").map((item) => ({ value: item.id, label: item.displayName || item.id })),
+        ratioOptions: constraintOptions(constraints?.ratio),
+        durationOptions: constraintValues(constraints?.duration),
+        resolutionOptions: constraintOptions(constraints?.resolution),
         modeOptions: [
             { value: "frames", label: i18n.t("settingsPanels.video.modes.frames") },
             { value: "reference", label: i18n.t("settingsPanels.video.modes.reference") },
@@ -213,17 +249,20 @@ function getVideoConfig() {
 function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
+    ensureModelCatalogLoaded();
     if (typeof input.model === "string" && input.model.trim()) {
-        const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
-        configStore.updateConfig("videoModel", value);
-        applied.model = value;
+        const value = catalogModelsFor("video").some((item) => item.id === input.model) ? input.model : catalogModelsFor("video")[0]?.id;
+        if (value) {
+            configStore.updateConfig("videoModel", value);
+            applied.model = value;
+        }
     }
     if (typeof input.size === "string" && input.size.trim()) {
         configStore.updateConfig("size", input.size);
         applied.size = input.size;
     }
     if (input.seconds != null && String(input.seconds).trim()) {
-        const seconds = clampVideoSeconds(String(input.seconds));
+        const seconds = String(Math.floor(Number(input.seconds)) || 6);
         configStore.updateConfig("videoSeconds", seconds);
         applied.seconds = seconds;
     }
@@ -305,7 +344,14 @@ async function addAsset(input: SiteToolInput) {
         } catch {
             throw new Error(siteText("imageReadFailed"));
         }
-        const asset = await createAsset({ kind: "image", title, tags, storageKey: stored.storageKey, bytes: stored.bytes, data: { url: stored.storageKey ? undefined : stored.url, width: stored.width, height: stored.height, mimeType: stored.mimeType, source } });
+        const asset = await createAsset({
+            kind: "image",
+            title,
+            tags,
+            storageKey: stored.storageKey,
+            bytes: stored.bytes,
+            data: { url: stored.storageKey ? undefined : stored.url, width: stored.width, height: stored.height, mimeType: stored.mimeType, source },
+        });
         return { ok: true, id: asset.id, kind: "image" };
     }
     throw new Error(siteText("assetKindUnsupported"));

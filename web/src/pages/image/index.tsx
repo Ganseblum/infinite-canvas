@@ -11,13 +11,17 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useResolvedModel } from "@/hooks/use-model-catalog";
+import { modelSupportsFeature } from "@/lib/model-constraints";
+import { useAiGenerationError } from "@/hooks/use-ai-generation-error";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration } from "@/services/api/image";
+import { getApiErrorMessage } from "@/lib/api-error";
 import { uploadImage } from "@/services/media-ingest";
 import { useAddAsset } from "@/hooks/use-asset-library";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
 import { mediaUrl } from "@/services/api/media";
 import type { GenerationItem } from "@/services/data/types";
@@ -77,8 +81,8 @@ export default function ImagePage() {
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
-    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const queryClient = useQueryClient();
+    const { handleAiError, retryAfterSeconds } = useAiGenerationError();
     const addAsset = useAddAsset();
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
@@ -110,7 +114,8 @@ export default function ImagePage() {
     });
     const logs = useMemo(() => logsQuery.data?.pages.flatMap((page) => page.items.map(toGenerationLog)) || [], [logsQuery.data]);
 
-    const model = effectiveConfig.imageModel || effectiveConfig.model;
+    const model = useResolvedModel(effectiveConfig.imageModel || effectiveConfig.model, "image");
+    const supportsReferenceImage = modelSupportsFeature(model, "referenceImage");
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
 
@@ -161,10 +166,9 @@ export default function ImagePage() {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: t("imageWorkbench.promptRequired") });
             return;
         }
-        if (!isAiConfigReady(effectiveConfig, model)) {
-            message.warning(t("workbench.configFirst"));
-            openConfigDialog(true);
-            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: t("imageWorkbench.configIncomplete") });
+        if (!model) {
+            message.warning(t("settingsPanels.model.empty"));
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: t("settingsPanels.model.empty") });
             return;
         }
 
@@ -189,12 +193,15 @@ export default function ImagePage() {
         const successCount = successImages.length;
         const failCount = generationCount - successCount;
         const failed = result.find((item): item is PromiseRejectedResult => item.status === "rejected");
-        const error = failed?.reason instanceof Error ? failed.reason.message : failCount ? t("workbench.generationFailed") : undefined;
+        const error = failed ? getApiErrorMessage(failed.reason) : failCount ? t("workbench.generationFailed") : undefined;
         if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
 
         try {
-            // 生成记录只由服务端在第四期接力写入，这里不再本地落库。
-            successCount ? message.success(t("imageWorkbench.generated")) : message.error(failed?.reason instanceof Error ? failed.reason.message : t("workbench.generationFailed"));
+            // 生成记录只由服务端写入，这里只刷新余额与生成历史。
+            void queryClient.invalidateQueries({ queryKey: ["me"] });
+            void queryClient.invalidateQueries({ queryKey: ["generations", { kind: "image" }] });
+            if (successCount) message.success(t("imageWorkbench.generated"));
+            else if (failed) handleAiError(failed.reason);
         } finally {
             setRunning(false);
         }
@@ -226,20 +233,18 @@ export default function ImagePage() {
         saveAs(image.dataUrl, `image-${index + 1}.png`);
     };
 
-    const addResultToReferences = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
-        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+    const addResultToReferences = (image: GeneratedImage, index: number) => {
+        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: image.mimeType || "image/png", dataUrl: image.dataUrl, storageKey: image.storageKey }]);
         message.success(t("imageWorkbench.addedReference"));
     };
 
-    const saveResultToAssets = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
+    const saveResultToAssets = (image: GeneratedImage, index: number) => {
         addAsset.mutate({
             kind: "image",
             title: t("imageWorkbench.resultTitle", { count: index + 1 }),
-            storageKey: stored.storageKey,
-            bytes: stored.bytes,
-            data: { url: stored.storageKey ? undefined : stored.url, width: stored.width, height: stored.height, mimeType: stored.mimeType, source: t("imageWorkbench.source"), prompt },
+            storageKey: image.storageKey,
+            bytes: image.bytes,
+            data: { url: undefined, width: image.width, height: image.height, mimeType: image.mimeType, source: t("imageWorkbench.source"), prompt },
         });
     };
 
@@ -293,9 +298,8 @@ export default function ImagePage() {
             message.error(t("imageWorkbench.promptRequired"));
             return null;
         }
-        if (!isAiConfigReady(effectiveConfig, model)) {
-            message.warning(t("workbench.configFirst"));
-            openConfigDialog(true);
+        if (!model) {
+            message.warning(t("settingsPanels.model.empty"));
             return null;
         }
         return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
@@ -307,12 +311,11 @@ export default function ImagePage() {
             const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
-            const stored = await uploadImage(image.dataUrl);
-            const nextImage: GeneratedImage = { id: image.id, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            const nextImage: GeneratedImage = { ...image, durationMs: performance.now() - itemStartedAt };
             setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
             return nextImage;
         } catch (error) {
-            setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : t("workbench.generationFailed") }));
+            setResults((value) => updateResultAt(value, index, { status: "failed", error: getApiErrorMessage(error) }));
             throw error;
         }
     };
@@ -382,64 +385,66 @@ export default function ImagePage() {
                                 <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder={t("imageWorkbench.promptPlaceholder")} />
                             </div>
 
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("imageWorkbench.references")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            {t("workbench.clipboard")}
-                                        </Button>
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            {t("workbench.upload")}
-                                        </Button>
+                            {supportsReferenceImage ? (
+                                <div className="min-w-0">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                        <span className="text-base font-semibold">{t("imageWorkbench.references")}</span>
+                                        <div className="flex gap-2">
+                                            <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
+                                                {t("workbench.clipboard")}
+                                            </Button>
+                                            <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                                {t("workbench.upload")}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        className={`hover-scrollbar hover-scrollbar-hint relative flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${isReferenceDragActive ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                        onDragEnter={(event) => {
+                                            event.preventDefault();
+                                            dragDepthRef.current += 1;
+                                            if (event.dataTransfer.types.includes("Files")) setIsReferenceDragActive(true);
+                                        }}
+                                        onDragOver={(event) => {
+                                            event.preventDefault();
+                                            event.dataTransfer.dropEffect = "copy";
+                                        }}
+                                        onDragLeave={(event) => {
+                                            event.preventDefault();
+                                            dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+                                            if (!dragDepthRef.current) setIsReferenceDragActive(false);
+                                        }}
+                                        onDrop={(event) => {
+                                            event.preventDefault();
+                                            dragDepthRef.current = 0;
+                                            setIsReferenceDragActive(false);
+                                            void addReferences(event.dataTransfer.files);
+                                        }}
+                                        onWheel={(event) => {
+                                            if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
+                                            event.preventDefault();
+                                            event.currentTarget.scrollLeft += event.deltaY;
+                                        }}
+                                    >
+                                        {references.map((item, index) => (
+                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
+                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                                <button
+                                                    type="button"
+                                                    className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
+                                                    onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                    aria-label={t("imageWorkbench.removeReference")}
+                                                >
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? t("imageWorkbench.dropReferences") : t("imageWorkbench.noReferences")}</div> : null}
                                     </div>
                                 </div>
-                                <div
-                                    className={`hover-scrollbar hover-scrollbar-hint relative flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${isReferenceDragActive ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
-                                    onDragEnter={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current += 1;
-                                        if (event.dataTransfer.types.includes("Files")) setIsReferenceDragActive(true);
-                                    }}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "copy";
-                                    }}
-                                    onDragLeave={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-                                        if (!dragDepthRef.current) setIsReferenceDragActive(false);
-                                    }}
-                                    onDrop={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current = 0;
-                                        setIsReferenceDragActive(false);
-                                        void addReferences(event.dataTransfer.files);
-                                    }}
-                                    onWheel={(event) => {
-                                        if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
-                                        event.preventDefault();
-                                        event.currentTarget.scrollLeft += event.deltaY;
-                                    }}
-                                >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button
-                                                type="button"
-                                                className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
-                                                onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                aria-label={t("imageWorkbench.removeReference")}
-                                            >
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? t("imageWorkbench.dropReferences") : t("imageWorkbench.noReferences")}</div> : null}
-                                </div>
-                            </div>
+                            ) : null}
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
@@ -451,12 +456,20 @@ export default function ImagePage() {
                             </div>
 
                             <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} />
                             </div>
                         </div>
 
                         <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
+                            <Button
+                                type="primary"
+                                size="large"
+                                block
+                                icon={<Sparkles className="size-4" />}
+                                loading={running}
+                                disabled={!canGenerate || running || retryAfterSeconds > 0}
+                                onClick={() => void generate()}
+                            >
                                 {t("workbench.generate")}
                             </Button>
                         </div>
@@ -517,7 +530,7 @@ export default function ImagePage() {
             </Drawer>
             <Drawer title={t("workbench.settings")} placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
@@ -529,7 +542,7 @@ export default function ImagePage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, model, updateConfig }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
 
@@ -537,10 +550,10 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
         <>
             <label className="col-span-2 block min-w-0 sm:col-span-1">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                <ModelPicker value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth />
             </label>
             <div className="col-span-2">
-                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+                <ImageSettingsPanel config={{ ...config, model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
             </div>
         </>
     );
@@ -787,7 +800,6 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
         </div>
     );
 }
-
 
 function toGenerationLog(item: GenerationItem): GenerationLog {
     const result = (item.result || {}) as Partial<Pick<GenerationLog, "title" | "time" | "references" | "successCount" | "failCount" | "imageCount" | "size" | "quality" | "images">>;

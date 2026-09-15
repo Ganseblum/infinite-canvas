@@ -4,7 +4,8 @@ import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { resolveModelForCapability } from "@/stores/use-model-catalog-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -35,10 +36,23 @@ type CanvasNodePromptPanelProps = {
     modeOverride?: CanvasNodeGenerationMode; // Plugin nodes set their generation type through useBuiltinPanel.mode.
 };
 
-export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], connectedNodes = [], onDisconnectReference, onStartReferenceSelection, onImageSettingsOpenChange, modeOverride }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({
+    node,
+    nodes,
+    isRunning,
+    onPromptChange,
+    onConfigChange,
+    onGenerate,
+    onStop,
+    mentionReferences = [],
+    connectedNodes = [],
+    onDisconnectReference,
+    onStartReferenceSelection,
+    onImageSettingsOpenChange,
+    modeOverride,
+}: CanvasNodePromptPanelProps) {
     const { t } = useTranslation();
     const globalConfig = useEffectiveConfig();
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = modeOverride ?? defaultMode(node.type);
     const config = buildNodeConfig(globalConfig, node, mode);
@@ -93,35 +107,46 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                     <Tooltip title={t("canvas.promptPanel.expandEditor")}>
-                        <Button type="text" className="!h-8 !w-8 !min-w-8 shrink-0 !rounded-full !bg-transparent !p-0" style={{ color: theme.node.text }} icon={<Maximize2 className="size-3.5" />} onClick={openExpandedEditor} aria-label={t("canvas.promptPanel.expandEditor")} />
+                        <Button
+                            type="text"
+                            className="!h-8 !w-8 !min-w-8 shrink-0 !rounded-full !bg-transparent !p-0"
+                            style={{ color: theme.node.text }}
+                            icon={<Maximize2 className="size-3.5" />}
+                            onClick={openExpandedEditor}
+                            aria-label={t("canvas.promptPanel.expandEditor")}
+                        />
                     </Tooltip>
                     <CanvasPromptLibrary onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
+                            <ModelPicker value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" className="max-w-[190px]" />
                             <CanvasImageSettingsPopover
                                 config={config}
                                 placement="topLeft"
                                 buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
-                                onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
                         </>
                     ) : mode === "video" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
+                            <ModelPicker value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" className="max-w-[190px]" />
                             <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[220px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                         </>
                     ) : mode === "audio" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="audio" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
+                            <ModelPicker value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="audio" className="max-w-[190px]" />
                             <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                         </>
                     ) : (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="text" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
-                            <CanvasTextSettingsPopover config={config} count={node.metadata?.textCount || 1} onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })} onCountChange={(textCount) => onConfigChange(node.id, { textCount })} />
+                            <ModelPicker value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="text" className="max-w-[190px]" />
+                            <CanvasTextSettingsPopover
+                                config={config}
+                                count={node.metadata?.textCount || 1}
+                                onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })}
+                                onCountChange={(textCount) => onConfigChange(node.id, { textCount })}
+                            />
                         </>
                     )}
                 </div>
@@ -148,7 +173,16 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
             </div>
             <Modal title={t("canvas.promptPanel.editorTitle")} open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>
-                    <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />
+                    <CanvasNodeReferenceBar
+                        nodeId={node.id}
+                        nodes={nodes}
+                        connectedNodes={connectedNodes}
+                        onDisconnect={onDisconnectReference}
+                        onStartSelection={(nodeId) => {
+                            setExpanded(false);
+                            onStartReferenceSelection?.(nodeId);
+                        }}
+                    />
                     <CanvasPromptChipInput
                         value={prompt}
                         references={mentionReferences}
@@ -170,7 +204,7 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
     return {
         ...globalConfig,
-        model: resolveModelForCapability(globalConfig, node.metadata?.model, mode),
+        model: resolveModelForCapability(node.metadata?.model, mode, mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel),
         reasoningEffort: node.metadata?.reasoningEffort || globalConfig.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,

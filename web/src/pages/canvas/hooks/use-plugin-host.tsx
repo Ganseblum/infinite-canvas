@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, type Dispatch, type MutableRefObject, 
 import { useTranslation } from "react-i18next";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
-import { imageToDataUrl } from "@/services/media-ingest";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
-import { decodeChannelModel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { requestVideoGeneration } from "@/services/api/video";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { ensurePluginsLoaded } from "@/lib/canvas/plugin-loader";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { catalogModel, isModelCatalogReady, selectableModelsByCapability } from "@/stores/use-model-catalog-store";
+import type { AiConfig, ModelCapability } from "@/stores/use-config-store";
 import type { CanvasNodeToolbarItem, CanvasPluginAi, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
@@ -19,8 +19,6 @@ type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
 type PluginHostParams = {
     effectiveConfig: AiConfig;
-    isAiConfigReady: (config: AiConfig, model: string) => boolean;
-    openConfigDialog: (open: boolean) => void;
     theme: CanvasTheme;
     nodesRef: MutableRefObject<CanvasNodeData[]>;
     connectionsRef: MutableRefObject<CanvasConnection[]>;
@@ -36,18 +34,14 @@ type PluginHostParams = {
  */
 export function usePluginHost(params: PluginHostParams) {
     const { t } = useTranslation();
-    const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodesRef, connectionsRef, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
+    const { effectiveConfig, theme, nodesRef, connectionsRef, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
 
     // Host capabilities available to plugin nodes; methods receive nodeId and are not bound to a specific node.
     const pluginAi = useMemo<CanvasPluginAi>(() => {
         // Convert plugin reference images (data URLs or URLs) into the ReferenceImage[] expected by the host generation API.
         const toReferences = (refs?: string[]): ReferenceImage[] => (refs || []).filter(Boolean).map((src, index) => ({ id: `plugin-ref-${index}`, name: `ref-${index}.png`, type: "image/png", dataUrl: src }));
-        // Open the configuration dialog and throw when AI is not configured, allowing the plugin to handle the error.
         const ensureReady = (config: AiConfig) => {
-            if (!isAiConfigReady(config, config.model)) {
-                openConfigDialog(true);
-                throw new Error(t("canvas.plugins.aiConfigRequired"));
-            }
+            if (!isModelCatalogReady(config.model)) throw new Error(t("canvas.plugins.aiConfigRequired"));
         };
         return {
             generateImage: async (prompt, options) => {
@@ -55,15 +49,7 @@ export function usePluginHost(params: PluginHostParams) {
                 ensureReady(config);
                 const references = toReferences(options?.references);
                 const items = references.length ? await requestEdit(config, prompt, references, { signal: options?.signal }) : await requestGeneration(config, prompt, { signal: options?.signal });
-                const images = await Promise.all(items.map(async (item) => {
-                    try {
-                        return await imageToDataUrl({ dataUrl: item.dataUrl }, { signal: options?.signal });
-                    } catch (error) {
-                        if (options?.signal?.aborted) throw error;
-                        return item.dataUrl;
-                    }
-                }));
-                return { images };
+                return { images: items.map((item) => item.dataUrl) };
             },
             generateVideo: async (prompt, options) => {
                 const config = {
@@ -73,8 +59,8 @@ export function usePluginHost(params: PluginHostParams) {
                     ...(options?.seconds ? { videoSeconds: options.seconds } : {}),
                 };
                 ensureReady(config);
-                const file = await storeGeneratedVideo(await requestVideoGeneration(config, prompt, toReferences(options?.references), { signal: options?.signal }));
-                return { url: file.url, mimeType: file.mimeType, width: file.width, height: file.height, durationMs: file.durationMs };
+                const video = await requestVideoGeneration(config, prompt, toReferences(options?.references), { signal: options?.signal });
+                return { url: video.url, mimeType: video.mimeType, width: video.width, height: video.height, durationMs: video.durationMs };
             },
             generateText: async (prompt, options) => {
                 const config = { ...buildGenerationConfig(effectiveConfig, undefined, "text"), ...(options?.model ? { model: options.model } : {}) };
@@ -83,11 +69,11 @@ export function usePluginHost(params: PluginHostParams) {
                 const text = await requestImageQuestion(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
                 return { text };
             },
-            // List configured models for a capability; labels use the model name without the channel prefix.
-            listModels: (capability) => selectableModelsByCapability(effectiveConfig, capability as ModelCapability | undefined).map((value) => ({ value, label: decodeChannelModel(value)?.model || value })),
+            // List platform catalog models for a capability.
+            listModels: (capability) => selectableModelsByCapability(capability as ModelCapability | undefined).map((value) => ({ value, label: catalogModel(value)?.displayName || value })),
             defaultModel: (capability) => buildGenerationConfig(effectiveConfig, undefined, capability).model,
         };
-    }, [effectiveConfig, isAiConfigReady, openConfigDialog, t]);
+    }, [effectiveConfig, t]);
 
     const pluginHost = useMemo<CanvasPluginHost>(
         () => ({

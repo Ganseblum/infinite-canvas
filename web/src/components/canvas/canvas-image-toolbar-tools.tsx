@@ -3,6 +3,9 @@ import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scis
 
 import type { CanvasNodeData } from "@/types/canvas";
 import i18n from "@/i18n";
+import { modelSupportsFeature } from "@/lib/model-constraints";
+import { resolveModelForCapability } from "@/stores/use-model-catalog-store";
+import { useConfigStore } from "@/stores/use-config-store";
 
 export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
 export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | ImageNodeActionToolId;
@@ -135,14 +138,19 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
 export const defaultImageQuickToolIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.filter((tool) => tool.defaultVisible).map((tool) => tool.id)];
 
 export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageToolHandlers) {
-    return imageToolDefinitions.map((tool) => ({
-        id: tool.id,
-        label: resolveToolText(tool.label, node),
-        title: resolveToolText(tool.title, node),
-        icon: tool.icon(node),
-        active: tool.active?.(node),
-        onClick: () => tool.run(node, handlers),
-    }));
+    // 蒙版入口只在当前生图模型声明 mask 能力时出现。
+    const config = useConfigStore.getState().config;
+    const canEditMask = modelSupportsFeature(resolveModelForCapability(node.metadata?.model, "image", config.imageModel), "mask");
+    return imageToolDefinitions
+        .filter((tool) => tool.id !== "maskEdit" || canEditMask)
+        .map((tool) => ({
+            id: tool.id,
+            label: resolveToolText(tool.label, node),
+            title: resolveToolText(tool.title, node),
+            icon: tool.icon(node),
+            active: tool.active?.(node),
+            onClick: () => tool.run(node, handlers),
+        }));
 }
 
 export function normalizeImageQuickToolIds(value: unknown[]) {

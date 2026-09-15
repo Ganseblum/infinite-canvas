@@ -8,19 +8,23 @@ import { useTranslation } from "react-i18next";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
-import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoSizeLabel } from "@/components/video-settings-panel";
+import { VideoSettingsPanel, videoModeLabel, videoResolutionLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { clampVideoSeconds } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { uploadImage } from "@/services/media-ingest";
-import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { createVideoGenerationTask, waitForVideoGenerationTask, type VideoGenerationTask } from "@/services/api/video";
 import { useAddAsset } from "@/hooks/use-asset-library";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
 import { mediaUrl } from "@/services/api/media";
 import type { GenerationItem } from "@/services/data/types";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useResolvedModel } from "@/hooks/use-model-catalog";
+import { modelSupportsFeature } from "@/lib/model-constraints";
+import { useAiGenerationError } from "@/hooks/use-ai-generation-error";
+import { getApiErrorMessage } from "@/lib/api-error";
+import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
@@ -66,18 +70,16 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vqu
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-
 export default function VideoPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
-    const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
-    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const queryClient = useQueryClient();
+    const { handleAiError, retryAfterSeconds } = useAiGenerationError();
     const addAsset = useAddAsset();
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
@@ -116,7 +118,8 @@ export default function VideoPage() {
         return [...sessionLogs, ...history.filter((log) => !known.has(log.id))];
     }, [logsQuery.data, sessionLogs]);
 
-    const model = effectiveConfig.videoModel || effectiveConfig.model;
+    const model = useResolvedModel(effectiveConfig.videoModel || effectiveConfig.model, "video");
+    const supportsReferenceImage = modelSupportsFeature(model, "referenceImage");
     const canGenerate = Boolean(prompt.trim());
 
     useEffect(() => {
@@ -199,11 +202,12 @@ export default function VideoPage() {
             await saveLog(log);
             void pollGenerationLog(log, snapshot.config, agentTaskId);
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : t("workbench.generationFailed");
+            const errorMessage = getApiErrorMessage(error);
             setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: performance.now() - batchStartedAt, status: "failed", error: errorMessage }));
-            message.error(errorMessage);
+            void queryClient.invalidateQueries({ queryKey: ["me"] });
+            handleAiError(error);
             setRunning(false);
         }
     };
@@ -236,9 +240,8 @@ export default function VideoPage() {
             message.error(t("videoWorkbench.promptRequired"));
             return null;
         }
-        if (!isAiConfigReady(effectiveConfig, model)) {
-            message.warning(t("workbench.configFirst"));
-            openConfigDialog(true);
+        if (!model) {
+            message.warning(t("settingsPanels.model.empty"));
             return null;
         }
         return { text, config: buildVideoConfig(effectiveConfig, model), references: [...references] };
@@ -298,7 +301,8 @@ export default function VideoPage() {
         setSessionLogs((current) => [log, ...current.filter((item) => item.id !== log.id)]);
     };
 
-    // 刷新后服务端仍处于 pending 的视频任务要继续轮询；本期服务端还没有写入方，查到的通常是空列表。
+    // 刷新后服务端仍处于 pending 的视频任务继续轮询：生成记录的 result.task 带 id 与 model，
+    // 服务端后台轮询与这里的页面轮询互不依赖，页面恢复只是为了让用户看到进度。
     useEffect(() => {
         const pending = (pendingQuery.data?.items || []).map(toGenerationLog);
         for (const log of pending) {
@@ -315,36 +319,30 @@ export default function VideoPage() {
         setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
-            for (let attempt = 0; attempt < 120; attempt += 1) {
-                const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
-                if (state.status === "completed") {
-                    const stored = await storeGeneratedVideo(state.result);
-                    const nextVideo: GeneratedVideo = {
-                        id: nanoid(),
-                        url: stored.url,
-                        storageKey: stored.storageKey,
-                        durationMs: Date.now() - log.createdAt,
-                        width: stored.width || 1280,
-                        height: stored.height || 720,
-                        bytes: stored.bytes,
-                        mimeType: stored.mimeType,
-                    };
-                    setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
-                    if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
-                    await saveLog({ ...log, status: "success", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
-                    message.success(t("videoWorkbench.generated"));
-                    return;
-                }
-                if (state.status === "failed") throw new Error(state.error);
-                if (attempt === 119) throw new Error(t("videoWorkbench.timeout"));
-                await delay(2500);
-            }
+            const stored = await waitForVideoGenerationTask(configOverride || taskConfig, log.task);
+            const nextVideo: GeneratedVideo = {
+                id: nanoid(),
+                url: stored.url,
+                storageKey: stored.storageKey,
+                durationMs: Date.now() - log.createdAt,
+                width: stored.width || 1280,
+                height: stored.height || 720,
+                bytes: stored.bytes,
+                mimeType: stored.mimeType,
+            };
+            setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
+            await saveLog({ ...log, status: "success", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
+            void queryClient.invalidateQueries({ queryKey: ["me"] });
+            void queryClient.invalidateQueries({ queryKey: ["generations", { kind: "video" }] });
+            message.success(t("videoWorkbench.generated"));
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : t("workbench.generationFailed");
+            const errorMessage = getApiErrorMessage(error);
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "failed", durationMs: Date.now() - log.createdAt, error: errorMessage });
-            message.error(errorMessage);
+            void queryClient.invalidateQueries({ queryKey: ["me"] });
+            handleAiError(error);
         } finally {
             activeLogIdsRef.current.delete(log.id);
             if (!activeLogIdsRef.current.size) {
@@ -417,45 +415,52 @@ export default function VideoPage() {
                                 <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder={t("videoWorkbench.promptPlaceholder")} />
                             </div>
 
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("videoWorkbench.references")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            {t("workbench.clipboard")}
-                                        </Button>
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            {t("workbench.upload")}
-                                        </Button>
+                            {supportsReferenceImage ? (
+                                <div className="min-w-0">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                        <span className="text-base font-semibold">{t("videoWorkbench.references")}</span>
+                                        <div className="flex gap-2">
+                                            <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
+                                                {t("workbench.clipboard")}
+                                            </Button>
+                                            <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                                {t("workbench.upload")}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                        onDragEnter={handleReferenceDragEnter}
+                                        onDragOver={(event) => {
+                                            event.preventDefault();
+                                            event.dataTransfer.dropEffect = "copy";
+                                        }}
+                                        onDragLeave={handleReferenceDragLeave}
+                                        onDrop={handleReferenceDrop}
+                                    >
+                                        {references.map((item, index) => (
+                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{index + 1}</span>
+                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                                <button
+                                                    type="button"
+                                                    className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
+                                                    onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                    aria-label={t("videoWorkbench.removeImage")}
+                                                >
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget ? t("videoWorkbench.dropReferences") : t("videoWorkbench.noImages")}</div> : null}
                                     </div>
                                 </div>
-                                <div
-                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
-                                    onDragEnter={handleReferenceDragEnter}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "copy";
-                                    }}
-                                    onDragLeave={handleReferenceDragLeave}
-                                    onDrop={handleReferenceDrop}
-                                >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{index + 1}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label={t("videoWorkbench.removeImage")}>
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget ? t("videoWorkbench.dropReferences") : t("videoWorkbench.noImages")}</div> : null}
-                                </div>
-                            </div>
+                            ) : null}
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(effectiveConfig.videoMode)}
+                                    {modelOptionLabel(effectiveConfig, model)} · {videoResolutionLabel(effectiveConfig.vquality)} · {videoSizeLabel(effectiveConfig.size)} · {effectiveConfig.videoSeconds}s · {videoModeLabel(effectiveConfig.videoMode)}
                                 </span>
                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                     {t("workbench.adjust")}
@@ -463,12 +468,20 @@ export default function VideoPage() {
                             </div>
 
                             <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} />
                             </div>
                         </div>
 
                         <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
+                            <Button
+                                type="primary"
+                                size="large"
+                                block
+                                icon={<Sparkles className="size-4" />}
+                                loading={running}
+                                disabled={!canGenerate || running || retryAfterSeconds > 0}
+                                onClick={() => void generate()}
+                            >
                                 {t("workbench.generate")}
                             </Button>
                         </div>
@@ -481,7 +494,15 @@ export default function VideoPage() {
                         </div>
                         {results.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />))}
+                                {results.map((result) =>
+                                    result.status === "success" && result.video ? (
+                                        <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
+                                    ) : result.status === "failed" ? (
+                                        <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} />
+                                    ) : (
+                                        <PendingVideoCard key={result.id} />
+                                    ),
+                                )}
                             </div>
                         ) : (
                             <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
@@ -519,7 +540,7 @@ export default function VideoPage() {
             </Drawer>
             <Drawer title={t("workbench.settings")} placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
@@ -531,7 +552,7 @@ export default function VideoPage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, model, updateConfig }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
 
@@ -539,10 +560,10 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
         <>
             <label className="col-span-2 block min-w-0 sm:col-span-1">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                <ModelPicker value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth />
             </label>
             <div className="col-span-2">
-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+                <VideoSettingsPanel config={{ ...config, model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
             </div>
         </>
     );
@@ -666,7 +687,14 @@ function LogPanel({
             </div>
             <div className="space-y-3">
                 {logs.map((log) => (
-                    <LogCard key={log.id} log={log} selected={selectedLogIds.includes(log.id)} active={activeLogId === log.id} onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))} onClick={() => onPreviewLog(log)} />
+                    <LogCard
+                        key={log.id}
+                        log={log}
+                        selected={selectedLogIds.includes(log.id)}
+                        active={activeLogId === log.id}
+                        onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
+                        onClick={() => onPreviewLog(log)}
+                    />
                 ))}
                 {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">{t("workbench.noLogs")}</div> : null}
                 <div ref={loadMoreRef} />
@@ -684,14 +712,18 @@ function LogPanel({
 function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
     const { t } = useTranslation();
     return (
-        <button type="button" className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`} onClick={onClick}>
+        <button
+            type="button"
+            className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
+            onClick={onClick}
+        >
             <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2">
                 <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
                 <div className="min-w-0">
                     <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
                     <div className="mt-2 flex flex-wrap gap-1">
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.size}</Tag>
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.resolution}p</Tag>
+                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.resolution}</Tag>
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.seconds}s</Tag>
                     </div>
                 </div>
@@ -726,13 +758,32 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
     );
 }
 
-
-function buildLog({ prompt, model, config, references, durationMs, status, task, video, error }: { prompt: string; model: string; config: AiConfig; references: ReferenceImage[]; durationMs: number; status: GenerationLog["status"]; task?: VideoGenerationTask; video?: GeneratedVideo; error?: string }): GenerationLog {
+function buildLog({
+    prompt,
+    model,
+    config,
+    references,
+    durationMs,
+    status,
+    task,
+    video,
+    error,
+}: {
+    prompt: string;
+    model: string;
+    config: AiConfig;
+    references: ReferenceImage[];
+    durationMs: number;
+    status: GenerationLog["status"];
+    task?: VideoGenerationTask;
+    video?: GeneratedVideo;
+    error?: string;
+}): GenerationLog {
     const logConfig = {
         model: config.model,
         videoModel: config.videoModel,
         size: config.size,
-        vquality: normalizeResolution(config.vquality),
+        vquality: videoResolutionLabel(config.vquality),
         videoSeconds: config.videoSeconds,
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
@@ -759,34 +810,8 @@ function buildLog({ prompt, model, config, references, durationMs, status, task,
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
-    return {
-        ...config,
-        model,
-        videoModel: model,
-        size: normalizeVideoSize(config.size),
-        videoSeconds: normalizeVideoSeconds(config.videoSeconds),
-        vquality: normalizeResolution(config.vquality),
-        videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
-        videoWatermark: String(boolConfig(config.videoWatermark, false)),
-        videoMode: config.videoMode === "reference" ? "reference" : "frames",
-    };
-}
-
-function normalizeVideoSeconds(value: string) {
-    if (String(value).trim() === "-1") return "-1";
-    return clampVideoSeconds(value);
-}
-
-function normalizeVideoSize(value: string) {
-    return normalizeVideoSizeValue(value);
-}
-
-function normalizeResolution(value: string) {
-    return normalizeVideoResolutionValue(value);
-}
-
-function delay(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    const built = buildGenerationConfig(config, undefined, "video");
+    return { ...built, model, videoModel: model };
 }
 
 function toGenerationLog(item: GenerationItem): GenerationLog {
@@ -805,7 +830,7 @@ function toGenerationLog(item: GenerationItem): GenerationLog {
             model: config.model || item.model,
             videoModel: config.videoModel || item.model,
             size: config.size || "",
-            vquality: normalizeResolution(config.vquality || result.resolution || ""),
+            vquality: videoResolutionLabel(config.vquality || result.resolution || ""),
             videoSeconds: config.videoSeconds || "",
             videoGenerateAudio: config.videoGenerateAudio || "",
             videoWatermark: config.videoWatermark || "",
@@ -814,7 +839,7 @@ function toGenerationLog(item: GenerationItem): GenerationLog {
         references,
         durationMs: item.durationMs,
         size: result.size || config.size || "",
-        resolution: normalizeResolution(result.resolution || config.vquality || ""),
+        resolution: videoResolutionLabel(result.resolution || config.vquality || ""),
         seconds: result.seconds || config.videoSeconds || "",
         status: item.status === "pending" ? "pending" : item.status === "success" ? "success" : "failed",
         task: result.task,
