@@ -37,16 +37,6 @@ export default function PricingPage() {
                   { key: "storage", free: formatBytes(freePlan.storageBytes), paid: formatBytes(paidPlan.storageBytes) },
                   { key: "maxFile", free: formatBytes(freePlan.maxFileBytes), paid: formatBytes(paidPlan.maxFileBytes) },
                   { key: "retention", free: t("pricing.retentionValue", { count: freePlan.retentionDays }), paid: t("pricing.retentionValue", { count: paidPlan.retentionDays }) },
-                  {
-                      key: "imageTrials",
-                      free: freePlan.freeImageTrials ? t("pricing.trialsValue", { count: freePlan.freeImageTrials }) : t("pricing.trialsNone"),
-                      paid: paidPlan.freeImageTrials ? t("pricing.trialsValue", { count: paidPlan.freeImageTrials }) : t("pricing.trialsNone"),
-                  },
-                  {
-                      key: "videoTrials",
-                      free: freePlan.freeVideoTrials ? t("pricing.trialsValue", { count: freePlan.freeVideoTrials }) : t("pricing.trialsNone"),
-                      paid: paidPlan.freeVideoTrials ? t("pricing.trialsValue", { count: paidPlan.freeVideoTrials }) : t("pricing.trialsNone"),
-                  },
               ]
             : [];
 

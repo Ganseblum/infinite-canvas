@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { readZip } from "@/lib/zip";
 import { normalizeCanvasData } from "@/lib/canvas/canvas-data";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { MediaExpiryAlert } from "@/hooks/use-media-expiry";
 import { createCanvas, getCanvas, listCanvases } from "@/services/api/canvas";
 import { putMedia } from "@/services/api/media";
 import type { CanvasSort } from "@/services/data/types";
@@ -152,6 +153,8 @@ export default function CanvasPage() {
                         </Button>
                     </div>
                 </header>
+
+                <MediaExpiryAlert />
 
                 <div className="flex flex-wrap items-center gap-3">
                     <Input

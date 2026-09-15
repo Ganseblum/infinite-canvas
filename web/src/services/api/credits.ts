@@ -29,8 +29,6 @@ export type CreditPlan = {
     storageBytes: number;
     maxFileBytes: number;
     retentionDays: number;
-    freeImageTrials?: number;
-    freeVideoTrials?: number;
 };
 
 export type CreditPackage = {
@@ -64,5 +62,6 @@ export function getPlans(signal?: AbortSignal) {
 }
 
 export function getCreditPackages(signal?: AbortSignal) {
-    return apiRequest<{ items: CreditPackage[] }>("/credit-packages", { signal });
+    // providers 是当前已配置的支付渠道，未配置的渠道不下发，前端据此只展示可用渠道。
+    return apiRequest<{ items: CreditPackage[]; providers?: string[] }>("/credit-packages", { signal });
 }

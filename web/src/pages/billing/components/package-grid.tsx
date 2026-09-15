@@ -1,4 +1,4 @@
-import { Button, Empty, Segmented } from "antd";
+import { Alert, Button, Empty, Segmented } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { formatMoney, formatPoints } from "@/lib/credits-format";
@@ -8,31 +8,32 @@ import type { PaymentProvider } from "@/services/api/orders";
 type PackageGridProps = {
     packages: CreditPackage[];
     provider: PaymentProvider;
+    providers: PaymentProvider[];
     onProviderChange: (provider: PaymentProvider) => void;
     onBuy: (packageId: string) => void;
     buyingPackageId?: string;
     disabled?: boolean;
 };
 
-export function PackageGrid({ packages, provider, onProviderChange, onBuy, buyingPackageId, disabled }: PackageGridProps) {
+export function PackageGrid({ packages, provider, providers, onProviderChange, onBuy, buyingPackageId, disabled }: PackageGridProps) {
     const { t } = useTranslation();
 
     return (
         <section className="mt-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">{t("billing.packagesTitle")}</h2>
-                <div className="flex items-center gap-2">
-                    <span className="text-sm text-stone-500 dark:text-stone-400">{t("billing.provider")}</span>
-                    <Segmented
-                        value={provider}
-                        onChange={(value) => onProviderChange(value as PaymentProvider)}
-                        options={[
-                            { label: t("billing.providers.alipay"), value: "alipay" },
-                            { label: t("billing.providers.wechat"), value: "wechat" },
-                        ]}
-                    />
-                </div>
+                {providers.length > 1 ? (
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-stone-500 dark:text-stone-400">{t("billing.provider")}</span>
+                        <Segmented
+                            value={provider}
+                            onChange={(value) => onProviderChange(value as PaymentProvider)}
+                            options={providers.map((value) => ({ label: t(`billing.providers.${value}`), value }))}
+                        />
+                    </div>
+                ) : null}
             </div>
+            {providers.length === 0 ? <Alert className="mt-4" type="info" showIcon message={t("billing.noProvider")} /> : null}
             {packages.length === 0 ? (
                 <Empty className="mt-6" image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("billing.packagesEmpty")} />
             ) : (

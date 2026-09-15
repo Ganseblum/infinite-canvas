@@ -1,7 +1,7 @@
-import { Copy, Download, PencilLine, Search, Trash2, Upload } from "lucide-react";
+import { Copy, Download, PencilLine, Search, Share2, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -12,6 +12,7 @@ import { getApiErrorMessage } from "@/lib/api-error";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { getMediaBlob } from "@/services/api/media";
 import { createAsset, deleteAsset, patchAsset } from "@/services/api/assets";
+import { publishCommunityWork, getPublicSettings } from "@/services/api/community";
 import type { AssetItem, AssetKind } from "@/services/data/types";
 import { uploadImage } from "@/services/media-ingest";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,8 @@ export default function AssetsPage() {
     const copyText = useCopyText();
     const queryClient = useQueryClient();
     const [form] = Form.useForm<AssetFormValues>();
+    const [publishForm] = Form.useForm<{ title: string; description: string; tags: string }>();
+    const [publishAsset, setPublishAsset] = useState<AssetItem | null>(null);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const assetInputRef = useRef<HTMLInputElement>(null);
@@ -186,6 +189,28 @@ export default function AssetsPage() {
         }
     };
 
+    const publicSettingsQuery = useQuery({
+        queryKey: ["settings", "public"],
+        queryFn: ({ signal }) => getPublicSettings(signal),
+        staleTime: 5 * 60 * 1000,
+    });
+    const publishMutation = useMutation({
+        mutationFn: (values: { title: string; description: string; tags: string }) =>
+            publishCommunityWork({
+                assetId: publishAsset!.id,
+                title: values.title,
+                description: values.description,
+                tags: values.tags,
+            }),
+        onSuccess: async () => {
+            message.success(t("assets.publishSuccess"));
+            setPublishAsset(null);
+            publishForm.resetFields();
+            await queryClient.invalidateQueries({ queryKey: ["community"] });
+        },
+        onError: (error) => message.error(getApiErrorMessage(error)),
+    });
+
     const deleteMutation = useMutation({
         mutationFn: (id: string) => deleteAsset(id),
         onSuccess: async () => {
@@ -285,7 +310,19 @@ export default function AssetsPage() {
                 <div className="mx-auto flex max-w-7xl flex-col gap-5">
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {items.map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadAsset} onDelete={() => setDeletingAsset(asset)} />
+                            <AssetCard
+                                key={asset.id}
+                                asset={asset}
+                                onOpen={() => setPreviewAsset(asset)}
+                                onEdit={() => openEdit(asset)}
+                                onCopy={copyAssetText}
+                                onDownload={downloadAsset}
+                                onDelete={() => setDeletingAsset(asset)}
+                                onPublish={() => {
+                                    setPublishAsset(asset);
+                                    publishForm.setFieldsValue({ title: asset.title, description: "", tags: (asset.tags || []).join(",") });
+                                }}
+                            />
                         ))}
                     </div>
 
@@ -308,6 +345,34 @@ export default function AssetsPage() {
                     ) : null}
                 </div>
             </main>
+
+            {publicSettingsQuery.data && !publicSettingsQuery.data.communityEnabled ? null : (
+                <Modal
+                    title={t("assets.publishTitle")}
+                    open={!!publishAsset}
+                    okText={t("assets.publishSubmit")}
+                    cancelText={t("common.cancel")}
+                    confirmLoading={publishMutation.isPending}
+                    onCancel={() => setPublishAsset(null)}
+                    onOk={async () => {
+                        const values = await publishForm.validateFields();
+                        await publishMutation.mutateAsync(values);
+                    }}
+                >
+                    <p className="mb-4 text-sm text-stone-500 dark:text-stone-400">{t("assets.publishHint")}</p>
+                    <Form form={publishForm} layout="vertical">
+                        <Form.Item name="title" label={t("assets.publishFields.title")} rules={[{ required: true, message: t("assets.publishFields.titleRequired") }]}>
+                            <Input maxLength={200} />
+                        </Form.Item>
+                        <Form.Item name="description" label={t("assets.publishFields.description")}>
+                            <Input.TextArea rows={3} maxLength={1000} />
+                        </Form.Item>
+                        <Form.Item name="tags" label={t("assets.publishFields.tags")} extra={t("assets.publishFields.tagsHint")}>
+                            <Input maxLength={200} />
+                        </Form.Item>
+                    </Form>
+                </Modal>
+            )}
 
             <Modal title={editingAsset ? t("assets.edit") : t("assets.add")} open={isAssetOpen} width={980} onCancel={() => setIsAssetOpen(false)} onOk={() => void saveAsset()} okText={t("common.save")} cancelText={t("common.cancel")} destroyOnHidden>
                 <div className="grid gap-6 pt-1 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -437,7 +502,23 @@ export default function AssetsPage() {
     );
 }
 
-function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: AssetItem; onOpen: () => void; onEdit: () => void; onCopy: (asset: AssetItem) => void; onDownload: (asset: AssetItem) => void; onDelete: () => void }) {
+function AssetCard({
+    asset,
+    onOpen,
+    onEdit,
+    onCopy,
+    onDownload,
+    onDelete,
+    onPublish,
+}: {
+    asset: AssetItem;
+    onOpen: () => void;
+    onEdit: () => void;
+    onCopy: (asset: AssetItem) => void;
+    onDownload: (asset: AssetItem) => void;
+    onDelete: () => void;
+    onPublish: () => void;
+}) {
     const { t } = useTranslation();
     const cover = assetCoverUrl(asset);
     return (
@@ -496,6 +577,11 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
                 {asset.kind === "image" || asset.kind === "video" ? (
                     <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(asset)}>
                         {t("common.download")}
+                    </Button>
+                ) : null}
+                {asset.kind === "image" || asset.kind === "video" ? (
+                    <Button size="small" icon={<Share2 className="size-3.5" />} onClick={onPublish}>
+                        {t("assets.publish")}
                     </Button>
                 ) : null}
                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>

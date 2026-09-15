@@ -68,7 +68,15 @@ export default function BillingPage() {
     });
 
     const packageItems = packagesQuery.data?.items;
+    const availableProviders = useMemo(() => (packagesQuery.data?.providers ?? []) as PaymentProvider[], [packagesQuery.data?.providers]);
     const packageMap = useMemo(() => new Map((packageItems ?? []).map((item) => [item.id, item])), [packageItems]);
+
+    // 渠道未配置时自动选中第一个可用渠道，只配一个渠道时不展示切换。
+    useEffect(() => {
+        if (availableProviders.length > 0 && !availableProviders.includes(provider)) {
+            setProvider(availableProviders[0]);
+        }
+    }, [availableProviders, provider]);
 
     return (
         <main className="h-full overflow-y-auto bg-background text-stone-950 dark:text-stone-100">
@@ -137,10 +145,11 @@ export default function BillingPage() {
                     <PackageGrid
                         packages={packageItems ?? []}
                         provider={provider}
+                        providers={availableProviders}
                         onProviderChange={setProvider}
                         onBuy={(packageId) => createMutation.mutate(packageId)}
                         buyingPackageId={createMutation.isPending ? createMutation.variables : undefined}
-                        disabled={rateLimitSeconds > 0}
+                        disabled={rateLimitSeconds > 0 || availableProviders.length === 0}
                     />
                 )}
 
