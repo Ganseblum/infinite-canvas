@@ -68,3 +68,23 @@ SEED_TEST_DATA=true DATABASE_URL="canvas:li123456@tcp(127.0.0.1:3306)/infinite_c
 ## 前端环境标识
 
 `SITE_ENV` 会被容器入口脚本写进 `config.js`，只要不是 `production`，页面顶栏就会显示环境标识（如「测试环境」），避免在测试站上误当成正式站操作。`API_BASE_URL` 同理可在运行时注入，留空表示同源 `/api`。
+
+## 管理后台
+
+管理后台不是独立应用：页面是同一个前端里的 `/admin/*` 路由，接口在同一个 api 服务（`/api/admin/*`），因此**不需要额外部署服务、端口、域名或镜像**。前端路由守卫只负责跳转，权限由 api 的服务端中间件强制（`Auth` + `AdminOnly`）。
+
+管理员账号由 api 启动时按 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 初始化：账号不存在时创建，已存在但角色不是 admin 时提升为 admin；**已存在时不会用 `ADMIN_PASSWORD` 重设密码**，所以忘记管理员密码时改 env 文件无效，只能改库或走密码重置流程。这两个变量缺失会导致 api 启动失败，测试与正式环境各自使用独立的邮箱与密码。
+
+安全相关的两点：
+
+- 管理后台与其他页面同域同源，公网可访问；如需收敛，在宿主机反向代理上对 `/admin` 加 IP 白名单或改为独立子域（尚未实施，上线前决定）。
+- 管理后台配置的 AI 渠道密钥用 `CREDENTIAL_MASTER_KEY` 加密存库，该密钥必须与其他环境不同，并且必须随备份一起保存；密钥丢失则渠道密钥无法解密。
+
+## 内容审核（可选）
+
+`MODERATION_ENABLED=false` 时无需任何额外组件。切到 `MODERATION_PROVIDER=nsfwjs+detoxify` 前，需要额外准备两样东西（当前 compose 与 api 镜像尚未包含）：
+
+- 两个推理 sidecar（NSFWJS 的 Node 服务与 Detoxify 的 Python 服务）加入 compose 网络，并把地址填进 `MODERATION_NSFWJS_ENDPOINT` / `MODERATION_DETOXIFY_ENDPOINT`。
+- 视频审核需要 api 容器内有 `ffmpeg` 用于抽帧；缺失时按 `MODERATION_FAIL_MODE` 拒绝或放行，不会静默通过。
+
+在上述组件补齐前，测试环境使用 `fake` provider，内容审核页不作为验收项。
