@@ -72,6 +72,33 @@ git push origin codex/account-backend-plan
 3. 经用户确认后 `git push --force-with-lease origin main`（以本地 `main`，即 `upstream/main` 为基重置）；
 4. 此后 `origin/main` 只跟随本地 `main` 的正常推送，上述「源头同步流程」里的 `git push origin main` 不再被拒。
 
+## 分支命名与创建
+
+新建分支按用途选前缀，全小写、连字符分隔、主题用英文短词（不带日期、人名、中文与空格），一个分支只做一件事，合并后删除。
+
+| 用途 | 命名 | 从哪创建 | 说明 |
+| --- | --- | --- | --- |
+| 主干 / 集成 | `main` | — | 唯一长期集成分支，保持随时可部署；**不直接在 `main` 上开发** |
+| 主线规划与实现 | `codex/<主题>` | `main` | 跨多个提交、需要长期存在的规划与改造线，沿用现有 `codex/account-backend-plan` |
+| 单个功能 / 一期 | `feature-<主题>` | `main` | 例如 `feature-easypay`、`feature-admin-console` |
+| 缺陷修复 | `fix-<主题>` | 出问题版本对应的分支 | 例如 `fix-media-cookie`、`fix-canvas-autosave` |
+| 上游同步 | `sync/upstream-<主题>` | `main` | Fork 同步专用，只做合并与就地解冲突 |
+| 测试 / 回归 / 正式部署 | `release_sim_<主题>`、`release_pre_<主题>`、`release_prod_<主题>` | `main` | 只用于部署与解决合并冲突，不写业务代码 |
+
+创建与合并规则：
+
+- 建分支前先同步主干，再基于最新主干创建：
+
+  ```bash
+  git fetch upstream && git switch main && git merge upstream/main
+  git switch -c feature-easypay main
+  ```
+
+- 合并方向：`feature-*` / `fix-*` / `codex/*` → `main`（经审查与验收）；`main` → `feature-*`（把主干同步进开发分支）。
+- `release_*` 只接受 `main` 合并进来，冲突就地解决；**禁止任何 `release_*` → `feature-*` / `codex/*` 的合并**，也不允许回到开发分支改代码来绕过冲突。
+- 部署与发布：正式环境只从经过验收的 `main` 提交或版本 tag 部署，tag 统一用 `v<版本号>`（如 `v0.18.0`），规则见根目录 `AGENTS.md` 的发版本流程。
+- 长期分支只保留 `main` 与当前主线 `codex/*`；其余分支完成合并后立即删除，本地与远程都要删（`git push origin --delete <branch>`）。
+
 ## 开发与部署规则
 
 账号体系与服务端第一期（账号与邮件）、第二期（画布、素材、生成记录与媒体）、第三期（双桶点数、充值订单与支付回调、档位与存储配额、模型目录与限时折扣、保留期清理、账号注销、管理后台）、第四期（AI 转发：报价预扣与失败退还、平台渠道加密与故障转移、异步视频任务、SSE 对话、删除浏览器直连与自定义脚本）已实现，服务放在本仓库的 `server/` 目录，由于它会和 `web/` 共用登录态、数据分发、存储和部署决策，没有必要一开始拆成独立仓库。最终形态预计使用 Docker Compose 管理 Web、API、数据库以及对象存储的连接。
