@@ -14,6 +14,11 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 - **纯结构重构**：`server/internal/handler` 已拆分为 account/canvas/ai/billing/admin 五域包 + httpx/testutil 共享件，无行为变化；落地规则已写入 AGENTS.md「Server 结构规范」。
 - **部署注意**：仓库内 `nginx.conf` 的 SSE/媒体 location 已同步为 `/api/v1/ai/`、`/api/v1/media/`；sim 环境主站域的 `/api` 反代在仓库外的 nginx 配置（`sub2api-http.conf`）里，其中若有按 `/api/ai/` 前缀做的 SSE 特殊处理（proxy_buffering / gzip 豁免），需同步改为 `/api/v1/ai/`，否则对话流式输出会被缓冲。
 
+## 主站首页设计稿（本版本新增，待验收）
+
+- **聚合主站首页草图**：打开 `design/html/site-home.html`，在桌面与手机宽度下核对产品、无限画布、图像/视频工作台、Workers、博客、社区与文档入口的聚合信息架构，以及锚点导航、明暗切换、图像/视频/Worker 模式切换、预览播放态与生成按钮反馈；纯静态设计稿，不连任何接口。
+- **首页第二版视觉探索**：打开 `design/html/site-home-v2-index.html` 对比四个保留变体（`site-home-v2-cinema.html`、`site-home-v2-editorial.html`、`site-home-v2-aurora.html`、`site-home-v2-playground.html`）在桌面与手机宽度下的效果：Cinema 全屏作品轮巡、Editorial 精选轮换与 Playground 的可交互工作模式切换；均为静态设计稿，使用公开演示素材、不连接口。`design/html/` 现共 39 个静态稿，总览入口 `index.html` 已接入上述新页。
+
 ## 平台账号与会员体系（本版本新增，已部署测试环境并完成首轮自动化验收）
 
 以下各项已在 sim 测试环境完成一轮浏览器自动化验收（发放→生效→作废→回落全链路），正式验收以你的人工复核为准：

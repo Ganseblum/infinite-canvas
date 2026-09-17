@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+<<<<<<< HEAD
 + [调整] server 目录按域一步到位重构：`internal/handler` 拆分为 account/canvas/ai/billing/admin 五个域包（管理路由表迁入 admin 包并由路由条数测试锁住），新增 httpx（HTTP 边缘共享件）与 testutil（测试公共件）；各域路由表由域包 `Mount*Routes` 维护、`main.go` 只做依赖注入与组装，对接口行为无影响。
 + [调整] 用户面 API 路径统一加版本前缀 `/api/v1/...`（如 `/api/v1/auth/login`、`/api/v1/canvases`、`/api/v1/media/{key}`），管理面保持 `/api/admin/...` 不变；web/admin 前端统一 client、媒体直链与 AI 流式请求同步更新，`ic_refresh` cookie Path 仍为 `/api` 可覆盖新旧路径。
 + [新增] 平台账号与会员体系一期（PLAN-PLATFORM-ACCOUNT-MEMBERSHIP M1-M3 全量落地）：身份域收敛为 `platform_users`/`sessions` 并建 identity 域统一入口，登录/注销/封禁/媒体令牌行为与切换前完全一致（画布前端零改动）；会员、点数、空间升级为平台级权益——会员一次订阅全产品生效（`membership_plans` + `membership_subscriptions`，订阅到期后 60 天日落宽限）、点数全产品共享余额（`credit_accounts` + 流水带 product 维度，先扣赠送再扣购入）、存储平台共享池（`storage_accounts`/`storage_usage` 分产品记账）；「充值即付费」旧派生废除，付费身份只由订阅表达；点数包与会员档位两表拆分（D5），`/api/orders` 支持购买会员（请求加 `planId`），`paidUntil`/`planId` 等既有键保留、值来源改为订阅。
@@ -10,6 +11,9 @@
 + [新增] 管理后台 SSO 接入模块：OAuth 客户端的列表/新增/编辑/重置密钥/删除，密钥明文仅创建与重置时展示一次；新增 `sso.read`/`sso.write` 权限点。
 + [新增] 夜间存储记账对账任务：比对 media_files 聚合、storage_usage 与 storage_accounts 三层记账，不平自动按事实源重算收敛并落结构化日志（告警通道待 D9 拍板后接线）；订阅自然到期的配额回写也由该任务兜底。
 + [调整] 部署与运维：api 镜像内置 ffmpeg（含 libx264）供媒体水印使用；`WATERMARK_*` 与 `OIDC_JWKS_PRIVATE_KEY` 进 compose 与 env 模板；测试环境挂载水印字体目录。
+
++ [新增] 新增聚合主站首页 HTML 草图（`design/html/site-home.html`），串联无限画布、图像/视频工作台、Workers、博客、社区与文档入口，并接入设计稿总览。
++ [新增] 新增主站首页第二版四种视觉探索（`CINEMA`、`EDITORIAL`、`AURORA`、`PLAYGROUND`）及对比入口，保留第一版并增加作品轮巡、沉浸式展示和多场景聚合方向。
 
 + [新增] 媒体水印与干净原件安全下发：免费/日落档用户 AI 生成的图片/视频由服务端烧录平铺文字水印，展示与下载均为水印版；付费用户不加水印，且免费期生成的历史素材在其升级后下发自动变干净（生成时即留存无水印原件于服务端隐藏路径）。无水印原件仅可经「申请下载」接口签发的 5 分钟签名 URL 取走，签名须同时通过媒体登录态校验，防篡改、防转借、过期即失效；水印任一环节失败按生成失败退款处理（fail-closed），绝不回退下发无水印字节。新增 `WATERMARK_ENABLED`（默认 false，关闭时行为与现状一致）/ `WATERMARK_FONT_PATH` / `WATERMARK_TEXT` 配置；下载按钮统一改为「先申请、再取件」两步。
 + [新增] 主站静态站点 `main-site/`：Next.js（App Router）全站静态导出（`output: "export"`），暗色放映厅视觉（基于 `design/html/home-draft-cinema.html`），五页结构（首页 / 影像作品 / 视频短片 / 三件套模板 / 手记博客）+ sitemap / robots / OG 分享图 + JSON-LD 结构化数据；内容集中在 `src/data/site.ts`，构建产物 `out/` 由 nginx 直接托管、服务器无需 Node 运行时，字体经 `next/font` 构建期自托管。占位资源（Hero 视频、作品图、社媒与下载链接）待替换为自有内容。
@@ -47,6 +51,10 @@
 + [新增] 新增《测试环境部署》相关的宿主机 Nginx 站点模板，并在 `deploy/README.md` 补充「本地连接测试环境（SSH 隧道）」一节：两条隧道的启停、凭据位置、隧道假死的判据与排查顺序。
 
 + [调整] 测试环境部署落地：数据库与媒体由命名卷改为绑挂载到仓库目录的 `./data`（api 容器以 uid 10001 运行，首次部署须先授权该目录属主），新增宿主机 Nginx 站点配置模板（含 SSE 关闭缓冲、上传体积与超时设置），`.dockerignore` 排除实际部署环境文件与本地实施手册。
+=======
++ [新增] 新增聚合主站首页 HTML 草图（`design/html/site-home.html`），串联无限画布、图像/视频工作台、Workers、博客、社区与文档入口，并接入设计稿总览。
++ [新增] 新增主站首页第二版四种视觉探索（`CINEMA`、`EDITORIAL`、`AURORA`、`PLAYGROUND`）及对比入口，保留第一版并增加作品轮巡、沉浸式展示和多场景聚合方向。
+>>>>>>> 6387098 (feat: add aggregate site homepage design explorations)
 
 + [调整] 明确测试/正式双环境部署及本地共用测试库的规划，补充服务器实施手册、SSH/DBeaver 联调与共享媒体、后台任务、备份恢复的待实施条件，并修正旧部署说明。
 

@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 创作智能体生态</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    --ink: #171715;
+    --muted: #6d6b62;
+    --paper: #f5f3ee;
+    --paper-deep: #ebe8e0;
+    --line: rgba(23, 23, 21, .16);
+    --strong-line: rgba(23, 23, 21, .42);
+    --signal: #d94e27;
+    --blue: #6b83a9;
+    --stage: #dfe3df;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    --sans: "Instrument Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; color: var(--ink); background: var(--paper); font-family: var(--sans); font-feature-settings: "ss01" 1; }
+  body.dark { --ink: #f2f0e9; --muted: #aaa79b; --paper: #181816; --paper-deep: #22221f; --line: rgba(245, 243, 238, .16); --strong-line: rgba(245, 243, 238, .44); --stage: #303530; }
+  a { color: inherit; text-decoration: none; }
+  button { color: inherit; font: inherit; }
+  .mono { font-family: var(--mono); }
+  .shell { width: min(1240px, calc(100% - 48px)); margin: 0 auto; }
+  .grain { position: fixed; inset: 0; z-index: 10; pointer-events: none; opacity: .07; mix-blend-mode: multiply; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E"); }
+  .dark .grain { opacity: .04; mix-blend-mode: screen; }
+
+  header { position: sticky; top: 0; z-index: 20; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter: blur(16px); }
+  .nav { height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 28px; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; min-width: max-content; font-weight: 650; letter-spacing: -.04em; }
+  .brand-mark { display: grid; place-items: center; width: 25px; height: 25px; color: var(--paper); border-radius: 50%; background: var(--ink); font: 500 17px/1 var(--mono); }
+  .nav-links { display: flex; align-items: center; gap: 24px; margin-right: auto; margin-left: 40px; color: var(--muted); font-size: 13px; }
+  .nav-links a { position: relative; padding: 24px 0; }
+  .nav-links a::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 1px; transform: scaleX(0); background: var(--ink); transition: transform .25s ease; }
+  .nav-links a:hover, .nav-links a.active { color: var(--ink); }
+  .nav-links a:hover::after, .nav-links a.active::after { transform: scaleX(1); }
+  .nav-actions { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .nav-locale { color: var(--muted); font: 11px var(--mono); }
+  .ghost-btn, .solid-btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 38px; padding: 0 16px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; transition: transform .2s ease, background .2s ease, border-color .2s ease; }
+  .ghost-btn { background: transparent; }
+  .ghost-btn:hover { border-color: var(--strong-line); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .solid-btn { border-color: var(--ink); color: var(--paper); background: var(--ink); }
+  .solid-btn:hover { transform: translateY(-2px); }
+  .solid-btn.signal { border-color: var(--signal); background: var(--signal); }
+
+  .hero { position: relative; display: grid; grid-template-columns: minmax(0, .93fr) minmax(420px, 1.07fr); align-items: end; min-height: 690px; padding: 96px 0 82px; gap: 64px; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; top: 54px; right: -80px; width: 370px; height: 370px; border: 1px solid var(--line); border-radius: 50%; }
+  .hero::after { content: ""; position: absolute; top: 158px; right: 80px; width: 200px; height: 200px; border: 1px dashed var(--line); border-radius: 50%; }
+  .eyebrow, .section-kicker { color: var(--muted); font: 11px/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 9px; }
+  .eyebrow::before { content: ""; width: 26px; height: 1px; background: var(--signal); }
+  h1 { max-width: 690px; margin: 27px 0 25px; font-size: clamp(56px, 7.4vw, 106px); line-height: .94; letter-spacing: -.078em; font-weight: 620; }
+  h1 em { color: var(--signal); font-style: normal; }
+  .hero-copy { max-width: 470px; color: var(--muted); font-size: 18px; line-height: 1.65; letter-spacing: -.02em; }
+  .hero-copy strong { color: var(--ink); font-weight: 600; }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+  .hero-note { display: flex; align-items: center; gap: 15px; margin-top: 47px; color: var(--muted); font: 11px/1.6 var(--mono); }
+  .hero-note span { color: var(--ink); }
+  .hero-note i { width: 1px; height: 25px; background: var(--line); }
+
+  .hero-stage { position: relative; z-index: 1; min-height: 500px; padding: 13px; border: 1px solid var(--strong-line); background: var(--paper-deep); transform: rotate(1.2deg); box-shadow: 15px 16px 0 color-mix(in srgb, var(--ink) 9%, transparent); }
+  .stage-window { position: relative; min-height: 472px; overflow: hidden; border: 1px solid var(--line); background: var(--stage); }
+  .window-bar { display: flex; align-items: center; justify-content: space-between; height: 42px; padding: 0 14px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 72%, transparent); font-size: 11px; }
+  .window-title { display: flex; align-items: center; gap: 8px; color: var(--muted); font-family: var(--mono); }
+  .window-title b { color: var(--signal); font-weight: 400; }
+  .window-dots { display: flex; gap: 5px; }
+  .window-dots i { display: block; width: 6px; height: 6px; border: 1px solid var(--muted); border-radius: 50%; }
+  .stage-art { position: absolute; top: 78px; right: 38px; bottom: 58px; left: 64px; overflow: hidden; background: linear-gradient(135deg, rgba(18, 24, 23, .1), transparent), url("https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=1200&q=85") center/cover; filter: saturate(.8); }
+  .stage-art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255, 255, 255, .12), transparent 44%, rgba(0, 0, 0, .18)); }
+  .stage-art .art-label { position: absolute; right: 13px; bottom: 12px; z-index: 1; color: white; font: 10px var(--mono); }
+  .stage-card { position: absolute; z-index: 2; padding: 14px; border: 1px solid var(--strong-line); background: color-mix(in srgb, var(--paper) 92%, transparent); box-shadow: 8px 8px 0 rgba(23, 23, 21, .13); backdrop-filter: blur(9px); }
+  .stage-card.prompt { top: 116px; left: 20px; width: 162px; }
+  .stage-card.output { right: 15px; bottom: 76px; width: 146px; }
+  .stage-card small { display: block; margin-bottom: 9px; color: var(--muted); font: 10px var(--mono); }
+  .stage-card p { margin: 0; font-size: 12px; line-height: 1.45; }
+  .stage-card .mini-line { height: 4px; margin-top: 12px; background: var(--ink); opacity: .75; }
+  .stage-card .mini-line.short { width: 62%; margin-top: 6px; opacity: .22; }
+  .stage-command { position: absolute; right: 19px; bottom: 14px; left: 19px; display: flex; align-items: center; justify-content: space-between; padding: 10px 11px; border: 1px solid var(--line); background: var(--ink); color: var(--paper); font: 11px var(--mono); }
+  .stage-command span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stage-command b { color: #e99772; font-weight: 400; }
+
+  .manifesto { display: grid; grid-template-columns: .9fr 1.1fr; gap: 80px; padding: 115px 0 128px; border-top: 1px solid var(--line); }
+  .manifesto h2, .section-heading h2 { margin: 18px 0 0; font-size: clamp(37px, 4.8vw, 65px); line-height: .98; letter-spacing: -.065em; font-weight: 600; }
+  .manifesto h2 span { color: var(--muted); }
+  .manifesto-copy { max-width: 480px; margin-top: 28px; color: var(--muted); font-size: 16px; line-height: 1.75; }
+  .metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+  .metric { min-height: 170px; padding: 25px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .metric strong { display: block; font-size: clamp(38px, 5vw, 66px); line-height: 1; letter-spacing: -.07em; font-weight: 550; }
+  .metric p { max-width: 140px; margin: 15px 0 0; color: var(--muted); font: 11px/1.5 var(--mono); }
+
+  .ecosystem { padding: 92px 0 110px; color: #ede9df; background: #171715; }
+  .dark .ecosystem { background: #0e0e0d; }
+  .ecosystem .section-kicker { color: #99968b; }
+  .ecosystem .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 30px; margin-bottom: 55px; }
+  .ecosystem h2 { max-width: 610px; }
+  .ecosystem h2 span { color: #77746a; }
+  .ecosystem .section-heading p { max-width: 265px; margin: 0 0 3px; color: #99968b; font-size: 14px; line-height: 1.7; }
+  .product-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+  .product-card { position: relative; display: flex; flex-direction: column; justify-content: space-between; min-height: 330px; padding: 24px; overflow: hidden; border: 1px solid rgba(245, 243, 238, .2); background: #22221f; transition: transform .3s ease, border-color .3s ease; }
+  .product-card:hover { transform: translateY(-6px); border-color: rgba(245, 243, 238, .65); }
+  .product-card.canvas { grid-column: span 7; min-height: 390px; background: linear-gradient(135deg, #29322f, #22221f 60%); }
+  .product-card.media { grid-column: span 5; background: linear-gradient(135deg, #303640, #22221f 60%); }
+  .product-card.worker { grid-column: span 5; min-height: 280px; background: #252522; }
+  .product-card.blog { grid-column: span 7; min-height: 280px; background: #252522; }
+  .product-card .card-top { display: flex; align-items: center; justify-content: space-between; gap: 15px; color: #c7c3b8; font: 11px var(--mono); }
+  .product-card .card-index { color: #e99772; }
+  .product-card h3 { margin: 0; font-size: clamp(28px, 3.6vw, 49px); line-height: .98; letter-spacing: -.06em; font-weight: 500; }
+  .product-card p { max-width: 310px; margin: 13px 0 0; color: #aaa79b; font-size: 13px; line-height: 1.6; }
+  .product-card .card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; color: #e9e5dc; font: 11px var(--mono); }
+  .product-card .arrow { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(245, 243, 238, .35); border-radius: 50%; transition: background .2s ease; }
+  .product-card:hover .arrow { color: #171715; background: #ede9df; }
+  .product-card .orbit { position: absolute; right: 40px; bottom: 10px; width: 260px; height: 260px; border: 1px dashed rgba(245, 243, 238, .35); border-radius: 50%; transform: rotate(18deg); }
+  .product-card .orbit::before, .product-card .orbit::after { content: ""; position: absolute; border: 1px solid rgba(245, 243, 238, .27); border-radius: 50%; }
+  .product-card .orbit::before { inset: 35px -16px; transform: rotate(53deg); }
+  .product-card .orbit::after { inset: 77px 6px; transform: rotate(-34deg); }
+  .product-card .terminal-lines { position: absolute; right: 25px; bottom: 25px; width: 42%; color: #77746a; font: 10px/2 var(--mono); opacity: .9; }
+  .product-card .terminal-lines b { color: #e99772; font-weight: 400; }
+  .product-card.blog .blog-strip { position: absolute; right: 23px; bottom: 22px; left: 47%; display: grid; gap: 9px; }
+  .blog-strip i { display: block; height: 7px; background: #44443d; }
+  .blog-strip i:nth-child(2) { width: 78%; }
+  .blog-strip i:nth-child(3) { width: 57%; }
+
+  .showcase { padding: 124px 0 120px; }
+  .showcase-head { display: flex; align-items: end; justify-content: space-between; gap: 25px; margin-bottom: 36px; }
+  .showcase-head p { max-width: 300px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
+  .showcase-panel { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 550px; border: 1px solid var(--strong-line); background: var(--paper-deep); }
+  .showcase-sidebar { padding: 24px; border-right: 1px solid var(--line); }
+  .showcase-sidebar .sidebar-label { color: var(--muted); font: 10px var(--mono); }
+  .mode-tabs { display: grid; gap: 4px; margin-top: 20px; }
+  .mode-tab { display: flex; align-items: center; justify-content: space-between; padding: 12px 10px; border: 0; border-bottom: 1px solid transparent; color: var(--muted); background: transparent; text-align: left; cursor: pointer; font-size: 14px; }
+  .mode-tab:hover, .mode-tab.active { color: var(--ink); border-color: var(--ink); }
+  .mode-tab span { display: flex; align-items: center; gap: 10px; }
+  .mode-tab small { font: 10px var(--mono); }
+  .showcase-sidebar .sidebar-note { margin-top: 90px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font: 11px/1.65 var(--mono); }
+  .showcase-main { min-width: 0; padding: 23px; }
+  .showcase-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; color: var(--muted); font: 11px var(--mono); }
+  .showcase-toolbar .status { display: inline-flex; align-items: center; gap: 7px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #6e9a62; box-shadow: 0 0 0 4px rgba(110, 154, 98, .14); }
+  .showcase-content { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(210px, .65fr); gap: 18px; margin-top: 23px; }
+  .preview { position: relative; min-height: 443px; overflow: hidden; background: #272b29; }
+  .preview-media { position: absolute; inset: 0; background: center/cover url("https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=1400&q=86"); transition: background-image .35s ease; }
+  .preview-media::after { content: ""; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(8, 11, 10, .1), transparent 45%, rgba(0, 0, 0, .38)); }
+  .preview.video .preview-media { background-image: url("https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1400&q=86"); }
+  .preview-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .play-button { display: grid; place-items: center; width: 62px; height: 62px; border: 1px solid rgba(255, 255, 255, .7); border-radius: 50%; color: white; background: rgba(0, 0, 0, .2); cursor: pointer; backdrop-filter: blur(8px); transition: transform .25s ease, background .25s ease; }
+  .play-button:hover { transform: scale(1.08); background: rgba(0, 0, 0, .42); }
+  .preview.playing .play-button { transform: scale(.88); opacity: .65; }
+  .preview-meta { position: absolute; right: 16px; bottom: 16px; left: 16px; display: flex; align-items: end; justify-content: space-between; color: white; }
+  .preview-meta strong { display: block; margin-bottom: 5px; font-size: 18px; font-weight: 500; letter-spacing: -.035em; }
+  .preview-meta small { font: 10px var(--mono); opacity: .75; }
+  .preview-time { font: 10px var(--mono); }
+  .inspector { display: flex; flex-direction: column; justify-content: space-between; padding: 18px; border: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 42%, transparent); }
+  .inspector-label { color: var(--muted); font: 10px var(--mono); }
+  .inspector h3 { margin: 16px 0 13px; font-size: 24px; line-height: 1; letter-spacing: -.05em; font-weight: 550; }
+  .inspector p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+  .prompt-box { margin-top: 25px; padding: 12px; border: 1px solid var(--line); font: 11px/1.65 var(--mono); }
+  .prompt-box b { color: var(--signal); font-weight: 400; }
+  .inspector-bottom { display: grid; gap: 11px; }
+  .inspector-stats { display: flex; justify-content: space-between; color: var(--muted); font: 10px var(--mono); }
+  .progress { height: 2px; background: var(--line); }
+  .progress i { display: block; width: 68%; height: 100%; background: var(--signal); }
+
+  .journal { padding: 104px 0 120px; border-top: 1px solid var(--line); }
+  .journal-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 80px; align-items: end; }
+  .journal-list { margin-top: 36px; border-top: 1px solid var(--line); }
+  .journal-item { display: grid; grid-template-columns: 95px 1fr auto; align-items: center; gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--line); transition: padding .2s ease; }
+  .journal-item:hover { padding-right: 10px; padding-left: 10px; }
+  .journal-item time { color: var(--muted); font: 10px var(--mono); }
+  .journal-item h3 { margin: 0; font-size: 16px; font-weight: 550; letter-spacing: -.025em; }
+  .journal-item span { color: var(--muted); font: 10px var(--mono); }
+  .journal-aside { min-height: 310px; padding: 25px; color: #eeeadf; background: var(--ink); }
+  .journal-aside .aside-top { display: flex; justify-content: space-between; color: #aaa79b; font: 10px var(--mono); }
+  .journal-aside h3 { max-width: 350px; margin: 68px 0 15px; font-size: 41px; line-height: .98; letter-spacing: -.065em; font-weight: 500; }
+  .journal-aside p { max-width: 320px; margin: 0; color: #aaa79b; font-size: 13px; line-height: 1.6; }
+  .journal-aside .aside-link { display: flex; align-items: center; gap: 7px; margin-top: 26px; color: #eeeadf; font: 11px var(--mono); }
+
+  .cta { position: relative; padding: 110px 0 120px; overflow: hidden; border-top: 1px solid var(--line); }
+  .cta::before { content: "∞"; position: absolute; right: -30px; bottom: -117px; color: color-mix(in srgb, var(--ink) 7%, transparent); font: 600 390px/1 var(--sans); letter-spacing: -.2em; }
+  .cta-inner { position: relative; z-index: 1; max-width: 850px; }
+  .cta h2 { margin: 17px 0 24px; font-size: clamp(47px, 7vw, 98px); line-height: .91; letter-spacing: -.08em; font-weight: 620; }
+  .cta h2 span { color: var(--signal); }
+  .cta p { max-width: 450px; margin: 0; color: var(--muted); font-size: 16px; line-height: 1.7; }
+  .cta-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+  footer { padding: 25px 0 31px; border-top: 1px solid var(--line); }
+  .footer-row { display: flex; justify-content: space-between; gap: 25px; color: var(--muted); font: 10px var(--mono); }
+  .footer-links { display: flex; flex-wrap: wrap; gap: 20px; }
+  .footer-links a:hover { color: var(--ink); }
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.visible { opacity: 1; transform: none; }
+
+  @media (max-width: 900px) {
+    .shell { width: min(100% - 32px, 680px); }
+    .nav-links { display: none; }
+    .hero { grid-template-columns: 1fr; min-height: 0; padding: 74px 0 88px; gap: 56px; }
+    .hero-stage { width: calc(100% - 10px); margin-left: 5px; }
+    .manifesto, .journal-grid { grid-template-columns: 1fr; gap: 52px; }
+    .product-card.canvas, .product-card.media, .product-card.worker, .product-card.blog { grid-column: span 12; }
+    .product-card.canvas, .product-card.media { min-height: 330px; }
+    .showcase-panel { grid-template-columns: 1fr; }
+    .showcase-sidebar { display: flex; align-items: center; gap: 25px; border-right: 0; border-bottom: 1px solid var(--line); }
+    .mode-tabs { display: flex; margin: 0; }
+    .mode-tab { padding: 10px 12px; }
+    .showcase-sidebar .sidebar-note { display: none; }
+  }
+  @media (max-width: 560px) {
+    .shell { width: calc(100% - 28px); }
+    .nav { height: 58px; }
+    .nav-actions .nav-locale, .nav-actions .ghost-btn { display: none; }
+    h1 { font-size: clamp(49px, 15vw, 78px); }
+    .hero-copy { font-size: 16px; }
+    .hero-stage { min-height: 380px; padding: 8px; transform: rotate(.6deg); }
+    .stage-window { min-height: 362px; }
+    .stage-art { top: 64px; right: 17px; bottom: 48px; left: 28px; }
+    .stage-card.prompt { top: 86px; left: 10px; width: 130px; padding: 10px; }
+    .stage-card.output { right: 8px; bottom: 62px; width: 122px; padding: 10px; }
+    .stage-command { right: 10px; bottom: 10px; left: 10px; }
+    .hero::before { right: -210px; }
+    .manifesto { padding: 85px 0; }
+    .metric { min-height: 130px; padding: 17px; }
+    .metric strong { font-size: 42px; }
+    .ecosystem, .showcase, .journal, .cta { padding: 78px 0 82px; }
+    .ecosystem .section-heading, .showcase-head { display: block; }
+    .ecosystem .section-heading p, .showcase-head p { margin-top: 20px; }
+    .product-card { min-height: 285px !important; padding: 18px; }
+    .product-card h3 { font-size: 35px; }
+    .product-card .orbit { right: -40px; }
+    .showcase-sidebar { display: block; padding: 17px; }
+    .mode-tabs { margin-top: 13px; }
+    .mode-tab { flex: 1; padding: 9px 6px; font-size: 12px; }
+    .showcase-main { padding: 12px; }
+    .showcase-content { grid-template-columns: 1fr; }
+    .preview { min-height: 340px; }
+    .inspector { min-height: 240px; }
+    .journal-item { grid-template-columns: 65px 1fr auto; gap: 10px; }
+    .journal-item h3 { font-size: 14px; }
+    .journal-item span { display: none; }
+    .journal-aside h3 { margin-top: 50px; font-size: 36px; }
+    .footer-row { display: block; }
+    .footer-links { margin-top: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+
+<header>
+  <div class="shell nav">
+    <a class="brand" href="#top" aria-label="无限画布首页"><span class="brand-mark">∞</span><span>无限画布</span></a>
+    <nav class="nav-links" aria-label="主导航">
+      <a class="active" href="#ecosystem">产品</a>
+      <a href="#showcase">画布</a>
+      <a href="#journal">灵感</a>
+      <a href="#journal">博客</a>
+      <a href="#footer">文档</a>
+    </nav>
+    <div class="nav-actions">
+      <span class="nav-locale">中 / EN</span>
+      <button class="ghost-btn" type="button" onclick="toggleTheme()" title="切换主题"><i data-lucide="sun-moon" width="15"></i></button>
+      <a class="ghost-btn" href="#journal">登录</a>
+      <a class="solid-btn" href="#cta">开始创作 <i data-lucide="arrow-up-right" width="15"></i></a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+  <section class="shell hero">
+    <div class="hero-copy-block reveal">
+      <div class="eyebrow">一个持续生长的创作生态</div>
+      <h1>让灵感<br /><em>有地方</em>发生。</h1>
+      <p class="hero-copy">从一张图、一个镜头、一个 Worker 开始。<strong>无限画布</strong>把生成、编排、分享和学习，放进同一个开放的创作空间。</p>
+      <div class="hero-actions">
+        <a class="solid-btn signal" href="#showcase">进入创作空间 <i data-lucide="arrow-right" width="16"></i></a>
+        <a class="ghost-btn" href="#ecosystem">探索产品 <i data-lucide="arrow-down" width="15"></i></a>
+      </div>
+      <div class="hero-note"><span>01 / 生成</span><i></i><span>02 / 编排</span><i></i><span>03 / 分享</span></div>
+    </div>
+
+    <div class="hero-stage reveal" style="transition-delay: .12s">
+      <div class="stage-window">
+        <div class="window-bar">
+          <div class="window-title"><b>~/canvas</b> / morning-film</div>
+          <div class="window-dots"><i></i><i></i><i></i></div>
+        </div>
+        <div class="stage-art"><span class="art-label">frame_018 / 024</span></div>
+        <div class="stage-card prompt"><small>INPUT / 提示</small><p>清晨六点，海岸线开始发光。镜头向前，风穿过芦苇。</p><div class="mini-line"></div><div class="mini-line short"></div></div>
+        <div class="stage-card output"><small>OUTPUT / 结果</small><p>图像 · 视频 · 3 个变体</p><div class="mini-line"></div><div class="mini-line short"></div></div>
+        <div class="stage-command"><span><b>✦</b> 正在将镜头 01 延展为视频……</span><i data-lucide="loader-circle" width="14"></i></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="shell manifesto reveal">
+    <div>
+      <div class="section-kicker">// 不只是一块画布</div>
+      <h2>工具会变。<br /><span>你的方法留下。</span></h2>
+      <p class="manifesto-copy">无限画布是一个聚合入口：用画布组织创作，用 Worker 扩展能力，用社区和博客交换方法。每一个模块都能独立使用，也能连成一条完整的创作路径。</p>
+    </div>
+    <div class="metric-grid">
+      <div class="metric"><strong>∞</strong><p>一块可以容纳图像、视频、文本与智能体的画布</p></div>
+      <div class="metric"><strong>01</strong><p>从一个想法开始，不需要先决定用什么工具</p></div>
+      <div class="metric"><strong>24/7</strong><p>Worker 在后台持续执行你的创作流程</p></div>
+      <div class="metric"><strong>0→1</strong><p>从灵感碎片到可分享的完整作品</p></div>
+    </div>
+  </section>
+
+  <section id="ecosystem" class="ecosystem">
+    <div class="shell">
+      <div class="section-heading reveal">
+        <div><div class="section-kicker">// 你的创作工具箱</div><h2>一个入口，<br /><span>多种工作方式。</span></h2></div>
+        <p>浏览产品、内容和社区。选一个入口开始，剩下的交给你的工作流自然展开。</p>
+      </div>
+      <div class="product-grid">
+        <a class="product-card canvas reveal" href="#showcase">
+          <div class="card-top"><span class="card-index">01 / CANVAS</span><span>主工作台</span></div>
+          <div><h3>无限画布</h3><p>把想法铺开，把节点连起来。图像、视频、提示词和 Worker 在同一块空间里协作。</p></div>
+          <div class="card-footer"><span>开始一块新画布</span><span class="arrow"><i data-lucide="arrow-up-right" width="16"></i></span></div>
+          <div class="orbit"></div>
+        </a>
+        <a class="product-card media reveal" style="transition-delay: .06s" href="#showcase">
+          <div class="card-top"><span class="card-index">02 / MEDIA</span><span>图像 & 视频</span></div>
+          <div><h3>生成<br />工作台</h3><p>多模型并排试验，从第一帧走到完整镜头。</p></div>
+          <div class="card-footer"><span>查看生成能力</span><span class="arrow"><i data-lucide="arrow-up-right" width="16"></i></span></div>
+        </a>
+        <a class="product-card worker reveal" style="transition-delay: .12s" href="#showcase">
+          <div class="card-top"><span class="card-index">03 / WORKERS</span><span>自动化</span></div>
+          <div><h3>Workers</h3><p>把重复的步骤交给可以被编排、复用和分享的智能体。</p></div>
+          <div class="terminal-lines"><b>›</b> run story-board<br /><b>✓</b> 6 nodes completed<br /><b>›</b> waiting for review</div>
+          <div class="card-footer"><span>探索智能体</span><span class="arrow"><i data-lucide="arrow-up-right" width="16"></i></span></div>
+        </a>
+        <a class="product-card blog reveal" style="transition-delay: .18s" href="#journal">
+          <div class="card-top"><span class="card-index">04 / JOURNAL</span><span>知识与灵感</span></div>
+          <div><h3>博客与社区</h3><p>读方法，抄作业，分享那些让创作真正变快的过程。</p></div>
+          <div class="blog-strip"><i></i><i></i><i></i></div>
+          <div class="card-footer"><span>去看看大家在做什么</span><span class="arrow"><i data-lucide="arrow-up-right" width="16"></i></span></div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section id="showcase" class="shell showcase">
+    <div class="showcase-head reveal">
+      <div><div class="section-kicker">// 同一块画布，不同的起点</div><h2>先做出来，<br />再慢慢变好。</h2></div>
+      <p>这里不是一张静态海报。切换工作方式，看看图像、视频和 Worker 如何在同一个工作台里接力。</p>
+    </div>
+    <div class="showcase-panel reveal" style="transition-delay: .08s">
+      <aside class="showcase-sidebar">
+        <span class="sidebar-label">SELECT MODE</span>
+        <div class="mode-tabs" role="tablist">
+          <button class="mode-tab active" type="button" data-mode="image"><span><i data-lucide="image" width="15"></i>图像工作台</span><small>01</small></button>
+          <button class="mode-tab" type="button" data-mode="video"><span><i data-lucide="film" width="15"></i>视频工作台</span><small>02</small></button>
+          <button class="mode-tab" type="button" data-mode="worker"><span><i data-lucide="bot" width="15"></i>Worker</span><small>03</small></button>
+        </div>
+        <div class="sidebar-note">每一次生成都会留下上下文。<br />所以你不必从零开始。</div>
+      </aside>
+      <div class="showcase-main">
+        <div class="showcase-toolbar"><span id="modePath">~/canvas / image-workbench</span><span class="status"><i class="status-dot"></i><span id="modeStatus">ready to create</span></span></div>
+        <div class="showcase-content">
+          <div class="preview" id="preview">
+            <div class="preview-media"></div>
+            <div class="preview-overlay"><button class="play-button" type="button" onclick="togglePreview()" aria-label="播放预览"><i data-lucide="play" width="21"></i></button></div>
+            <div class="preview-meta"><div><strong id="previewTitle">雨后公路，向北</strong><small id="previewSub">IMAGE / 2048 × 1365 / VARIANT 03</small></div><span class="preview-time" id="previewTime">00:04</span></div>
+          </div>
+          <div class="inspector">
+            <div>
+              <div class="inspector-label">CURRENT PROMPT</div>
+              <h3 id="inspectorTitle">把天气变成<br />一种质感。</h3>
+              <p id="inspectorCopy">冷色的雨后公路，远处有一盏暖黄的灯。保留空气里的湿度。</p>
+              <div class="prompt-box"><b>›</b> <span id="promptText">wet asphalt, northbound road, soft morning light, 50mm film</span></div>
+            </div>
+            <div class="inspector-bottom"><div class="inspector-stats"><span id="inspectorModel">MODEL / FLUX PRO</span><span id="inspectorState">3 VARIANTS</span></div><div class="progress"><i></i></div><button class="solid-btn signal" type="button" onclick="runGeneration()"><i data-lucide="sparkles" width="15"></i><span id="runLabel">生成三个变体</span></button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="journal" class="shell journal">
+    <div class="journal-grid">
+      <div class="reveal">
+        <div class="section-kicker">// from the journal</div>
+        <h2>方法、过程，<br />还有一点好奇心。</h2>
+        <div class="journal-list">
+          <a class="journal-item" href="#"><time>09.14.26</time><h3>为什么我们把 Worker 放到画布里</h3><span>阅读 →</span></a>
+          <a class="journal-item" href="#"><time>09.08.26</time><h3>一张图如何长成一个镜头</h3><span>阅读 →</span></a>
+          <a class="journal-item" href="#"><time>08.27.26</time><h3>给创作者的模型选择备忘录</h3><span>阅读 →</span></a>
+        </div>
+      </div>
+      <aside class="journal-aside reveal" style="transition-delay: .1s">
+        <div class="aside-top"><span>COMMUNITY / 038,421</span><span>LIVE</span></div>
+        <h3>今天，大家正在做什么？</h3>
+        <p>浏览正在发生的创作，复制提示词，或者把自己的流程分享给下一位创作者。</p>
+        <a class="aside-link" href="#ecosystem">进入社区 <i data-lucide="arrow-up-right" width="14"></i></a>
+      </aside>
+    </div>
+  </section>
+
+  <section id="cta" class="cta">
+    <div class="shell cta-inner reveal">
+      <div class="section-kicker">// start anywhere</div>
+      <h2>把下一个想法<br />放进 <span>画布。</span></h2>
+      <p>无需先想清楚最终答案。打开一个入口，边做边发现你的方法。</p>
+      <div class="cta-actions"><a class="solid-btn signal" href="#showcase">开始创作 <i data-lucide="arrow-right" width="16"></i></a><a class="ghost-btn" href="#journal">先逛逛社区</a></div>
+    </div>
+  </section>
+</main>
+
+<footer id="footer">
+  <div class="shell footer-row"><span>© 2026 无限画布 / A PLACE FOR MAKING</span><nav class="footer-links"><a href="#ecosystem">产品</a><a href="#journal">博客</a><a href="#footer">文档</a><a href="#footer">隐私</a><a href="#footer">服务条款</a></nav></div>
+</footer>
+
+<script>
+  const modeData = {
+    image: { path: '~/canvas / image-workbench', status: 'ready to create', title: '雨后公路，向北', sub: 'IMAGE / 2048 × 1365 / VARIANT 03', time: '00:04', inspector: '把天气变成<br />一种质感。', copy: '冷色的雨后公路，远处有一盏暖黄的灯。保留空气里的湿度。', prompt: 'wet asphalt, northbound road, soft morning light, 50mm film', model: 'MODEL / FLUX PRO', variants: '3 VARIANTS', label: '生成三个变体', className: '' },
+    video: { path: '~/canvas / video-workbench', status: 'frame sequence ready', title: '灯亮起来之前', sub: 'VIDEO / 16:09 / 05 SEC / TAKE 02', time: '00:05', inspector: '让静止的画面<br />开始呼吸。', copy: '镜头缓慢向前，风吹过路边的草。远处的灯在第 03 秒亮起。', prompt: 'slow dolly forward, grass in wind, distant light turns on', model: 'MODEL / KLING 2.0', variants: '2 TAKES', label: '生成五秒镜头', className: 'video' },
+    worker: { path: '~/workers / storyboard-builder', status: 'worker awaiting input', title: '从一句话到分镜', sub: 'WORKER / 06 NODES / 02 MIN AGO', time: 'RUN', inspector: '把重复的步骤<br />交给 Worker。', copy: '自动拆分脚本、生成关键帧、整理镜头表，再交回画布继续编辑。', prompt: 'parse brief → create beats → generate keyframes → return', model: 'WORKER / STORYBOARD', variants: '6 NODES', label: '运行这个 Worker', className: 'worker' }
+  };
+
+  function updateMode(mode) {
+    const data = modeData[mode];
+    document.querySelectorAll('.mode-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.mode === mode));
+    document.getElementById('modePath').textContent = data.path;
+    document.getElementById('modeStatus').textContent = data.status;
+    document.getElementById('previewTitle').textContent = data.title;
+    document.getElementById('previewSub').textContent = data.sub;
+    document.getElementById('previewTime').textContent = data.time;
+    document.getElementById('inspectorTitle').innerHTML = data.inspector;
+    document.getElementById('inspectorCopy').textContent = data.copy;
+    document.getElementById('promptText').textContent = data.prompt;
+    document.getElementById('inspectorModel').textContent = data.model;
+    document.getElementById('inspectorState').textContent = data.variants;
+    document.getElementById('runLabel').textContent = data.label;
+    document.getElementById('preview').className = 'preview ' + data.className;
+    document.querySelector('.play-button').innerHTML = mode === 'worker' ? '<i data-lucide="play" width="21"></i>' : '<i data-lucide="play" width="21"></i>';
+    lucide.createIcons();
+  }
+
+  function togglePreview() {
+    const preview = document.getElementById('preview');
+    preview.classList.toggle('playing');
+    const icon = preview.classList.contains('playing') ? 'pause' : 'play';
+    preview.querySelector('.play-button').innerHTML = '<i data-lucide="' + icon + '" width="21"></i>';
+    lucide.createIcons();
+  }
+
+  function runGeneration() {
+    const status = document.getElementById('modeStatus');
+    const button = document.querySelector('.inspector .solid-btn');
+    const original = document.getElementById('runLabel').textContent;
+    status.textContent = 'working…';
+    button.style.pointerEvents = 'none';
+    document.getElementById('runLabel').textContent = '正在准备工作流';
+    window.setTimeout(() => { status.textContent = 'ready to review'; document.getElementById('runLabel').textContent = '已生成 · 再来一次'; button.style.pointerEvents = ''; }, 1000);
+    window.setTimeout(() => { if (document.getElementById('runLabel').textContent === '已生成 · 再来一次') document.getElementById('runLabel').textContent = original; }, 2600);
+  }
+
+  function toggleTheme() { document.body.classList.toggle('dark'); }
+
+  document.querySelectorAll('.mode-tab').forEach((tab) => tab.addEventListener('click', () => updateMode(tab.dataset.mode)));
+  const observer = new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) entry.target.classList.add('visible'); }), { threshold: .12 });
+  document.querySelectorAll('.reveal').forEach((element) => observer.observe(element));
+  lucide.createIcons();
+</script>
+</body>
+</html>
