@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
@@ -75,19 +76,19 @@ func newBillingRouter(t *testing.T, g *gorm.DB, cfg *config.Config, provider pay
 
 	api.POST("/payments/webhook/:provider", paymentH.Webhook)
 
-	admin := api.Group("/admin", middleware.Auth(secret), middleware.AdminOnly())
-	admin.GET("/stats", adminH.Stats)
-	admin.GET("/users", adminH.ListUsers)
-	admin.GET("/users/:id", adminH.GetUser)
-	admin.PATCH("/users/:id", adminH.PatchUser)
-	admin.POST("/users/:id/credits", adminH.AdjustCredits)
-	admin.POST("/users/:id/usage/recalculate", adminH.RecalculateUsage)
-	admin.GET("/credit-packages", adminH.ListPackages)
-	admin.POST("/credit-packages", adminH.CreatePackage)
-	admin.GET("/orders", adminH.ListOrders)
-	admin.GET("/model-promotions", adminH.ListPromotions)
-	admin.POST("/model-promotions", adminH.CreatePromotion)
-	admin.PATCH("/model-promotions/:id", adminH.UpdatePromotion)
+	admin := api.Group("/admin", middleware.Auth(secret), middleware.LoadAdminAccess(g))
+	admin.GET("/stats", middleware.RequirePermission(authz.PermStatsRead), adminH.Stats)
+	admin.GET("/users", middleware.RequirePermission(authz.PermUsersRead), adminH.ListUsers)
+	admin.GET("/users/:id", middleware.RequirePermission(authz.PermUsersRead), adminH.GetUser)
+	admin.PATCH("/users/:id", middleware.RequirePermission(authz.PermUsersWrite), adminH.PatchUser)
+	admin.POST("/users/:id/credits", middleware.RequirePermission(authz.PermUsersCredits), adminH.AdjustCredits)
+	admin.POST("/users/:id/usage/recalculate", middleware.RequirePermission(authz.PermUsersWrite), adminH.RecalculateUsage)
+	admin.GET("/credit-packages", middleware.RequirePermission(authz.PermPackagesRead), adminH.ListPackages)
+	admin.POST("/credit-packages", middleware.RequirePermission(authz.PermPackagesWrite), adminH.CreatePackage)
+	admin.GET("/orders", middleware.RequirePermission(authz.PermOrdersRead), adminH.ListOrders)
+	admin.GET("/model-promotions", middleware.RequirePermission(authz.PermModelsRead), adminH.ListPromotions)
+	admin.POST("/model-promotions", middleware.RequirePermission(authz.PermModelsWrite), adminH.CreatePromotion)
+	admin.PATCH("/model-promotions/:id", middleware.RequirePermission(authz.PermModelsWrite), adminH.UpdatePromotion)
 	return r
 }
 
@@ -209,10 +210,7 @@ func TestAdminUserListAndCreditAdjust(t *testing.T) {
 	cfg := testConfig()
 	r := newBillingRouter(t, g, cfg, &fakeProvider{})
 	admin := createUser(t, g, "admin@example.com", "adminuser", "password123", true)
-	if err := g.Model(&model.User{}).Where("id = ?", admin.ID).Update("role", "admin").Error; err != nil {
-		t.Fatalf("提升管理员失败: %v", err)
-	}
-	admin.Role = "admin"
+	promoteAdmin(t, g, &admin)
 	adminToken := accessToken(t, cfg, &admin)
 	target := createUser(t, g, "target@example.com", "targetuser", "password123", true)
 
@@ -264,10 +262,7 @@ func TestAdminPackageValidation(t *testing.T) {
 	cfg := testConfig()
 	r := newBillingRouter(t, g, cfg, &fakeProvider{})
 	admin := createUser(t, g, "admin2@example.com", "adminuser2", "password123", true)
-	if err := g.Model(&model.User{}).Where("id = ?", admin.ID).Update("role", "admin").Error; err != nil {
-		t.Fatalf("提升管理员失败: %v", err)
-	}
-	admin.Role = "admin"
+	promoteAdmin(t, g, &admin)
 	token := accessToken(t, cfg, &admin)
 
 	w := doAuthJSON(r, http.MethodPost, "/api/admin/credit-packages", token, map[string]any{
@@ -289,10 +284,7 @@ func TestAdminPromotionConflictAndAudit(t *testing.T) {
 	cfg := testConfig()
 	r := newBillingRouter(t, g, cfg, &fakeProvider{})
 	admin := createUser(t, g, "admin3@example.com", "adminuser3", "password123", true)
-	if err := g.Model(&model.User{}).Where("id = ?", admin.ID).Update("role", "admin").Error; err != nil {
-		t.Fatalf("提升管理员失败: %v", err)
-	}
-	admin.Role = "admin"
+	promoteAdmin(t, g, &admin)
 	token := accessToken(t, cfg, &admin)
 
 	modelID := uuid.New()

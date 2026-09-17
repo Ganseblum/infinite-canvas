@@ -410,6 +410,8 @@ func sessionPayload(user *model.User, plan model.Plan, accessToken string) gin.H
 	return gin.H{
 		"user":        userPayload(user),
 		"accessToken": accessToken,
+		// 顶层再放一份，登录页直接取顶层字段；user 对象里的是同一份事实。
+		"mustChangePassword": user.MustChangePassword,
 		"plan": gin.H{
 			"id":   plan.ID,
 			"name": plan.Name,
@@ -419,13 +421,14 @@ func sessionPayload(user *model.User, plan model.Plan, accessToken string) gin.H
 
 func userPayload(user *model.User) gin.H {
 	payload := gin.H{
-		"id":            user.ID.String(),
-		"email":         user.Email,
-		"username":      user.Username,
-		"displayName":   user.DisplayName,
-		"avatarUrl":     user.AvatarURL,
-		"role":          user.Role,
-		"emailVerified": user.EmailVerifiedAt != nil,
+		"id":                 user.ID.String(),
+		"email":              user.Email,
+		"username":           user.Username,
+		"displayName":        user.DisplayName,
+		"avatarUrl":          user.AvatarURL,
+		"role":               user.Role,
+		"emailVerified":      user.EmailVerifiedAt != nil,
+		"mustChangePassword": user.MustChangePassword,
 	}
 	return payload
 }

@@ -3,16 +3,7 @@ import { Spin } from "antd";
 import { createBrowserRouter, Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
-import AdminLayout from "@/layouts/admin-layout";
 import UserLayout from "@/layouts/user-layout";
-import AdminDashboardPage from "@/pages/admin";
-import AdminChannelsPage from "@/pages/admin/channels";
-import AdminModerationPage from "@/pages/admin/moderation";
-import AdminSystemPage from "@/pages/admin/system";
-import AdminPackagesPage from "@/pages/admin/credit-packages";
-import AdminModelsPage from "@/pages/admin/models";
-import AdminOrdersPage from "@/pages/admin/orders";
-import AdminUsersPage from "@/pages/admin/users";
 import ActivityPage from "@/pages/activity";
 import AssetsPage from "@/pages/assets";
 import CommunityPage from "@/pages/community";
@@ -63,13 +54,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
     return <>{children}</>;
 }
 
-// 非管理员重定向到首页而不是登录页：入口只在前端隐藏，真正的权限判断在后端中间件。
-function RequireAdmin({ children }: { children: ReactNode }) {
-    const role = useAuthStore((state) => state.user?.role);
-    if (role !== "admin") return <Navigate to="/" replace />;
-    return <>{children}</>;
-}
-
+// 管理后台已拆到独立应用（admin/ 目录、独立域名），主站不再挂 /admin/* 路由：
+// 主域名下的 /admin 与 /admin/xxx 都会落到下面的 NotFound，不再有任何后台入口。
 export const router = createBrowserRouter([
     {
         element: <RootBootstrap />,
@@ -102,24 +88,6 @@ export const router = createBrowserRouter([
                     { path: "/pricing", element: <PricingPage /> },
                     { path: "/profile", element: <ProfilePage /> },
                     { path: "/billing", element: <BillingPage /> },
-                    {
-                        path: "/admin",
-                        element: (
-                            <RequireAdmin>
-                                <AdminLayout />
-                            </RequireAdmin>
-                        ),
-                        children: [
-                            { index: true, element: <AdminDashboardPage /> },
-                            { path: "users", element: <AdminUsersPage /> },
-                            { path: "models", element: <AdminModelsPage /> },
-                            { path: "channels", element: <AdminChannelsPage /> },
-                            { path: "moderation", element: <AdminModerationPage /> },
-                            { path: "system", element: <AdminSystemPage /> },
-                            { path: "credit-packages", element: <AdminPackagesPage /> },
-                            { path: "orders", element: <AdminOrdersPage /> },
-                        ],
-                    },
                 ],
             },
             { path: "*", element: <NotFound /> },

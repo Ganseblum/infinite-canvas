@@ -124,3 +124,80 @@ func TestParseTrustedProxies(t *testing.T) {
 		t.Fatal("非法 CIDR 应报错")
 	}
 }
+
+func TestParseCORSAllowedOrigins(t *testing.T) {
+	if got, err := parseCORSAllowedOrigins(""); err != nil || got != nil {
+		t.Fatalf("空值应返回 nil, got=%v err=%v", got, err)
+	}
+	got, err := parseCORSAllowedOrigins(" https://sim-admin.youc.online , ,http://localhost:5173 ")
+	if err != nil {
+		t.Fatalf("合法来源不应报错: %v", err)
+	}
+	if len(got) != 2 || got[0] != "https://sim-admin.youc.online" || got[1] != "http://localhost:5173" {
+		t.Fatalf("解析结果不符: %v", got)
+	}
+
+	invalid := []string{
+		"sim-admin.youc.online",               // 缺 scheme
+		"https://",                            // 缺主机
+		"https://sim-admin.youc.online/admin", // 带路径
+		"https://sim-admin.youc.online/",      // 尾斜杠
+		"https://sim-admin.youc.online?x=1",   // 带查询
+		"https://*.youc.online",               // 通配符
+		"https://sim-admin.youc.online.",      // 末尾点
+	}
+	for _, raw := range invalid {
+		if _, err := parseCORSAllowedOrigins(raw); err == nil {
+			t.Fatalf("非法来源应报错: %s", raw)
+		}
+	}
+}
+
+func TestLoadCORSAllowedOrigins(t *testing.T) {
+	setBaseEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("DATABASE_URL", "dsn")
+		t.Setenv("JWT_SECRET", strings.Repeat("s", 32))
+		t.Setenv("CREDENTIAL_MASTER_KEY", strings.Repeat("k", 32))
+		t.Setenv("APP_BASE_URL", "http://localhost:3000")
+		t.Setenv("LOG_LEVEL", "info")
+		t.Setenv("MAIL_DRIVER", "log")
+		t.Setenv("ADMIN_EMAIL", "admin@example.com")
+		t.Setenv("ADMIN_PASSWORD", "password")
+		t.Setenv("FREE_GRANT_ENABLED", "false")
+		t.Setenv("STORAGE_DRIVER", "local")
+		t.Setenv("MODERATION_ENABLED", "false")
+	}
+
+	t.Run("未配置时为空", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("CORS_ALLOWED_ORIGINS", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("基础配置应加载成功: %v", err)
+		}
+		if cfg.CORSAllowedOrigins != nil {
+			t.Fatalf("未配置时应为 nil, got=%v", cfg.CORSAllowedOrigins)
+		}
+	})
+
+	t.Run("合法值写入字段", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("CORS_ALLOWED_ORIGINS", "https://sim-admin.youc.online")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("合法来源不应导致启动失败: %v", err)
+		}
+		if len(cfg.CORSAllowedOrigins) != 1 || cfg.CORSAllowedOrigins[0] != "https://sim-admin.youc.online" {
+			t.Fatalf("解析结果不符: %v", cfg.CORSAllowedOrigins)
+		}
+	})
+
+	t.Run("非法值启动失败", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("CORS_ALLOWED_ORIGINS", "https://sim-admin.youc.online/admin")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "CORS_ALLOWED_ORIGINS") {
+			t.Fatalf("非法来源应报 CORS_ALLOWED_ORIGINS 错误, got=%v", err)
+		}
+	})
+}

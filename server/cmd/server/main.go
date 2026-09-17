@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/db"
@@ -60,6 +61,11 @@ func main() {
 	}
 	if err := db.SeedBilling(gormDB); err != nil {
 		slog.Error("写入默认档位与模型目录失败", "err", err)
+		os.Exit(1)
+	}
+	// RBAC 目录同步：系统角色、权限点投影、改名别名迁移与老数据回填，幂等。
+	if err := authz.Sync(gormDB); err != nil {
+		slog.Error("同步角色与权限目录失败", "err", err)
 		os.Exit(1)
 	}
 	if err := db.EnsureAdmin(gormDB, cfg.AdminEmail, cfg.AdminPassword); err != nil {
@@ -200,6 +206,9 @@ func main() {
 
 	router := gin.New()
 	router.Use(middleware.RequestID(), middleware.Logger(level.Level()), middleware.Recovery())
+	// 管理后台独立部署时跨源直连 API；CORS_ALLOWED_ORIGINS 为空则完全不启用。
+	// 必须挂在引擎级：group handlers 在路由注册时固化，挂在 /api/admin 会漏掉 /api/auth/login 等路径。
+	router.Use(middleware.CORS(cfg.CORSAllowedOrigins))
 	// 仅信任 TRUSTED_PROXIES 配置的代理网段解析 X-Forwarded-For / X-Real-IP；
 	// 默认为空表示不信任任何代理头，ClientIP 直接使用 RemoteAddr。
 	if err := router.SetTrustedProxies(cfg.TrustedProxies); err != nil {
@@ -234,13 +243,17 @@ func main() {
 
 	api := router.Group("/api")
 
+	// 强制改密：must_change_password 的账号只能登出、刷新或改密，其余接口一律 403。
+	// 挂到每个需要登录的路由上，新增受保护分组必须一并挂上。
+	passwordGate := middleware.RequirePasswordChanged(gormDB)
+
 	authGroup := api.Group("/auth")
 	{
 		authGroup.POST("/register", middleware.RateLimit(regLimiter, func(c *gin.Context) string { return "reg:" + middleware.ClientIP(c) }), authHandler.Register)
 		authGroup.POST("/login", middleware.RateLimit(loginLimiter, func(c *gin.Context) string { return "login:" + middleware.ClientIP(c) }), authHandler.Login)
 		authGroup.POST("/refresh", authHandler.Refresh)
 		authGroup.POST("/logout", authHandler.Logout)
-		authGroup.POST("/verify-email/send", middleware.Auth(secret), middleware.RateLimit(mailLimiter, func(c *gin.Context) string { return "mail:" + middleware.ClientIP(c) }), authHandler.VerifyEmailSend)
+		authGroup.POST("/verify-email/send", middleware.Auth(secret), passwordGate, middleware.RateLimit(mailLimiter, func(c *gin.Context) string { return "mail:" + middleware.ClientIP(c) }), authHandler.VerifyEmailSend)
 		authGroup.POST("/verify-email", authHandler.VerifyEmail)
 		authGroup.POST("/password/forgot", middleware.RateLimit(mailLimiter, func(c *gin.Context) string { return "mail:" + middleware.ClientIP(c) }), authHandler.ForgotPassword)
 		authGroup.POST("/password/reset", authHandler.ResetPassword)
@@ -249,7 +262,7 @@ func main() {
 	// 全站业务接口要求登录且账号未封禁；注销冷静期的账号可以浏览，但生成与下单被拦截。
 	active := middleware.RequireActiveUser(gormDB)
 
-	me := api.Group("/me", middleware.Auth(secret), active)
+	me := api.Group("/me", middleware.Auth(secret), active, passwordGate)
 	{
 		me.GET("", accountHandler.GetMe)
 		me.PATCH("", accountHandler.UpdateMe)
@@ -259,7 +272,7 @@ func main() {
 		me.POST("/deletion/cancel", accountHandler.CancelDeletion)
 	}
 
-	canvases := api.Group("/canvases", middleware.Auth(secret), active)
+	canvases := api.Group("/canvases", middleware.Auth(secret), active, passwordGate)
 	{
 		canvases.GET("", canvasHandler.List)
 		canvases.POST("", canvasHandler.Create)
@@ -269,7 +282,7 @@ func main() {
 		canvases.DELETE("/:id", canvasHandler.Delete)
 	}
 
-	assets := api.Group("/assets", middleware.Auth(secret), active)
+	assets := api.Group("/assets", middleware.Auth(secret), active, passwordGate)
 	{
 		assets.GET("", assetHandler.List)
 		assets.POST("", assetHandler.Create)
@@ -278,7 +291,7 @@ func main() {
 		assets.DELETE("/:id", assetHandler.Delete)
 	}
 
-	generations := api.Group("/generations", middleware.Auth(secret), active)
+	generations := api.Group("/generations", middleware.Auth(secret), active, passwordGate)
 	{
 		generations.GET("", generationHandler.List)
 		generations.GET("/:id", generationHandler.Get)
@@ -286,7 +299,7 @@ func main() {
 	}
 
 	// 社区：作品复用用户素材，浏览无需额外权限，发布与互动需登录。
-	community := api.Group("/community", middleware.Auth(secret), active)
+	community := api.Group("/community", middleware.Auth(secret), active, passwordGate)
 	{
 		community.GET("/works", communityHandler.List)
 		community.GET("/works/mine", communityHandler.MyWorks)
@@ -300,7 +313,7 @@ func main() {
 	}
 
 	// 运营活动：签到与邀请返利只进赠送桶。
-	activity := api.Group("/activity", middleware.Auth(secret), active)
+	activity := api.Group("/activity", middleware.Auth(secret), active, passwordGate)
 	{
 		activity.GET("/checkin", activityHandler.CheckinStatus)
 		activity.POST("/checkin", activityHandler.Checkin)
@@ -312,7 +325,7 @@ func main() {
 	api.GET("/settings/public", adminHandler.PublicSettings)
 
 	// AI 报价与生成：全部走平台目录与服务端托管的渠道。
-	ai := api.Group("/ai", middleware.Auth(secret), active)
+	ai := api.Group("/ai", middleware.Auth(secret), active, passwordGate)
 	{
 		ai.POST("/quote", aiHandler.Quote)
 		ai.POST("/images/generations", aiHandler.Images)
@@ -323,7 +336,7 @@ func main() {
 	}
 
 	// 媒体读路径额外认 ic_media cookie（GET/HEAD），写路径只认 Bearer。
-	media := api.Group("/media", middleware.MediaAuth(secret), active)
+	media := api.Group("/media", middleware.MediaAuth(secret), active, passwordGate)
 	{
 		media.HEAD("/:storageKey", mediaHandler.Head)
 		media.GET("/:storageKey", mediaHandler.Get)
@@ -332,7 +345,7 @@ func main() {
 	}
 
 	// 点数、档位与模型目录
-	billing := api.Group("", middleware.Auth(secret), active)
+	billing := api.Group("", middleware.Auth(secret), active, passwordGate)
 	{
 		billing.GET("/credits", creditHandler.GetBalance)
 		billing.GET("/credits/transactions", creditHandler.ListTransactions)
@@ -342,7 +355,7 @@ func main() {
 	}
 
 	// 订单：下单额外要求不在注销冷静期，并按用户限流防刷垃圾待支付订单。
-	orders := api.Group("/orders", middleware.Auth(secret), active)
+	orders := api.Group("/orders", middleware.Auth(secret), active, passwordGate)
 	{
 		orders.POST("", middleware.RequireNotPendingDeletion(),
 			middleware.RateLimit(orderLimiter, func(c *gin.Context) string { return "order:" + c.GetString("user_id") }),
@@ -355,51 +368,10 @@ func main() {
 	// 支付回调是唯一的公开写接口：不鉴权但必须验签。
 	api.POST("/payments/webhook/:provider", paymentHandler.Webhook)
 
-	// 管理后台：非管理员返回 403，前端隐藏入口只是体验优化。
-	admin := api.Group("/admin", middleware.Auth(secret), active, middleware.AdminOnly())
-	{
-		admin.GET("/stats", adminHandler.Stats)
-		admin.GET("/users", adminHandler.ListUsers)
-		admin.GET("/users/:id", adminHandler.GetUser)
-		admin.PATCH("/users/:id", adminHandler.PatchUser)
-		admin.POST("/users/:id/password", adminHandler.ResetPassword)
-		admin.POST("/users/:id/credits", adminHandler.AdjustCredits)
-		admin.POST("/users/:id/usage/recalculate", adminHandler.RecalculateUsage)
-		admin.POST("/users/:id/media/reclaim", adminHandler.ReclaimMedia)
-		admin.GET("/models", adminHandler.ListModels)
-		admin.POST("/models", adminHandler.CreateModel)
-		admin.PATCH("/models/:id", adminHandler.UpdateModel)
-		admin.DELETE("/models/:id", adminHandler.DeleteModel)
-		admin.GET("/model-promotions", adminHandler.ListPromotions)
-		admin.POST("/model-promotions", adminHandler.CreatePromotion)
-		admin.PATCH("/model-promotions/:id", adminHandler.UpdatePromotion)
-		admin.GET("/credit-packages", adminHandler.ListPackages)
-		admin.POST("/credit-packages", adminHandler.CreatePackage)
-		admin.PATCH("/credit-packages/:id", adminHandler.UpdatePackage)
-		admin.GET("/orders", adminHandler.ListOrders)
-		admin.GET("/channels", adminHandler.ListChannels)
-		admin.POST("/channels", adminHandler.CreateChannel)
-		admin.PATCH("/channels/:id", adminHandler.UpdateChannel)
-		admin.DELETE("/channels/:id", adminHandler.DeleteChannel)
-		admin.POST("/requests/refunds/retry", adminHandler.RetryRefunds)
-		admin.GET("/moderation/records", adminHandler.ListModerationRecords)
-		admin.GET("/moderation/records/:id", adminHandler.GetModerationRecord)
-		admin.GET("/moderation/records/:id/preview", adminHandler.PreviewModerationArtifact)
-		admin.PATCH("/moderation/records/:id", adminHandler.ReviewModerationRecord)
-		admin.POST("/moderation/records/:id/compensate", adminHandler.CompensateModeration)
-		admin.GET("/moderation/stats", adminHandler.ModerationStats)
-		admin.GET("/settings", adminHandler.GetSettings)
-		admin.PATCH("/settings", adminHandler.UpdateSettings)
-		admin.GET("/admins", adminHandler.ListAdmins)
-		admin.POST("/admins", adminHandler.AddAdmin)
-		admin.DELETE("/admins/:id", adminHandler.RemoveAdmin)
-		admin.GET("/audit-logs", adminHandler.ListAuditLogs)
-		admin.GET("/community/works", adminHandler.ListCommunityWorks)
-		admin.PATCH("/community/works/:id", adminHandler.PatchCommunityWork)
-		admin.GET("/community/reports", adminHandler.ListCommunityReports)
-		admin.PATCH("/community/reports/:id", adminHandler.PatchCommunityReport)
-		admin.GET("/stats/revenue", adminHandler.RevenueStats)
-	}
+	// 管理后台：每请求按库里的角色判定权限（不读 JWT 里的 role claim，避免 15 分钟陈旧授权），
+	// 具体权限点由 registerAdminRoutes 逐条挂载。
+	admin := api.Group("/admin", middleware.Auth(secret), active, passwordGate, middleware.LoadAdminAccess(gormDB))
+	registerAdminRoutes(admin, adminHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

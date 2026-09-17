@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -166,17 +168,6 @@ func MediaAuth(secret []byte) gin.HandlerFunc {
 	}
 }
 
-// AdminOnly 要求用户角色为 admin。
-func AdminOnly() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.GetString("user_role") != "admin" {
-			errs.Abort(c, errs.ErrForbidden)
-			return
-		}
-		c.Next()
-	}
-}
-
 // VerifyExistingUser 加载当前用户并拒绝已封禁或已注销的账号。
 // 第一期签发的 access token 在封禁后 15 分钟内仍有效，这里按库里的最新状态拦截，
 // 撤销 refresh token 负责让会话在那之后彻底失效。
@@ -206,6 +197,47 @@ func RequireNotPendingDeletion() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.GetString("user_status") == "pending_deletion" {
 			errs.Abort(c, errs.ErrAccountPendingDeletion)
+			return
+		}
+		c.Next()
+	}
+}
+
+// passwordChangeAllowlist 是强制改密期间仍然放行的路由：登出与刷新用于维持或结束会话，
+// 改密接口本身是唯一的出口，其余接口（含 /api/me、管理后台与媒体读）一律拦截。
+var passwordChangeAllowlist = map[string]bool{
+	"POST /api/auth/logout":  true,
+	"POST /api/auth/refresh": true,
+	"POST /api/me/password":  true,
+}
+
+// RequirePasswordChanged 拦截 must_change_password 的用户，返回 403 PASSWORD_CHANGE_REQUIRED。
+//
+// 必须挂在 Auth（以及 RequireActiveUser）之后：只读上下文里的 user_id，标志每请求从库里读，
+// 用户改密成功后下一个请求立即放行，不需要等 access token 过期。
+// 未挂 Auth 的路由不会命中（user_id 为空即按未授权拒绝），fail closed。
+func RequirePasswordChanged(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if passwordChangeAllowlist[c.Request.Method+" "+c.FullPath()] {
+			c.Next()
+			return
+		}
+		uid, err := uuid.Parse(c.GetString("user_id"))
+		if err != nil {
+			errs.Abort(c, errs.ErrUnauthorized)
+			return
+		}
+		var row struct{ MustChangePassword bool }
+		err = db.Model(&model.User{}).Select("must_change_password").Where("id = ?", uid).Take(&row).Error
+		if err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				slog.Error("读取强制改密标记失败", "err", err, "user_id", uid)
+			}
+			errs.Abort(c, errs.ErrUnauthorized)
+			return
+		}
+		if row.MustChangePassword {
+			errs.Abort(c, errs.ErrPasswordChangeRequired)
 			return
 		}
 		c.Next()

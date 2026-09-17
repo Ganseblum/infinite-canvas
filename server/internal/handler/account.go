@@ -195,19 +195,18 @@ func (h *AccountHandler) ChangePassword(c *gin.Context) {
 	}
 	now := time.Now()
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&user).Update("password_hash", hash).Error; err != nil {
+		// 改密同时清掉强制改密标记：这是该标志唯一的清除点。
+		if err := tx.Model(&user).Updates(map[string]any{
+			"password_hash":        hash,
+			"must_change_password": false,
+		}).Error; err != nil {
 			return err
 		}
-		// 撤销除当前会话外的全部 refresh token
-		currentHash := ""
-		if cookie, err := c.Cookie(RefreshCookieName); err == nil {
-			currentHash = auth.HashToken(cookie)
-		}
-		q := tx.Model(&model.RefreshToken{}).Where("user_id = ? AND revoked_at IS NULL", uid)
-		if currentHash != "" {
-			q = q.Where("token_hash <> ?", currentHash)
-		}
-		return q.Update("revoked_at", now).Error
+		// 撤销该用户全部 refresh token（含当前会话），旧令牌一律失效；
+		// 事务外再签发一套新会话，保证当前页面不用重新登录。
+		return tx.Model(&model.RefreshToken{}).
+			Where("user_id = ? AND revoked_at IS NULL", uid).
+			Update("revoked_at", now).Error
 	})
 	if err != nil {
 		slog.Error("修改密码失败", "err", err)

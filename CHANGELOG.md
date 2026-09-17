@@ -2,6 +2,16 @@
 
 ## Unreleased
 
++ [新增] 管理后台拆分为独立应用 `admin/`（Vite + React），部署为独立容器与独立域名（测试 `sim-admin.youc.online` → 3101，正式预留 3201）。admin 通过路径别名复用 `web/src` 的会话、请求层、主题与 i18n 外壳，复用边界由白名单脚本在构建前断言；`admin/index.html` 不再加载主站的 `/admin` 路由。
++ [新增] 服务端新增 CORS 中间件与 `CORS_ALLOWED_ORIGINS` 白名单（默认空 = 关闭）：白名单来源精确回显 Origin 并允许凭证、放行 `Authorization` 预检、暴露 `Retry-After`；非白名单来源不加任何 CORS 头且正常放行。这是 admin 独立域名跨源直连主站 API 的前提。
++ [新增] 完整 RBAC：`roles` / `permissions` / `role_permissions` 三张表与 `users.role_key`，23 个权限点绑定现有全部管理路由；权限目录在代码中定义、启动时幂等同步进库，界面只配置「角色 ↔ 权限」分配。管理路由改为经强制权限参数的注册器注册，漏挂权限在编译期即不可能。
++ [调整] 管理接口的授权由 JWT 里的角色声明改为每请求查库，降权即时生效（原先最长 15 分钟陈旧）；`AdminOnly` 退役。
++ [新增] 管理后台拥有独立登录页，未登录不再引导去主站；非后台角色落到说明页且不会被登出。登录页与登出按钮明确提示「登录态与主站共用」。
++ [新增] 管理员建号接口 `POST /api/admin/users`：服务端生成一次性临时密码（仅响应返回一次，不入库不入审计），建号即断言邮箱已验证并置 `must_change_password`；置位账号除登出/刷新/改密外一律拦截。
++ [调整] 管理后台的页面与接口从主站移除（`web/src/pages/admin/**`、`admin-layout.tsx`、`services/api/admin.ts`），主站用户菜单入口改为跳转 `ADMIN_BASE_URL`（值为空则隐藏）。
++ [修复] 修正 admin 应用未加载运行期 `config.js` 导致 `API_BASE_URL` 为空、跨域请求打到 admin 域自身并返回 405 的问题。
++ [修复] 修正 `roles`/`permissions` 表使用 MySQL 保留字 `key` 作列名导致启动时迁移与目录同步失败、api 反复重启的问题，列名改为 `role_key` / `permission_key`。
+
 + [调整] 服务端转发给上游 AI 的请求参数按原版逐条对齐：恢复对话 system 消息（原来被静默丢弃导致 systemPrompt 失效）、补 `output_format`、图像尺寸按比例换算并做原版校验、质量别名归一、背景只放行透明、图像与视频响应兼容 `data|images|results` 与 `{code,data}` 信封及多种结果 URL 字段、Gemini `imageSize` 映射修正（high 对应 4K）并按模型 gating、Gemini 参考视频与音频不再丢弃、视频模式按参考图数量判定、视频尺寸按原版公式换算且恒发、时长裁剪到 4..30 秒、语音白名单与语速裁剪。新增 `provider` 包单元测试（此前该包无任何测试）。
 + [调整] 视频生成的模式由前端显式传递（此前界面可选但请求未带上，实际一律走参考图模式）；模式不参与计价，因此不进报价参数哈希。
 + [调整] 数据模型的 269 个字段补齐中文注释并随之生成数据库列注释；主键列因 GORM 限制不会补注释、表注释 GORM 不支持，两者需额外脚本。

@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/model"
 )
 
@@ -77,6 +78,9 @@ func Migrate(gormDB *gorm.DB) error {
 		&model.CommunityReport{},
 		&model.CheckinRecord{},
 		&model.UserInvite{},
+		&model.Role{},
+		&model.Permission{},
+		&model.RolePermission{},
 	)
 }
 
@@ -102,13 +106,13 @@ func SeedPlans(gormDB *gorm.DB) error {
 	return nil
 }
 
-// EnsureAdmin 依据 ADMIN_EMAIL 创建或提升首个管理员。
-// 只在用户不存在时创建；用户已存在但 role 不是 admin 时提升；
-// 绝不重置已有管理员的密码。
+// EnsureAdmin 依据 ADMIN_EMAIL 创建或提升首个管理员，写入的是系统角色 admin。
+// 只在用户不存在时创建；用户已存在但角色不是系统角色时提升；绝不重置已有管理员的密码。
 func EnsureAdmin(gormDB *gorm.DB, email, password string) error {
 	if email == "" || password == "" {
 		return errors.New("ADMIN_EMAIL 与 ADMIN_PASSWORD 不能为空")
 	}
+	roleKey := authz.SystemRoleKey
 	var user model.User
 	err := gormDB.Where("email = ?", email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -122,7 +126,8 @@ func EnsureAdmin(gormDB *gorm.DB, email, password string) error {
 			Username:     "admin",
 			PasswordHash: string(hash),
 			DisplayName:  "管理员",
-			Role:         "admin",
+			Role:         authz.RoleProjection(&roleKey),
+			RoleKey:      &roleKey,
 			Status:       "active",
 		}
 		if err := gormDB.Create(&admin).Error; err != nil {
@@ -134,8 +139,8 @@ func EnsureAdmin(gormDB *gorm.DB, email, password string) error {
 	if err != nil {
 		return fmt.Errorf("查询管理员失败: %w", err)
 	}
-	if user.Role != "admin" {
-		if err := gormDB.Model(&user).Update("role", "admin").Error; err != nil {
+	if user.RoleKey == nil || *user.RoleKey != authz.SystemRoleKey {
+		if err := authz.AssignRole(gormDB, user.ID, &roleKey); err != nil {
 			return fmt.Errorf("提升管理员失败: %w", err)
 		}
 		slog.Info("已将用户提升为管理员", "email", email)

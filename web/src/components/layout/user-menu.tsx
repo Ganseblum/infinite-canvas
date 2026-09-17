@@ -5,8 +5,14 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import { getApiErrorMessage } from "@/lib/api-error";
+import { ADMIN_BASE_URL } from "@/constant/runtime-config";
 import { sendVerifyEmail } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/use-auth-store";
+
+// 管理后台是独立域名，入口必须是绝对地址；运行期未配置（该环境没有独立后台）时整个入口隐藏。
+// 可见性仍按 user.role 判断：它是 role_key 的保守投影，只有系统角色会投影成 admin，
+// 自定义角色的管理员不会在主站看到入口（宁可少给入口，也不多给）。
+const adminConsoleUrl = ADMIN_BASE_URL.replace(/\/+$/, "");
 
 export function UserMenu() {
     const { message } = App.useApp();
@@ -32,7 +38,6 @@ export function UserMenu() {
     const handleMenuClick = async (key: string) => {
         if (key === "profile") navigate("/profile");
         else if (key === "billing") navigate("/billing");
-        else if (key === "admin") navigate("/admin");
         else if (key === "logout") await logout();
         else if (key === "verify") {
             try {
@@ -67,7 +72,20 @@ export function UserMenu() {
               ]),
         { key: "profile", icon: <UserRound className="size-4" />, label: t("userMenu.profile") },
         { key: "billing", icon: <CreditCard className="size-4" />, label: t("userMenu.billing") },
-        ...(user.role === "admin" ? [{ key: "admin", icon: <Settings2 className="size-4" />, label: t("userMenu.admin") }] : []),
+        ...(user.role === "admin" && adminConsoleUrl
+            ? [
+                  {
+                      key: "admin",
+                      icon: <Settings2 className="size-4" />,
+                      // 用 a 标签而不是 navigate：跨域跳转不该走 SPA 路由，也保留「在新标签打开 / 复制链接」。
+                      label: (
+                          <a href={adminConsoleUrl} className="text-inherit">
+                              {t("userMenu.admin")}
+                          </a>
+                      ),
+                  },
+              ]
+            : []),
         { type: "divider" },
         { key: "logout", icon: <LogOut className="size-4" />, label: t("userMenu.logout") },
     ];

@@ -164,5 +164,9 @@ func NewEmailToken() (plain string, hash string, err error) {
 	return NewRefreshToken()
 }
 
+// NewTemporaryPassword 生成管理员建号时交付的一次性临时密码。
+// crypto/rand.Text() 使用 base32 字符集（A-Z2-7，不含 0/1 等易混淆字符），26 位约 130 位熵。
+func NewTemporaryPassword() string { return rand.Text() }
+
 // RoleUser 是新建用户的默认角色。
 const RoleUser = "user"

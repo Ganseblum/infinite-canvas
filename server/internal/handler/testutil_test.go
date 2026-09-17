@@ -23,6 +23,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/infinite-canvas/server/internal/auth"
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/db"
 	"github.com/infinite-canvas/server/internal/mail"
@@ -51,6 +52,10 @@ func newTestDB(t *testing.T) *gorm.DB {
 	}
 	if err := db.SeedPlans(g); err != nil {
 		t.Fatalf("写入默认档位失败: %v", err)
+	}
+	// 与生产启动一致：同步系统角色与权限点投影，管理接口的权限判定依赖它。
+	if err := authz.Sync(g); err != nil {
+		t.Fatalf("同步角色与权限目录失败: %v", err)
 	}
 	return g
 }
@@ -298,6 +303,23 @@ func accessToken(t *testing.T, cfg *config.Config, user *model.User) string {
 		t.Fatalf("签发 access token 失败: %v", err)
 	}
 	return token
+}
+
+// setUserRole 直接写库分配角色（同时更新旧 role 投影列），用于构造后台角色夹具。
+func setUserRole(t *testing.T, g *gorm.DB, user *model.User, roleKey *string) {
+	t.Helper()
+	if err := authz.AssignRole(g, user.ID, roleKey); err != nil {
+		t.Fatalf("分配角色失败: %v", err)
+	}
+	user.RoleKey = roleKey
+	user.Role = authz.RoleProjection(roleKey)
+}
+
+// promoteAdmin 把用户提升为系统角色管理员。
+func promoteAdmin(t *testing.T, g *gorm.DB, user *model.User) {
+	t.Helper()
+	key := authz.SystemRoleKey
+	setUserRole(t, g, user, &key)
 }
 
 // ===== 第二期资源接口测试辅助 =====

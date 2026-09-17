@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -46,7 +45,7 @@ func (p *ArkProvider) doJSON(ctx context.Context, method, url string, payload an
 	}
 	resp, err := p.Client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
@@ -110,7 +109,8 @@ func (p *ArkProvider) CreateVideo(ctx context.Context, req VideoRequest) (VideoT
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(data, &created); err != nil || created.ID == "" {
-		return VideoTask{}, fmt.Errorf("上游未返回视频任务 id")
+		// 2xx 但认不出任务句柄，记 502 以触发渠道切换。
+		return VideoTask{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "上游未返回视频任务 id"}
 	}
 	return VideoTask{Provider: "ark", UpstreamTaskID: created.ID, PollAfterMs: 5000}, nil
 }
@@ -131,7 +131,7 @@ func (p *ArkProvider) PollVideo(ctx context.Context, task VideoTask) (VideoState
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return VideoState{}, fmt.Errorf("解析 Ark 任务失败: %w", err)
+		return VideoState{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "解析 Ark 任务失败: " + err.Error()}
 	}
 	switch payload.Status {
 	case "succeeded", "success":

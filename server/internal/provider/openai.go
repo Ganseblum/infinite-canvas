@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -64,7 +65,7 @@ func (p *OpenAIProvider) doJSON(ctx context.Context, method, path string, payloa
 	}
 	resp, err := p.Client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
@@ -153,7 +154,7 @@ func (p *OpenAIProvider) Images(ctx context.Context, req ImageRequest) (ImageRes
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	resp, err := p.Client.Do(httpReq)
 	if err != nil {
-		return ImageResult{}, err
+		return ImageResult{}, classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
@@ -206,7 +207,8 @@ type openAIImageResponse struct {
 func parseOpenAIImages(raw []byte) (ImageResult, error) {
 	var payload openAIImageResponse
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return ImageResult{}, fmt.Errorf("解析图像响应失败: %w", err)
+		// 2xx 但响应形状无法解析，按既有约定记 502，让重试与切渠道判定可见。
+		return ImageResult{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "解析图像响应失败: " + err.Error()}
 	}
 	if code, ok := numericCode(payload.Code); ok && code != 0 {
 		message := payload.Msg
@@ -230,7 +232,7 @@ func parseOpenAIImages(raw []byte) (ImageResult, error) {
 		if item.B64JSON != "" {
 			decoded, err := base64.StdEncoding.DecodeString(item.B64JSON)
 			if err != nil {
-				return ImageResult{}, fmt.Errorf("解码 base64 图像失败: %w", err)
+				return ImageResult{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "解码 base64 图像失败: " + err.Error()}
 			}
 			result.Images = append(result.Images, GeneratedImage{Data: decoded, MimeType: "image/png"})
 			continue
@@ -281,7 +283,7 @@ func (p *OpenAIProvider) Speech(ctx context.Context, req SpeechRequest) (SpeechR
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := p.Client.Do(httpReq)
 	if err != nil {
-		return SpeechResult{}, err
+		return SpeechResult{}, classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 128<<20))
@@ -291,8 +293,16 @@ func (p *OpenAIProvider) Speech(ctx context.Context, req SpeechRequest) (SpeechR
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return SpeechResult{}, &ErrUpstream{Status: resp.StatusCode, Body: string(data)}
 	}
+	// 上游 200 却回 JSON 错误信封时，绝不能把错误体当音频字节落盘（此时点数已扣）。
 	mimeType := resp.Header.Get("Content-Type")
-	if mimeType == "" || strings.Contains(mimeType, "json") {
+	if strings.Contains(strings.ToLower(mimeType), "json") {
+		message := jsonErrorMessage(data)
+		if message == "" {
+			message = "上游返回 JSON 错误响应而非音频"
+		}
+		return SpeechResult{}, &ErrUpstream{Status: http.StatusBadGateway, Body: message}
+	}
+	if mimeType == "" {
 		mimeType = audioMimeType(req.Format)
 	}
 	return SpeechResult{Data: data, MimeType: mimeType}, nil
@@ -350,7 +360,7 @@ func (p *OpenAIProvider) CreateVideo(ctx context.Context, req VideoRequest) (Vid
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	resp, err := p.Client.Do(httpReq)
 	if err != nil {
-		return VideoTask{}, err
+		return VideoTask{}, classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -360,9 +370,16 @@ func (p *OpenAIProvider) CreateVideo(ctx context.Context, req VideoRequest) (Vid
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return VideoTask{}, &ErrUpstream{Status: resp.StatusCode, Body: string(data)}
 	}
+	// 信封里带非 0 业务错误码说明上游没有建出任务，按上游错误返回并触发渠道切换。
+	if message := envelopeErrorMessage(data); message != "" {
+		return VideoTask{}, &ErrUpstream{Status: http.StatusBadGateway, Body: message}
+	}
 	var created openAIVideoPayload
 	if err := json.Unmarshal(unwrapJSONEnvelope(data), &created); err != nil || created.ID == "" {
-		return VideoTask{}, fmt.Errorf("上游未返回视频任务 id")
+		// 上游可能已经建好任务，只是响应里认不出句柄：尽力取消遗留任务，避免孤儿占用上游并发。
+		p.cancelOrphanVideo(ctx, data)
+		// 2xx 但认不出任务句柄与上面的信封业务错误同属响应形状异常，记 502 以触发渠道切换。
+		return VideoTask{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "上游未返回视频任务 id"}
 	}
 	return VideoTask{Provider: "openai", UpstreamTaskID: created.ID, PollAfterMs: 5000}, nil
 }
@@ -416,15 +433,80 @@ func unwrapJSONEnvelope(raw []byte) []byte {
 	return envelope.Data
 }
 
+// envelopeErrorMessage 识别 {code,msg} 信封里的业务错误：仅当 code 是非 0 数字时返回消息。
+// 字符串形式的 code 按「不是信封」处理，与 numericCode、unwrapJSONEnvelope 的约定一致。
+func envelopeErrorMessage(raw []byte) string {
+	var envelope struct {
+		Code    json.RawMessage `json:"code"`
+		Msg     string          `json:"msg"`
+		Message string          `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	code, ok := numericCode(envelope.Code)
+	if !ok || code == 0 {
+		return ""
+	}
+	if envelope.Msg != "" {
+		return envelope.Msg
+	}
+	if envelope.Message != "" {
+		return envelope.Message
+	}
+	return "上游返回业务错误 code=" + string(bytes.TrimSpace(envelope.Code))
+}
+
+// cancelOrphanVideo 创建视频后本地没拿到任务句柄时，尽力从原始响应里识别上游任务 id
+// 并请求取消，避免任务在上游继续占用并发与计费。识别或取消失败只留日志，不影响原本的错误返回。
+func (p *OpenAIProvider) cancelOrphanVideo(ctx context.Context, raw []byte) {
+	var probe struct {
+		ID     string `json:"id"`
+		TaskID string `json:"task_id"`
+		Data   *struct {
+			ID     string `json:"id"`
+			TaskID string `json:"task_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		slog.Warn("视频任务句柄解析失败且响应不是 JSON，放弃取消遗留任务")
+		return
+	}
+	id := firstNonEmpty(probe.ID, probe.TaskID)
+	if id == "" && probe.Data != nil {
+		id = firstNonEmpty(probe.Data.ID, probe.Data.TaskID)
+	}
+	if id == "" {
+		slog.Warn("视频任务句柄解析失败且无法识别上游任务 id，放弃取消遗留任务")
+		return
+	}
+	req, err := p.newRequest(ctx, http.MethodDelete, p.endpoint("/videos/"+id), nil)
+	if err != nil {
+		slog.Warn("构造取消遗留视频任务请求失败", "task", id, "err", err)
+		return
+	}
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		slog.Warn("取消遗留视频任务失败", "task", id, "err", err)
+		return
+	}
+	defer resp.Body.Close()
+	slog.Warn("已请求取消遗留视频任务", "task", id, "status", resp.StatusCode)
+}
+
 // PollVideo 查询一次任务状态；上游返回结果 URL 时下载交给 handler。
 func (p *OpenAIProvider) PollVideo(ctx context.Context, task VideoTask) (VideoState, error) {
 	data, err := p.doJSON(ctx, http.MethodGet, "/videos/"+task.UpstreamTaskID, nil)
 	if err != nil {
 		return VideoState{}, err
 	}
+	// 信封里的业务错误是终态：立刻判失败并让上层退款，不能当成 pending 轮询到总超时。
+	if message := envelopeErrorMessage(data); message != "" {
+		return VideoState{Status: "failed", Error: message}, nil
+	}
 	var payload openAIVideoPayload
 	if err := json.Unmarshal(unwrapJSONEnvelope(data), &payload); err != nil {
-		return VideoState{}, fmt.Errorf("解析视频任务失败: %w", err)
+		return VideoState{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "解析视频任务失败: " + err.Error()}
 	}
 	if url := payload.resultURL(); url != "" {
 		return VideoState{Status: "succeeded", Video: &GeneratedImage{URL: url, MimeType: "video/mp4"}}, nil
@@ -451,7 +533,7 @@ func (p *OpenAIProvider) downloadVideoContent(ctx context.Context, task VideoTas
 	}
 	resp, err := p.Client.Do(req)
 	if err != nil {
-		return VideoState{}, err
+		return VideoState{}, classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -498,7 +580,7 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 	httpReq.Header.Set("Accept", "text/event-stream")
 	resp, err := p.Client.Do(httpReq)
 	if err != nil {
-		return err
+		return classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -506,10 +588,13 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 		return &ErrUpstream{Status: resp.StatusCode, Body: string(body)}
 	}
 
-	reader := newSSEReader(resp.Body)
+	// bodySnippet 记录响应体开头，供「200 但不是 SSE」的错误信息引用。
+	bodySnippet := &bodySnippetReader{source: resp.Body, max: 512}
+	reader := newSSEReader(bodySnippet)
 	finishReason := "stop"
 	var pendingCalls []ToolCall
 	text := newStreamTextState()
+	sawEvent := false
 	for {
 		event, data, err := reader.Next()
 		if err == io.EOF {
@@ -518,6 +603,8 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 		if err != nil {
 			return err
 		}
+		// 收到任意 data 行即认定 SSE 框架成立（含 [DONE]，以及心跳间夹杂的正常事件）。
+		sawEvent = true
 		if data == "" || data == "[DONE]" {
 			continue
 		}
@@ -571,6 +658,15 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 				finishReason = "tool_calls"
 			}
 		}
+	}
+	if !sawEvent {
+		// 200 却没有任何 SSE 事件（JSON 错误体、HTML 错误页、空响应）：
+		// 不能当成空流成功收场，否则调用方会扣点并给用户一个无提示的空回复。
+		message := "上游响应不是 SSE 流"
+		if excerpt := bodySnippet.excerpt(); excerpt != "" {
+			message += ": " + excerpt
+		}
+		return &ErrUpstream{Status: http.StatusBadGateway, Body: message}
 	}
 	for _, call := range pendingCalls {
 		if err := sink.ToolCall(call); err != nil {
@@ -684,6 +780,22 @@ func responseErrorMessage(payload map[string]any) string {
 	return ""
 }
 
+// jsonErrorMessage 从 JSON 错误体里提取简短消息，提取不到返回空串。
+// 只取 message / msg 字段，不把上游原始响应体整段带出去。
+func jsonErrorMessage(data []byte) string {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	if message := responseErrorMessage(payload); message != "" {
+		return message
+	}
+	if message, ok := payload["message"].(string); ok {
+		return message
+	}
+	return ""
+}
+
 // responseFailureMessage 给 response.failed / response.incomplete 兜底出可读错误。
 // 这两类事件没有 error 对象时会被当成普通事件忽略，请求以「空流成功」收场。
 func responseFailureMessage(kind string, payload map[string]any) string {
@@ -718,6 +830,35 @@ func newStreamTextState() *streamTextState {
 type sseReader struct {
 	reader *bufioReader
 	event  string
+}
+
+// bodySnippetReader 包装响应体并保留前 max 字节，用于在「200 但不是 SSE」时给出可诊断的错误。
+type bodySnippetReader struct {
+	source io.Reader
+	prefix []byte
+	max    int
+}
+
+func (r *bodySnippetReader) Read(p []byte) (int, error) {
+	n, err := r.source.Read(p)
+	if n > 0 && len(r.prefix) < r.max {
+		room := r.max - len(r.prefix)
+		if n < room {
+			room = n
+		}
+		r.prefix = append(r.prefix, p[:room]...)
+	}
+	return n, err
+}
+
+// excerpt 把保留的前缀压成单行短摘要，避免把上游响应体整段带出去。
+func (r *bodySnippetReader) excerpt() string {
+	text := strings.Join(strings.Fields(string(r.prefix)), " ")
+	runes := []rune(text)
+	if len(runes) > 200 {
+		runes = runes[:200]
+	}
+	return string(runes)
 }
 
 type bufioReader = stringsReader
@@ -793,4 +934,14 @@ func audioMimeType(format string) string {
 	default:
 		return "audio/mpeg"
 	}
+}
+
+// firstNonEmpty 返回第一个非空字符串。
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

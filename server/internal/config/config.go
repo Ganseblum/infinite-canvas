@@ -34,6 +34,10 @@ type Config struct {
 	// ClientIP 直接使用 RemoteAddr；仅当来源命中这些网段时才解析 X-Real-IP / X-Forwarded-For。
 	TrustedProxies []string
 
+	// CORSAllowedOrigins 是允许跨源调用 API 的来源白名单（完整来源，如 https://sim-admin.youc.online）。
+	// 为空表示完全不启用 CORS，行为与没有 CORS 处理时一致；仅管理后台独立部署时按环境显式开启。
+	CORSAllowedOrigins []string
+
 	MailDriver   string // smtp | log
 	SMTPHost     string
 	SMTPPort     string
@@ -187,6 +191,12 @@ func Load() (*Config, error) {
 	}
 	c.TrustedProxies = trustedProxies
 
+	corsOrigins, err := parseCORSAllowedOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	if err != nil {
+		return nil, err
+	}
+	c.CORSAllowedOrigins = corsOrigins
+
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -207,6 +217,34 @@ func parseTrustedProxies(raw string) ([]string, error) {
 		proxies = append(proxies, part)
 	}
 	return proxies, nil
+}
+
+// parseCORSAllowedOrigins 解析逗号分隔的跨源来源白名单，空值表示不启用 CORS。
+// 非法来源直接报错：CORS 配错只会由浏览器在运行期表现成随机失败，留到启动时暴露。
+func parseCORSAllowedOrigins(raw string) ([]string, error) {
+	var origins []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "*") {
+			return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS 不支持通配符: %s", part)
+		}
+		u, err := url.Parse(part)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS 含非法来源: %s（必须形如 https://sim-admin.youc.online）", part)
+		}
+		// 来源必须是不带 path/query/锚点/用户信息、且无末尾点的 scheme://host[:port]。
+		if u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS 含非法来源: %s（不能带路径、查询、锚点或用户信息）", part)
+		}
+		if strings.HasSuffix(u.Hostname(), ".") {
+			return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS 含非法来源: %s（主机名不能以点结尾）", part)
+		}
+		origins = append(origins, part)
+	}
+	return origins, nil
 }
 
 func (c *Config) validate() error {

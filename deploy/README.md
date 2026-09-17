@@ -233,3 +233,62 @@ ssh -f -N -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
 - 隧道直达**测试环境的库**，Navicat 里的改动会立刻影响测试站和连同一后端的本地页面。
 - 本机若曾跑过独立的本地 Go + 本地 MySQL，那是另一套数据，与隧道无关；确认连接指向哪个端口，别把两套数据搞混。
 - 本机不要同时再起一个连测试库的 Go 进程：迁移、定时任务会双跑，且两端 `MEDIA_ROOT` 不同导致媒体互相读不到。共享媒体与执行开关尚未实现。
+
+## 管理后台跨源（CORS）
+
+管理后台拆成独立域名（如 `https://sim-admin.youc.online`）后，前端跨源直连主站 API，需要在 api 侧按环境显式开启 CORS：
+
+- `CORS_ALLOWED_ORIGINS`：逗号分隔的完整来源白名单，例如 `https://sim-admin.youc.online`；**留空即完全不启用 CORS**，未配置的环境行为与之前完全一致。测试与正式各自填写自己的后台域名。
+- 只对白名单来源精确回显 `Access-Control-Allow-Origin`（绝不使用 `*`）并允许携带凭证；预检 `OPTIONS` 在鉴权与限流之前直接返回 `204`。
+- `Access-Control-Expose-Headers: Retry-After` 是必需的：限流响应（429）的 `Retry-After` 不在 CORS 安全列表响应头里，不暴露则前端读不到等待秒数，倒计时会退化成「请稍后重试」。
+- 非白名单来源（同源主站、curl、监控、支付回调）不加任何 `Access-Control-*` 头并照常放行，不会返回 403；是否跨源由浏览器判断，服务端只决定是否授权。
+- 非法来源（缺 scheme、带路径、尾斜杠、查询、通配符或末尾点）会直接导致 api 启动失败，配置错误在启动时暴露而不是留到浏览器表现成随机失败。
+
+## 管理后台独立应用（admin/，只到「代码就位」）
+
+> 本节记录的是该批次的结论；部署件已在下一节补齐，本节末尾的「上线前需要补」清单以下一节为准。
+
+仓库里新增了独立的 `admin/` 前端应用（本地 `cd admin && bun install && bun run dev`，端口 5174）。**本批不部署**：Dockerfile、compose 服务、nginx 站点与镜像都没动，`web/` 也照旧提供 `/admin/*`；从 web 删除路由与页面属于后续切换批次。上线前需要补：
+
+- 构建产物与镜像：admin 只有 `vite build`，还没有 Dockerfile 与入口脚本；跨源部署时 `API_BASE_URL` 需要像主站一样在运行期注入（前端已按 `window.__RUNTIME_CONFIG__` 读取，缺注入时退回同源 `/api`）。
+- 站点与 CORS：`deploy/nginx-*.conf` 里还没有 admin 域名，服务端按上面「管理后台跨源（CORS）」配置 `CORS_ALLOWED_ORIGINS`；独立域名后要重新确认管理页面与 `/api/admin/*` 的暴露面（建议叠加访问策略）。
+- 本地开发必须走 admin 自己的 `/api` 代理（`localhost:5174` 直连 `127.0.0.1:8080` 属于跨站，`Secure` cookie 写不进去，会表现成「登录不工作」），理由与边界约定见 `admin/README.md`。
+
+## 管理后台独立容器（部署件已就位，尚未上线）
+
+admin 的镜像、compose 服务、入口脚本与站点模板都已加好；DNS 与证书未就绪，**本批不执行部署**（不跑 `./deploy.sh test up`）。
+
+### 构建上下文必须是仓库根
+
+admin 通过 vite 别名 `@` → `web/src` 复用主站外壳（清单见 `admin/scripts/web-whitelist.mjs`），所以 compose 里是 `context: .` + `dockerfile: admin/Dockerfile`，**不要**改成 `context: ./admin`：别名目标和 `web/src/styles/globals.css` 都会不在上下文里，构建直接挂在解析阶段。Dockerfile 里同时装 `web/` 与 `admin/` 两处依赖——`web/node_modules` 是必需的，web 的 globals.css 用裸包名引 `tailwindcss` / `tw-animate-css` / `shadcn`，只按该 CSS 文件所在目录向上找 `node_modules`，`admin/node_modules` 不在解析路径上（本地开发同样是两个 `node_modules` 并存，行为一致）。
+
+### 与主站容器的差异
+
+- **独立端口、不做 Host 分流**：admin 走 `127.0.0.1:3101`（测试）/`3201`（正式），容器内 nginx 只做 SPA fallback 与 `config.js` 禁缓存，**没有 `/api` 反代**——admin 跨域直连主站 API 正是这个方案的目的。
+- **不写 `depends_on: api`**：admin 是纯静态、容器内没有 upstream，依赖只会让 api 重建时多等一轮，拖慢回滚。
+- **入口脚本独立**：`admin/docker-entrypoint.sh` 只写 `API_BASE_URL` / `SITE_ENV` 两个键。刻意不复用 `web/docker-entrypoint.sh`，因为那个脚本会写 `ANALYTICS_GA4_ID` / `ANALYTICS_BAIDU_ID`——在 admin 服务上多设一个统计变量就会让第三方统计脚本跑在管理后台里，把管理员操作暴露给第三方。
+
+### 新增的环境变量
+
+| 变量 | 测试 | 正式 | 用途与约束 |
+| --- | --- | --- | --- |
+| `ADMIN_IMAGE` | `infinite-canvas-admin:test` | `infinite-canvas-admin:prod` | admin 镜像 tag，与主站一样按环境区分 |
+| `ADMIN_PORT` | `3101` | `3201` | 只绑 `127.0.0.1`，公网走宿主机 nginx |
+| `ADMIN_API_BASE_URL` | `https://sim-art.youc.online` | 主站正式域名 | admin 要连的主站 API，**必须非空绝对地址**；容器内注入为 `API_BASE_URL` |
+| `ADMIN_BASE_URL` | `https://sim-admin.youc.online` | 正式后台域名 | 主站用户菜单跳转后台用，属 app 服务的变量 |
+| `CORS_ALLOWED_ORIGINS` | `https://sim-admin.youc.online` | 正式后台域名 | api 侧跨源白名单，留空即完全不启用 CORS |
+
+`API_BASE_URL`（主站前端，同源部署时留空）与 `ADMIN_API_BASE_URL`（admin，必须非空）是两个不同的键，不要互填。
+
+### 运行期注入与生效方式
+
+容器启动时 `/docker-entrypoint.d/40-admin-runtime-config.sh` 生成 `/usr/share/nginx/html/config.js`：
+
+- `API_BASE_URL` 为空时**容器拒绝启动**并打印明确错误。admin 域上没有 `/api`，留空只会让所有请求打到 admin 自己身上变成 404，属于静默故障，宁可不启动。
+- `config.js` 由容器启动时生成，**改 env 文件必须重建容器才生效**：`./deploy.sh <env> up -d` 已把 admin 加入固定的 `--force-recreate` 列表（与 app 同理，见 `deploy.sh` 顶部注释）。
+
+### 站点与验收顺序
+
+站点模板 `deploy/nginx-sim-admin.youc.online.conf`：先只上 HTTP，`nginx -t && systemctl reload nginx`，再 `certbot --nginx --redirect -d sim-admin.youc.online` 补证书与跳转。它比主站模板简单：没有 `/api` 反代，`client_max_body_size` 只给 1m（后台不传文件），另加 `X-Robots-Tag: noindex` 避免后台入口被搜索引擎收录。
+
+上线前仍需：DNS 解析、证书签发、在正式/测试 env 文件里填齐上表变量，并按「管理后台跨源（CORS）」一节确认 `CORS_ALLOWED_ORIGINS` 与 `ADMIN_API_BASE_URL` 指向同一个环境的主站。

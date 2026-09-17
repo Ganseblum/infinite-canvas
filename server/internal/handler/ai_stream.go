@@ -33,17 +33,21 @@ func (h *AIHandler) chatStream(c *gin.Context, user model.User, request *model.A
 	callCtx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 
+	// 流式路径整个请求共用一个 sink：客户端已收到的字节无法撤回，
+	// callChat 靠 sink.produced() 判定「已产出即终止」。
+	sinkFor := func() provider.StreamSink { return sink }
 	// 上游在独立 goroutine 里跑；本函数负责心跳、空闲超时与断开取消。
 	done := make(chan error, 1)
 	go func() {
-		done <- h.callChat(callCtx, catalogItem, provider.ChatRequest{
+		_, err := h.callChat(callCtx, catalogItem, provider.ChatRequest{
 			Model:           catalogItem.Name,
 			Messages:        req.Messages,
 			ReasoningEffort: req.ReasoningEffort,
 			Tools:           req.Tools,
 			ToolChoice:      req.ToolChoice,
 			Stream:          true,
-		}, sink)
+		}, sinkFor)
+		done <- err
 	}()
 
 	timeouts := h.upstream.Timeouts()

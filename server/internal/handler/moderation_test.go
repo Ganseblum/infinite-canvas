@@ -264,10 +264,7 @@ func TestModerationReviewConflictAndCompensation(t *testing.T) {
 	r, aiHandler := newAITestRouterWithModeration(t, g, cfg, moderationService)
 
 	admin := createUser(t, g, "adminmod@example.com", "adminmod", "password123", true)
-	if err := g.Model(&model.User{}).Where("id = ?", admin.ID).Update("role", "admin").Error; err != nil {
-		t.Fatalf("提升管理员失败: %v", err)
-	}
-	admin.Role = "admin"
+	promoteAdmin(t, g, &admin)
 	adminToken := accessToken(t, cfg, &admin)
 	user := createUser(t, g, "modreview@example.com", "modreview", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)

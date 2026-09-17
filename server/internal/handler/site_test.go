@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
@@ -57,28 +58,25 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 	me := api.Group("/me", middleware.Auth(secret), active)
 	me.GET("", accountHandler.GetMe)
 
-	admin := api.Group("/admin", middleware.Auth(secret), active, middleware.AdminOnly())
-	admin.GET("/settings", adminHandler.GetSettings)
-	admin.PATCH("/settings", adminHandler.UpdateSettings)
-	admin.GET("/admins", adminHandler.ListAdmins)
-	admin.POST("/admins", adminHandler.AddAdmin)
-	admin.DELETE("/admins/:id", adminHandler.RemoveAdmin)
-	admin.GET("/audit-logs", adminHandler.ListAuditLogs)
-	admin.GET("/community/works", adminHandler.ListCommunityWorks)
-	admin.PATCH("/community/works/:id", adminHandler.PatchCommunityWork)
-	admin.GET("/community/reports", adminHandler.ListCommunityReports)
-	admin.PATCH("/community/reports/:id", adminHandler.PatchCommunityReport)
-	admin.GET("/stats/revenue", adminHandler.RevenueStats)
+	admin := api.Group("/admin", middleware.Auth(secret), active, middleware.LoadAdminAccess(g))
+	admin.GET("/settings", middleware.RequirePermission(authz.PermSettingsRead), adminHandler.GetSettings)
+	admin.PATCH("/settings", middleware.RequirePermission(authz.PermSettingsWrite), adminHandler.UpdateSettings)
+	admin.GET("/admins", middleware.RequirePermission(authz.PermRolesRead), adminHandler.ListAdmins)
+	admin.POST("/admins", middleware.RequirePermission(authz.PermRolesManage), adminHandler.AddAdmin)
+	admin.DELETE("/admins/:id", middleware.RequirePermission(authz.PermRolesManage), adminHandler.RemoveAdmin)
+	admin.GET("/audit-logs", middleware.RequirePermission(authz.PermAuditRead), adminHandler.ListAuditLogs)
+	admin.GET("/community/works", middleware.RequirePermission(authz.PermCommunityRead), adminHandler.ListCommunityWorks)
+	admin.PATCH("/community/works/:id", middleware.RequirePermission(authz.PermCommunityWrite), adminHandler.PatchCommunityWork)
+	admin.GET("/community/reports", middleware.RequirePermission(authz.PermCommunityRead), adminHandler.ListCommunityReports)
+	admin.PATCH("/community/reports/:id", middleware.RequirePermission(authz.PermCommunityWrite), adminHandler.PatchCommunityReport)
+	admin.GET("/stats/revenue", middleware.RequirePermission(authz.PermStatsRevenue), adminHandler.RevenueStats)
 	return r, settings
 }
 
 func createAdminUser(t *testing.T, g *gorm.DB, cfg *config.Config, email, username string) (model.User, string) {
 	t.Helper()
 	user := createUser(t, g, email, username, "password123", true)
-	if err := g.Model(&model.User{}).Where("id = ?", user.ID).Update("role", "admin").Error; err != nil {
-		t.Fatalf("提升管理员失败: %v", err)
-	}
-	user.Role = "admin"
+	promoteAdmin(t, g, &user)
 	return user, accessToken(t, cfg, &user)
 }
 

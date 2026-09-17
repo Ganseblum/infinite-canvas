@@ -63,7 +63,7 @@ func (p *GeminiProvider) doJSON(ctx context.Context, method, url string, payload
 	}
 	resp, err := p.Client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
@@ -149,7 +149,8 @@ func (p *GeminiProvider) Images(ctx context.Context, req ImageRequest) (ImageRes
 		}
 		var parsed geminiPayload
 		if err := json.Unmarshal(data, &parsed); err != nil {
-			return ImageResult{}, fmt.Errorf("解析 Gemini 响应失败: %w", err)
+			// 2xx 但响应形状无法解析，按既有约定记 502。
+			return ImageResult{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "解析 Gemini 响应失败: " + err.Error()}
 		}
 		if message := geminiErrorMessage(parsed); message != "" {
 			return ImageResult{}, &ErrUpstream{Status: http.StatusBadGateway, Body: message}
@@ -253,7 +254,8 @@ func (p *GeminiProvider) CreateVideo(ctx context.Context, req VideoRequest) (Vid
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(data, &operation); err != nil || operation.Name == "" {
-		return VideoTask{}, fmt.Errorf("上游未返回视频任务 name")
+		// 2xx 但认不出任务句柄，记 502 以触发渠道切换。
+		return VideoTask{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "上游未返回视频任务 name"}
 	}
 	return VideoTask{Provider: "gemini", UpstreamTaskID: operation.Name, PollAfterMs: 10000}, nil
 }
@@ -288,7 +290,7 @@ func (p *GeminiProvider) PollVideo(ctx context.Context, task VideoTask) (VideoSt
 		} `json:"response"`
 	}
 	if err := json.Unmarshal(data, &operation); err != nil {
-		return VideoState{}, fmt.Errorf("解析 Gemini 任务失败: %w", err)
+		return VideoState{}, &ErrUpstream{Status: http.StatusBadGateway, Body: "解析 Gemini 任务失败: " + err.Error()}
 	}
 	if operation.Error != nil && operation.Error.Message != "" {
 		return VideoState{Status: "failed", Error: operation.Error.Message}, nil
@@ -342,7 +344,7 @@ func (p *GeminiProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := p.Client.Do(httpReq)
 	if err != nil {
-		return err
+		return classifyUpstreamDoErr(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -350,9 +352,12 @@ func (p *GeminiProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 		return &ErrUpstream{Status: resp.StatusCode, Body: string(body)}
 	}
 
-	reader := newSSEReader(resp.Body)
+	// bodySnippet 记录响应体开头，与 openai.go 同一判据：整条流没有任何 data 行即非 SSE。
+	bodySnippet := &bodySnippetReader{source: resp.Body, max: 512}
+	reader := newSSEReader(bodySnippet)
 	finishReason := "stop"
 	var calls []ToolCall
+	sawEvent := false
 	for {
 		_, data, err := reader.Next()
 		if err == io.EOF {
@@ -361,6 +366,8 @@ func (p *GeminiProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 		if err != nil {
 			return err
 		}
+		// 收到任意 data 行（含 [DONE]）即认定 SSE 框架成立。
+		sawEvent = true
 		if data == "" || data == "[DONE]" {
 			continue
 		}
@@ -395,6 +402,15 @@ func (p *GeminiProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 				}
 			}
 		}
+	}
+	if !sawEvent {
+		// 200 却没有任何 SSE 事件（JSON 错误体、HTML 错误页、空响应）不能当成空流成功收场，
+		// 否则调用方会扣点并给用户一个无提示的空回复。
+		message := "上游响应不是 SSE 流"
+		if excerpt := bodySnippet.excerpt(); excerpt != "" {
+			message += ": " + excerpt
+		}
+		return &ErrUpstream{Status: http.StatusBadGateway, Body: message}
 	}
 	for _, call := range calls {
 		if err := sink.ToolCall(call); err != nil {

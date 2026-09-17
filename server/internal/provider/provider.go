@@ -11,7 +11,11 @@ import (
 // ErrCapabilityUnsupported 表示该渠道不支持请求的能力，handler 统一映射成 400 MODEL_NOT_SUPPORTED。
 var ErrCapabilityUnsupported = errors.New("该渠道不支持此能力")
 
-// ErrUpstream 表示上游返回非 2xx 或响应无法解析，供 handler 区分网络错误与上游错误。
+// ErrUpstream 表示上游错误，供 handler 区分网络错误与上游错误并决定重试与切渠道。
+// Status > 0 是上游真实 HTTP 状态码（非 2xx 用真实码；2xx 但响应形状无法解析的
+// 按仓内既有约定归一为 502）；Status == 0 是连接层失败：Client.Do 报错且未收到任何
+// 响应（连接拒绝、DNS 失败等）。请求被取消或超时（context.Canceled / DeadlineExceeded）
+// 不进这个类型，由各 provider 原样上抛。
 type ErrUpstream struct {
 	Status int
 	Body   string
@@ -22,6 +26,18 @@ func (e *ErrUpstream) Error() string {
 		return "上游请求失败"
 	}
 	return "上游返回 " + strconv.Itoa(e.Status)
+}
+
+// classifyUpstreamDoErr 统一归类 Client.Do 的错误：取消与超时原样上抛（不得重试），
+// 其余都是未收到任何响应的连接层失败，按约定打 ErrUpstream{Status: 0}。
+func classifyUpstreamDoErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &ErrUpstream{Status: 0, Body: err.Error()}
 }
 
 // InlineMedia 是已经读入内存的参考素材。handler 从媒体存储读取，provider 只负责编码上传。

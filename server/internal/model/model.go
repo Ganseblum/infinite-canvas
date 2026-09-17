@@ -13,8 +13,13 @@ type User struct {
 	PasswordHash string    `gorm:"type:varchar(100);not null;comment:登录密码的 bcrypt 哈希，不存明文"`
 	DisplayName  string    `gorm:"type:varchar(64);not null;default:'';comment:展示昵称，可与用户名不同"`
 	AvatarURL    string    `gorm:"type:varchar(512);not null;default:'';comment:头像图片地址，空串表示未设置"`
-	Role         string    `gorm:"type:varchar(16);not null;default:user;comment:账号角色，user 普通用户、admin 管理员"`
-	Status       string    `gorm:"type:varchar(24);not null;default:active;comment:账号状态，active 正常、disabled 已封禁、pending_deletion 待注销"` // active | disabled | pending_deletion
+	// Role 是旧的角色投影列，仅作回滚安全带保留，不再作为授权依据；
+	// 由 authz.AssignRole 统一同步为 role_key 的保守投影（admin / user）。
+	Role    string  `gorm:"type:varchar(16);not null;default:user;comment:旧角色投影列，不再作为授权依据，仅作回滚安全带"`
+	RoleKey *string `gorm:"type:varchar(64);index;comment:后台角色标识，指向 roles.key，空值表示没有后台角色；授权只看这一列"`
+	Status  string  `gorm:"type:varchar(24);not null;default:active;comment:账号状态，active 正常、disabled 已封禁、pending_deletion 待注销"` // active | disabled | pending_deletion
+	// MustChangePassword 由管理员重置密码后置位，要求用户下次登录修改密码。
+	MustChangePassword bool `gorm:"not null;default:false;comment:是否必须修改密码"`
 	// InviteCode 可空：唯一索引允许多行 NULL；注册时生成，用于邀请返利。
 	InviteCode          *string    `gorm:"type:varchar(16);uniqueIndex;comment:本人的邀请码，注册时生成，空值表示未生成"`
 	DeletionScheduledAt *time.Time `gorm:"comment:注销生效时间，到期后由后台任务真正删除账号"`

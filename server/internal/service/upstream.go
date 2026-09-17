@@ -282,31 +282,29 @@ func isBlockedIP(ip net.IP) bool {
 	return false
 }
 
-// ShouldFailover 判断上游错误是否值得切到下一个渠道：只在尚未产生输出时。
+// ShouldFailover 判断上游错误是否值得切到下一个渠道：只在尚未产生输出时，
+// 由 handler 在调用侧保证。能力不支持与未打标的本地错误都不切。
 func ShouldFailover(err error) bool {
-	var upstream *provider.ErrUpstream
-	if !errors.As(err, &upstream) {
-		// 网络类错误（连接失败、DNS 失败）值得切换。
-		return true
+	if errors.Is(err, provider.ErrCapabilityUnsupported) {
+		return false
 	}
-	switch upstream.Status {
-	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusInternalServerError:
+	return IsRetryableUpstream(err)
+}
+
+// IsRetryableUpstream 按规划的重试表分类：连接层失败（ErrUpstream{Status:0}，连接拒绝、
+// DNS 失败等）与上游 5xx 可原渠道重试一次；429、400、422、401、403 是上游明确拒绝，
+// 重试还是错，一律不重试；ctx 取消与未打标的本地错误也不重试。
+func IsRetryableUpstream(err error) bool {
+	var up *provider.ErrUpstream
+	if !errors.As(err, &up) {
+		return false
+	}
+	switch up.Status {
+	case 0, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false
 	}
-}
-
-// IsRetryableUpstream 判断上游 5xx 是否值得原渠道重试一次。
-func IsRetryableUpstream(err error) bool {
-	var upstream *provider.ErrUpstream
-	if errors.As(err, &upstream) {
-		return upstream.Status == http.StatusInternalServerError ||
-			upstream.Status == http.StatusBadGateway ||
-			upstream.Status == http.StatusServiceUnavailable ||
-			upstream.Status == http.StatusGatewayTimeout
-	}
-	return true
 }
 
 // UpstreamStatus 从错误里取出上游状态码，供错误响应与日志使用。

@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/auth"
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
@@ -65,6 +66,178 @@ var adminUserSorts = map[string]string{
 	"purchasedMicros": "purchased_micros",
 	"grantedMicros":   "granted_micros",
 	"storageBytes":    "storage_bytes",
+}
+
+type createUserReq struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
+	RoleKey     string `json:"roleKey"`
+}
+
+// CreateUser 管理员建号：服务端生成一次性临时密码，只在本次 201 响应里返回明文；
+// 邮箱由管理员断言为已验证，账号强制首次登录改密。审计摘要只记账号属性，绝不写密码。
+func (h *AdminHandler) CreateUser(c *gin.Context) {
+	var req createUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	displayName := strings.TrimSpace(req.DisplayName)
+	roleKey := strings.TrimSpace(req.RoleKey)
+	fields := map[string]string{}
+	if !emailRe.MatchString(email) {
+		fields["email"] = "邮箱格式不正确"
+	}
+	if roleKey == "" {
+		fields["roleKey"] = "必须指定角色"
+	}
+	if len([]rune(displayName)) > 64 {
+		fields["displayName"] = "展示昵称不能超过 64 个字符"
+	}
+	if len(fields) > 0 {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, fields))
+		return
+	}
+	var role model.Role
+	if err := h.db.First(&role, "role_key = ?", roleKey).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"roleKey": "角色不存在"}))
+			return
+		}
+		slog.Error("读取角色失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	password := auth.NewTemporaryPassword()
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		slog.Error("生成临时密码哈希失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	now := time.Now()
+	user := model.User{
+		ID:                 uuid.New(),
+		Email:              email,
+		PasswordHash:       hash,
+		DisplayName:        displayName,
+		Role:               authz.RoleProjection(&roleKey),
+		RoleKey:            &roleKey,
+		Status:             "active",
+		MustChangePassword: true,
+		EmailVerifiedAt:    &now,
+	}
+	actorID, _ := uuid.Parse(c.GetString("user_id"))
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		username, err := pickUsername(tx, email)
+		if err != nil {
+			return err
+		}
+		user.Username = username
+		if user.DisplayName == "" {
+			user.DisplayName = username
+		}
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		// 账本行随建号一起建，与注册保持一致，后续读余额不需要处理「行不存在」。
+		if err := h.credits.EnsureCredit(tx, user.ID); err != nil {
+			return err
+		}
+		return h.audit.Record(tx, actorID, "user.create", "user", user.ID.String(), c.GetString("request_id"), "",
+			nil, gin.H{
+				"email":              user.Email,
+				"username":           user.Username,
+				"displayName":        user.DisplayName,
+				"roleKey":            roleKey,
+				"emailVerified":      true,
+				"emailVerifiedBy":    "admin",
+				"mustChangePassword": true,
+				"note":               "由管理员建号并断言邮箱，用户首次登录必须修改临时密码",
+			})
+	})
+	if err != nil {
+		if isUniqueViolation(err, "email") {
+			errs.Abort(c, errs.ErrEmailTaken)
+			return
+		}
+		if isUniqueViolation(err, "username") {
+			errs.Abort(c, errs.ErrUsernameTaken)
+			return
+		}
+		slog.Error("管理员建号失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{
+		"user": gin.H{
+			"id":                 user.ID.String(),
+			"email":              user.Email,
+			"username":           user.Username,
+			"displayName":        user.DisplayName,
+			"roleKey":            roleKeyJSON(user.RoleKey),
+			"status":             user.Status,
+			"emailVerified":      user.EmailVerifiedAt != nil,
+			"mustChangePassword": user.MustChangePassword,
+			"createdAt":          formatTime(user.CreatedAt),
+		},
+		// 明文只在这里出现一次：库里只存 bcrypt 哈希，审计摘要与后续查询都不回传。
+		"temporaryPassword": password,
+	})
+}
+
+// pickUsername 按邮箱本地部分生成用户名，冲突时追加最小可用的数字后缀（user、user2、user3…）。
+// 与注册的 username 规则一致：只保留字母、数字、下划线与连字符，长度 3-32。
+func pickUsername(tx *gorm.DB, email string) (string, error) {
+	base := usernameBase(email)
+	var taken []string
+	if err := tx.Model(&model.User{}).
+		Where("username = ? OR username LIKE ?", base, base+"%").
+		Pluck("username", &taken).Error; err != nil {
+		return "", err
+	}
+	used := make(map[string]struct{}, len(taken))
+	for _, name := range taken {
+		used[name] = struct{}{}
+	}
+	if _, exists := used[base]; !exists {
+		return base, nil
+	}
+	for i := 2; i <= 999; i++ {
+		candidate := fmt.Sprintf("%s%d", base, i)
+		if _, exists := used[candidate]; !exists {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("邮箱本地部分生成的用户名已用尽")
+}
+
+// usernameBase 提取用户名基底：只保留注册规则允许的字符，全部被丢弃时回落到 user，
+// 长度截到 28 位，给数字后缀留出空间。
+func usernameBase(email string) string {
+	local := email
+	if idx := strings.IndexByte(email, '@'); idx >= 0 {
+		local = email[:idx]
+	}
+	var b strings.Builder
+	for _, r := range local {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		}
+	}
+	name := b.String()
+	if name == "" {
+		return "user"
+	}
+	if len(name) > 28 {
+		name = name[:28]
+	}
+	if len(name) < 3 {
+		name += "user"[:3-len(name)]
+	}
+	return name
 }
 
 // planIDExpr 是统一档位表达式的 SQL 版本，用户列表的筛选与展示都复用它。
@@ -125,6 +298,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		Email           string
 		Username        string
 		Role            string
+		RoleKey         *string
 		Status          string
 		EmailVerifiedAt *time.Time
 		CreatedAt       time.Time
@@ -133,7 +307,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		PaidUntil       *time.Time
 		StorageBytes    int64
 	}
-	selectExpr := fmt.Sprintf(`users.id, users.email, users.username, users.role, users.status,
+	selectExpr := fmt.Sprintf(`users.id, users.email, users.username, users.role, users.role_key, users.status,
 		users.email_verified_at, users.created_at,
 		COALESCE(c.purchased_micros, 0) AS purchased_micros,
 		COALESCE(c.granted_micros, 0) AS granted_micros,
@@ -158,6 +332,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"email":           row.Email,
 			"username":        row.Username,
 			"role":            row.Role,
+			"roleKey":         roleKeyJSON(row.RoleKey),
 			"status":          row.Status,
 			"emailVerified":   row.EmailVerifiedAt != nil,
 			"planId":          service.PlanOf(credit, now),
@@ -194,6 +369,7 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		"email":           user.Email,
 		"username":        user.Username,
 		"role":            user.Role,
+		"roleKey":         roleKeyJSON(user.RoleKey),
 		"status":          user.Status,
 		"emailVerified":   user.EmailVerifiedAt != nil,
 		"createdAt":       formatTime(user.CreatedAt),
@@ -239,6 +415,22 @@ func (h *AdminHandler) PatchUser(c *gin.Context) {
 	actorID, _ := uuid.Parse(c.GetString("user_id"))
 	now := time.Now()
 	err := h.db.Transaction(func(tx *gorm.DB) error {
+		// 封禁前先确认不会把系统角色上的最后一个 active 用户停掉。
+		if *req.Status == "disabled" {
+			var target model.User
+			if err := tx.First(&target, "id = ?", userID).Error; err != nil {
+				return err
+			}
+			if isSystemRoleKey(target.RoleKey) {
+				remain, err := h.countActiveSystemMembers(tx, userID)
+				if err != nil {
+					return err
+				}
+				if remain == 0 {
+					return errLastSystemMember
+				}
+			}
+		}
 		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("status", *req.Status).Error; err != nil {
 			return err
 		}
@@ -253,6 +445,12 @@ func (h *AdminHandler) PatchUser(c *gin.Context) {
 		return h.audit.Record(tx, actorID, "user.status", "user", userID.String(), c.GetString("request_id"), "", nil,
 			gin.H{"status": *req.Status})
 	})
+	if errors.Is(err, errLastSystemMember) {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{
+			"status": "系统角色必须保留至少一个 active 用户，不能封禁最后一个管理员",
+		}))
+		return
+	}
 	if err != nil {
 		slog.Error("更新用户状态失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -282,8 +480,14 @@ func (h *AdminHandler) ResetPassword(c *gin.Context) {
 	}
 	actorID, _ := uuid.Parse(c.GetString("user_id"))
 	now := time.Now()
+	// 管理员重置他人密码要求下次登录改密；自己给自己重置不置位，否则会把自己锁进改密流程。
+	mustChange := actorID != userID
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("password_hash", hash).Error; err != nil {
+		// 密码由管理员指定，接口不回传明文。
+		if err := tx.Model(&model.User{}).Where("id = ?", userID).Updates(map[string]any{
+			"password_hash":        hash,
+			"must_change_password": mustChange,
+		}).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&model.RefreshToken{}).
@@ -291,7 +495,8 @@ func (h *AdminHandler) ResetPassword(c *gin.Context) {
 			Update("revoked_at", now).Error; err != nil {
 			return err
 		}
-		return h.audit.Record(tx, actorID, "user.password_reset", "user", userID.String(), c.GetString("request_id"), "", nil, nil)
+		return h.audit.Record(tx, actorID, "user.password_reset", "user", userID.String(), c.GetString("request_id"), "",
+			nil, gin.H{"mustChangePassword": mustChange})
 	})
 	if err != nil {
 		slog.Error("重置密码失败", "err", err)

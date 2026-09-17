@@ -19,8 +19,34 @@ services:
     environment:
       SITE_ENV: "${SITE_ENV:-production}"
       API_BASE_URL: "${API_BASE_URL:-}"
+      # 管理后台的对外域名：主站用户菜单的后台入口用它拼绝对地址，留空则整个入口隐藏。
+      # 与下面 admin 服务的 API_BASE_URL（指向主站 API）不是一回事，别混。
+      ADMIN_BASE_URL: "${ADMIN_BASE_URL:-}"
     #   ANALYTICS_GA4_ID: G-XXXXXXXXXX                    # Google Analytics 4 衡量 ID
     #   ANALYTICS_BAIDU_ID: xxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 百度统计站点 ID
+
+  admin:
+    # 管理后台是独立静态站点，自建镜像，tag 同样按环境区分（测试 :test / 正式 :prod）。
+    image: ${ADMIN_IMAGE:?需要在 env 文件里设置 ADMIN_IMAGE}
+    # 构建上下文必须是仓库根：admin 复用 web/src 的外壳模块（见 admin/scripts/web-whitelist.mjs），
+    # 不要改成 context: ./admin，别名目标与 CSS 依赖都会找不到。
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+    # 端口只绑回环，公网访问一律走宿主机 nginx 反代 443；对外端口由 env 文件的 ADMIN_PORT 指定。
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:?需要在 env 文件里设置 ADMIN_PORT}:3000"
+    restart: unless-stopped
+    # 刻意不写 depends_on: api：admin 是纯静态、容器内没有 upstream，跨域直连主站 API，
+    # 加上依赖只会让 api 重建时多等一轮，拖慢回滚。
+    environment:
+      # 容器内的键名是 API_BASE_URL（admin 与主站共用同一份运行期配置读取代码），值取自 ADMIN_API_BASE_URL。
+      # 必须是非空绝对地址：admin 域上没有 /api，留空会让请求全打到 admin 自己身上变 404；入口脚本也会拒绝启动。
+      # 注意别把它和上面 app 服务的 API_BASE_URL 混了：那是主站的，同源部署时为空。
+      API_BASE_URL: "${ADMIN_API_BASE_URL:?需要在 env 文件里设置 ADMIN_API_BASE_URL}"
+      # 后台自己的对外域名：页面里指向主站的绝对链接用它拼（留空时降级为纯文本）。
+      ADMIN_BASE_URL: "${ADMIN_BASE_URL:-}"
+      SITE_ENV: "${SITE_ENV:-production}"
 
   api:
     # tag 与 app 一样按环境区分，防止测试构建污染正式镜像
@@ -38,6 +64,9 @@ services:
       COOKIE_SECURE: "${COOKIE_SECURE:-true}"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
+      # 跨源白名单：admin 独立域名启用后，管理后台会跨源直连本 API。
+      # 留空 = 完全关闭 CORS，行为与拆分前一致；改这里必须重建 api 容器才生效。
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-}"
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       MAIL_DRIVER: ${MAIL_DRIVER:-smtp}

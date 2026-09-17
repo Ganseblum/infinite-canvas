@@ -58,6 +58,16 @@ The current release needs manual verification in these areas:
 
 The Chinese version contains the complete item-by-item acceptance checklist.
 
+## 管理后台拆分与 RBAC（本版本新增，待你会话重启后验收）
+
+- **admin 独立站**：打开 `https://sim-admin.youc.online` 应看到登录页（不再是「请先在主站登录」的说明页）。用 `admin@youc.online` / `ad0403485260cc95d9aa` 登录后按 **F5 硬刷新应保持登录**——这一条同时验证了「同站跨源的 SameSite=Lax cookie 被带上」这个关键推断。登录页与侧边栏登出按钮上方应有「登录态与主站共用」的说明。
+- **非管理员账号**：用 `test@example.com` / `test123456` 登录 admin 域，应落到「当前账号没有后台访问权限」的说明页，且**不会被登出**（回主站仍是登录态）。
+- **按权限隐藏菜单**：在后台「系统 → 角色与成员」建一个只勾 `users.read` 的角色，用一个该角色的账号登录，菜单应只剩用户相关项；直输 `/admin/models` 应落到无权限页，且接口返回 403 而不是重试。
+- **角色管理**：建角色、改角色（按模块勾选权限）、删角色；系统角色 `admin` 的权限应不可编辑、不可删除；不能修改自己的角色；不能删除仍有成员的角色。
+- **主站入口**：主站用户菜单的后台入口应跳转到 admin 域；`admin.youc.online` 之外，主站 `/admin` 目前仍返回 200（SPA 兜底渲染 NotFound），**真 404 尚未实现**，属已知待办。
+- **上游请求对齐**（上一批，仍未在真环境逐项验）：文本对话的 systemPrompt 是否生效；图像尺寸是否按所选分辨率与比例换算成像素；视频的「首尾帧 / 通用参考」是否真的按界面所选发出；视频生成不应再出现 `409 QUOTE_STALE`。
+- **数据库注释**：Navicat 中非主键列应带中文注释（239/269）；主键列与表注释仍无，属已知限制。
+
 ## Upstream request alignment and model comments (pending verification)
 
 - Upstream request parameters: after aligning the server-side requests to the original implementation, verify against a real channel that the chat `systemPrompt` actually takes effect (it was silently dropped before); that image sizes are converted from the selected resolution and ratio into pixels; that Gemini channels report `imageSize` 4K on high quality; that the video mode selected in the UI (first-and-last-frame vs general reference) is the one actually sent (previously everything went out as reference); that Gemini video tasks carry their reference videos and audio; and that speech speed and voice take effect.

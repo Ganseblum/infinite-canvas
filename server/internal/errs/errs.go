@@ -85,6 +85,8 @@ var (
 	ErrContentRejected       = New(422, "CONTENT_REJECTED", "内容未通过审核")
 	ErrModerationUnavailable = New(503, "MODERATION_UNAVAILABLE", "内容审核服务暂不可用，请稍后重试")
 	ErrModerationReviewed    = New(409, "MODERATION_ALREADY_REVIEWED", "该审核记录已被复核")
+	// 第六期启用（RBAC 与管理员建号）
+	ErrPasswordChangeRequired = New(403, "PASSWORD_CHANGE_REQUIRED", "请先修改初始密码后再继续操作")
 )
 
 // AddConflict 返回带冲突说明的 VALIDATION_FAILED 副本，用于需要附带业务原因的 409 场景。

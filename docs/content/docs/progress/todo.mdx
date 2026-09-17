@@ -18,3 +18,22 @@ description: Planned follow-up work
 - Admin console deployment is documented in `deploy/README.md` (管理后台): it ships inside the same web app (`/admin/*`) and the same api (`/api/admin/*`), so no extra service, port, domain, or image is needed, and admin APIs are enforced server-side by `Auth` + `AdminOnly`. `ADMIN_EMAIL` / `ADMIN_PASSWORD` only bootstrap the first admin — an existing account is promoted, never re-password-reset — so editing the env file cannot recover a forgotten admin password. Still open: decide whether to restrict admin access before public launch (a proxy access policy covering both `/admin` and `/api/admin/`).
 - Scheduled backup for the canvas deployment is still open: after the test environment stabilizes, add a periodic `mysqldump --single-transaction`, a media volume archive, and the env file, restored as a set. Schema upgrades rely on `AutoMigrate`, which has no rollback, so dump production before every upgrade and rehearse the new version on the test environment first.
 - Local Go and server test Go sharing one test database: first deploy the same private test S3 bucket with browser-accessible presigned URLs/CORS, then implement controls for schema/seed/admin initialization, startup request convergence and background jobs; the server test Go is the default sole executor. Define setting-cache refresh/restart and schema compatibility. This full mode is not implemented; meanwhile local Vite can use the server test API through SSH without another Go process. Real deploy env files and the local runbook are now excluded from the Docker build context; before long-term operation, add ordinary-media cleanup scheduling and disk monitoring.
+
+## 管理后台拆分与 RBAC（进行中）
+
+- **批次 4（未做）**：主站 `/admin` 仍是 SPA 兜底返回 200 并渲染 NotFound 页面，还不是真 404。需要在宿主机 nginx 给主域加 `location = /admin` 与 `location ^~ /admin/` 返回 404（**不要**做 301 跳转，那会把 admin 主机名主动告诉匿名访客）。
+- **批次 3 的前端部分（未做）**：登录响应已带 `mustChangePassword`，但 admin 前端还没有强制改密的界面与流程；`POST /api/me/password` 是改密接口（不在 `/api/admin` 下）。
+- **两处待决策**：① `ADMIN_BASE_URL` 语义冲突——它按定义是「后台自己的域名」，但后台里指向主站 `/community/users/:id` 的链接用它拼接后仍落在后台域、依然 404，需要改用主站基址或新增变量；② 管理员重置**自己**的密码目前也会被强制走改密流程，是否排除自己未定。
+- **浏览器运行时验收（未做）**：admin 站的全部交互只验到构建与 HTTP 层。需实测：未登录落登录页、F5 硬刷新保持登录、非管理员落说明页且未被登出、按权限隐藏菜单、角色建改删、用户设置角色、强制改密流程、主站用户菜单后台入口在 `ADMIN_BASE_URL` 为空时消失。
+- **文档同步（未做）**：`deploy/README.md` 有一节仍写着「管理后台不需要额外部署服务、端口、域名或镜像」，拆分后这句话是错的；`deploy/README.md` 里 `ADMIN_BASE_URL` 的说明也需按上面第 ① 条更新。
+- **未验证**：线上 app 容器的 `config.js` 是否已带上 `ADMIN_BASE_URL`（web 侧入口脚本与 compose 已改，但没实测运行期注入结果）。
+
+## 上游请求对齐的收尾（未做）
+
+- 独立评审要求但未做的三项：录制请求体的 httptest（图像/视频/语音各一条，这正是能抓住「视频模式漏传」那类缺陷的层次）、原版常量逐值 dump 比对、变异测试（改坏一个归一值看测试是否变红）。
+- 独立调查发现的 6 个真实缺陷未修，按严重度：① `callChat` 在已吐出 delta 之后仍会切换渠道整段重放（用户看到重复正文 + 上游双计费，与本仓第四期规划冲突）；② 上游返回 200 但正文不是 SSE 时解析不出事件却返回成功，扣点后前端空流无提示；③ `IsRetryableUpstream` 对非上游错误一律放行，超出规划的重试表；④ 视频创建可能产生孤儿上游任务；⑤ 视频轮询不判 `200 + code!=0`，空转到 20 分钟总超时；⑥ 语音把 200 的 JSON 错误体当音频落盘。
+
+## 经验教训（已复现两次，建议写进 AGENTS.md）
+
+- **SQLite 单测覆盖不到 MySQL 特有错误。** 已发生两次：字符串列被建成 longtext 导致建唯一索引失败；以及用 MySQL 保留字 `key` 作列名导致 `Where("key = ?")` 语法错误、api 反复重启。两次都是 11 个测试包全绿而真库上炸。建议：涉及新表或新列名时，必须在一台真实 MySQL 上跑一次迁移。
+- **环境变量的 fail-fast 不等于模板真的读了它。** admin 容器入口脚本检查了 `API_BASE_URL` 非空，但 `index.html` 漏了加载 `/config.js`，于是变量检查通过而应用仍打错地址（表现为 POST 返回 405）。

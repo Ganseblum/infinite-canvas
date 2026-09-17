@@ -282,12 +282,13 @@ func (h *AIHandler) callImages(ctx context.Context, catalogItem model.ModelCatal
 	ctx, cancel := context.WithTimeout(ctx, timeout.ImageTotal)
 	defer cancel()
 	var lastErr error
-	attempts := 0
+	retried := false  // 当前渠道是否已原渠道重试过
+	usedChannels := 0 // 已尝试的渠道数，上限 2
 	for _, channel := range channels {
-		if attempts >= 2 {
+		if usedChannels >= 2 {
 			break
 		}
-		attempts++
+		usedChannels++
 		result, err := channel.Provider.Images(ctx, req)
 		if err == nil {
 			return result, nil
@@ -296,18 +297,21 @@ func (h *AIHandler) callImages(ctx context.Context, catalogItem model.ModelCatal
 		if errors.Is(err, provider.ErrCapabilityUnsupported) {
 			break
 		}
-		// 尚未产生任何输出时才重试一次，再决定是否切换渠道。
-		if service.IsRetryableUpstream(err) && attempts < 2 {
+		// 尚未产生任何输出时才按重试表原渠道重试一次，仍失败再切渠道。
+		if !retried && service.IsRetryableUpstream(lastErr) {
+			retried = true
 			if result, retryErr := channel.Provider.Images(ctx, req); retryErr == nil {
 				return result, nil
 			} else {
 				lastErr = retryErr
 			}
 		}
-		if !service.ShouldFailover(err) {
+		// 故障转移以最近一次失败为准，不能拿首次失败的错误判定。
+		if !service.ShouldFailover(lastErr) {
 			break
 		}
-		slog.Warn("图像请求切换渠道", "channel", channel.Channel.ID, "err", err)
+		retried = false // 切到新渠道后重试预算重新计算
+		slog.Warn("图像请求切换渠道", "channel", channel.Channel.ID, "err", lastErr)
 	}
 	return provider.ImageResult{}, lastErr
 }
@@ -901,15 +905,20 @@ func (h *AIHandler) Chat(c *gin.Context) {
 
 func (h *AIHandler) chatNonStream(c *gin.Context, user model.User, request *model.AIRequest, reserved *service.ReserveResult, catalogItem model.ModelCatalog, req chatRequest) {
 	started := time.Now()
-	sink := &collectSink{}
-	err := h.callChat(c.Request.Context(), catalogItem, provider.ChatRequest{
+	// 非流式每次尝试都用全新的 collectSink（由 callChat 逐次调用），
+	// 避免上一渠道的半截 tool_calls 与下一渠道的结果在累积式 sink 里叠加成脏数据。
+	var collect *collectSink
+	_, err := h.callChat(c.Request.Context(), catalogItem, provider.ChatRequest{
 		Model:           catalogItem.Name,
 		Messages:        req.Messages,
 		ReasoningEffort: req.ReasoningEffort,
 		Tools:           req.Tools,
 		ToolChoice:      req.ToolChoice,
 		Stream:          false,
-	}, sink)
+	}, func() provider.StreamSink {
+		collect = &collectSink{}
+		return collect
+	})
 	if err != nil {
 		h.failRequest(c, request, reserved, err, service.UpstreamStatus(err))
 		return
@@ -921,9 +930,9 @@ func (h *AIHandler) chatNonStream(c *gin.Context, user model.User, request *mode
 	remaining, _ := h.availableMicros(user.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"credits":      h.creditsPayload(request, remaining),
-		"content":      sink.text.String(),
-		"toolCalls":    sink.calls,
-		"finishReason": sink.finishReason,
+		"content":      collect.text.String(),
+		"toolCalls":    collect.calls,
+		"finishReason": collect.finishReason,
 	})
 }
 
@@ -948,29 +957,67 @@ func (s *collectSink) Done(finishReason string) {
 	s.finishReason = finishReason
 }
 
-func (h *AIHandler) callChat(ctx context.Context, catalogItem model.ModelCatalog, req provider.ChatRequest, sink provider.StreamSink) error {
+// producedSink 由流式 sink 实现：只要客户端已经收到过任何 delta 或 tool_call 事件，
+// callChat 就必须立即终止，不重试也不切渠道。非流式的 collectSink 不实现它，
+// 客户端还没收到任何字节，失败时照常走重试表。
+type producedSink interface{ produced() bool }
+
+// callChat 带故障转移地执行对话。sinkFor 在每次尝试时提供一个 sink：
+// 流式路径返回同一个 sink（客户端已收到字节就不能重来），非流式路径每次给全新的
+// collectSink。成功时返回实际采用的 sink。
+// 唯一的终止闸门是「客户端是否已收到任何字节」：已产出则立即返回 lastErr；
+// 此前失败才按重试表原渠道重试一次，仍失败再切下一个渠道（渠道数 ≤ 2）。
+func (h *AIHandler) callChat(ctx context.Context, catalogItem model.ModelCatalog, req provider.ChatRequest, sinkFor func() provider.StreamSink) (provider.StreamSink, error) {
 	channels, err := h.channelsFor(catalogItem)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	timeout := h.upstream.Timeouts()
 	ctx, cancel := context.WithTimeout(ctx, timeout.StreamTotal)
 	defer cancel()
 	var lastErr error
-	for index, channel := range channels {
-		if index >= 2 {
+	var adopted provider.StreamSink
+	retried := false  // 当前渠道是否已原渠道重试过
+	usedChannels := 0 // 已尝试的渠道数，上限 2
+	for _, channel := range channels {
+		if usedChannels >= 2 {
 			break
 		}
+		usedChannels++
+		sink := sinkFor()
 		err := channel.Provider.ChatStream(ctx, req, sink)
 		if err == nil {
-			return nil
+			return sink, nil
 		}
 		lastErr = err
-		if errors.Is(err, provider.ErrCapabilityUnsupported) || !service.ShouldFailover(err) {
+		adopted = sink
+		// 客户端已经收到过任何字节（delta 或 tool_call）：立即终止，避免重复正文。
+		if produced, ok := sink.(producedSink); ok && produced.produced() {
+			return adopted, lastErr
+		}
+		if errors.Is(err, provider.ErrCapabilityUnsupported) {
 			break
 		}
+		if !retried && service.IsRetryableUpstream(lastErr) {
+			retried = true
+			sink = sinkFor()
+			if retryErr := channel.Provider.ChatStream(ctx, req, sink); retryErr == nil {
+				return sink, nil
+			} else {
+				lastErr = retryErr
+				adopted = sink
+				if produced, ok := sink.(producedSink); ok && produced.produced() {
+					return adopted, lastErr
+				}
+			}
+		}
+		if !service.ShouldFailover(lastErr) {
+			break
+		}
+		retried = false // 切到新渠道后重试预算重新计算
+		slog.Warn("对话请求切换渠道", "channel", channel.Channel.ID, "err", lastErr)
 	}
-	return lastErr
+	return adopted, lastErr
 }
 
 // ===== 公共辅助 =====

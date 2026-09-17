@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/service"
@@ -140,12 +141,13 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, after)
 }
 
-// ===== 管理员管理 =====
+// ===== 管理员管理（过渡期兼容接口，内部已按角色模型实现） =====
 
-// ListAdmins 返回管理员列表，附带注册时间与最近登录时间。
+// ListAdmins 返回系统角色成员列表，附带注册时间与最近登录时间。
+// 过渡期保留：等价于筛选 role_key = admin 的后台成员。
 func (h *AdminHandler) ListAdmins(c *gin.Context) {
 	var admins []model.User
-	if err := h.db.Where("role = ?", "admin").Order("created_at ASC").Find(&admins).Error; err != nil {
+	if err := h.db.Where("role_key = ?", authz.SystemRoleKey).Order("created_at ASC").Find(&admins).Error; err != nil {
 		slog.Error("读取管理员列表失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
@@ -158,6 +160,7 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 			"username":    admins[i].Username,
 			"displayName": admins[i].DisplayName,
 			"status":      admins[i].Status,
+			"roleKey":     authz.SystemRoleKey,
 			"createdAt":   formatTime(admins[i].CreatedAt),
 			"lastLoginAt": formatTimePtr(admins[i].LastLoginAt),
 		})
@@ -169,7 +172,7 @@ type adminInviteReq struct {
 	Email string `json:"email"`
 }
 
-// AddAdmin 依据邮箱把已有用户提升为管理员。不创建新账号，避免绕过注册风控。
+// AddAdmin 依据邮箱把已有用户提升为系统角色成员。不创建新账号，避免绕过注册风控。
 func (h *AdminHandler) AddAdmin(c *gin.Context) {
 	var req adminInviteReq
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Email) == "" {
@@ -186,26 +189,36 @@ func (h *AdminHandler) AddAdmin(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	if user.Role == "admin" {
+	if isSystemRoleKey(user.RoleKey) {
 		errs.Abort(c, errs.AddConflict("该用户已经是管理员"))
 		return
 	}
 	actorID, _ := uuid.Parse(c.GetString("user_id"))
+	beforeName := h.roleDisplayName(user.RoleKey)
+	roleKey := authz.SystemRoleKey
+	afterName := h.roleDisplayName(&roleKey)
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.User{}).Where("id = ?", user.ID).Update("role", "admin").Error; err != nil {
+		if err := authz.AssignRole(tx, user.ID, &roleKey); err != nil {
 			return err
 		}
-		return h.audit.Record(tx, actorID, "admin.add", "user", user.ID.String(), c.GetString("request_id"), "",
-			gin.H{"role": "user"}, gin.H{"role": "admin", "email": user.Email})
+		// 角色变更后撤销该用户全部 refresh token，避免旧会话沿用旧角色。
+		if err := tx.Model(&model.RefreshToken{}).
+			Where("user_id = ? AND revoked_at IS NULL", user.ID).
+			Update("revoked_at", time.Now()).Error; err != nil {
+			return err
+		}
+		return h.audit.Record(tx, actorID, "user.role", "user", user.ID.String(), c.GetString("request_id"), "",
+			userRoleAudit(user.RoleKey, beforeName), userRoleAudit(&roleKey, afterName))
 	})
 	if err != nil {
+		slog.Error("提升管理员失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"id": user.ID.String(), "role": "admin"})
+	c.JSON(http.StatusOK, gin.H{"id": user.ID.String(), "role": authz.SystemRoleKey, "roleKey": authz.SystemRoleKey})
 }
 
-// RemoveAdmin 撤销管理员角色。不允许撤销自己，也不允许移除最后一个管理员。
+// RemoveAdmin 撤销用户的系统角色。不允许撤销自己，也不允许移除最后一个 active 成员。
 func (h *AdminHandler) RemoveAdmin(c *gin.Context) {
 	targetID, ok := parseUUIDParam(c)
 	if !ok {
@@ -216,38 +229,42 @@ func (h *AdminHandler) RemoveAdmin(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"id": "不能撤销自己的管理员权限"}))
 		return
 	}
-	var adminCount int64
-	if err := h.db.Model(&model.User{}).Where("role = ?", "admin").Count(&adminCount).Error; err != nil {
-		errs.Abort(c, errs.ErrInternal)
-		return
-	}
-	if adminCount <= 1 {
-		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"id": "至少保留一个管理员"}))
-		return
-	}
 	var target model.User
 	if err := h.db.First(&target, "id = ?", targetID).Error; err != nil {
 		errs.Abort(c, errs.ErrNotFound)
 		return
 	}
-	if target.Role != "admin" {
+	if !isSystemRoleKey(target.RoleKey) {
 		errs.Abort(c, errs.ErrNotFound)
 		return
 	}
+	beforeName := h.roleDisplayName(target.RoleKey)
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.User{}).Where("id = ?", targetID).Update("role", "user").Error; err != nil {
+		remain, err := h.countActiveSystemMembers(tx, targetID)
+		if err != nil {
 			return err
 		}
-		// 降权后撤销其全部 refresh token，最多 15 分钟后完全生效。
+		if remain == 0 {
+			return errLastSystemMember
+		}
+		if err := authz.AssignRole(tx, targetID, nil); err != nil {
+			return err
+		}
+		// 降权后撤销其全部 refresh token，管理权限下一次请求即失效。
 		if err := tx.Model(&model.RefreshToken{}).
 			Where("user_id = ? AND revoked_at IS NULL", targetID).
 			Update("revoked_at", time.Now()).Error; err != nil {
 			return err
 		}
-		return h.audit.Record(tx, actorID, "admin.remove", "user", targetID.String(), c.GetString("request_id"), "",
-			gin.H{"role": "admin"}, gin.H{"role": "user"})
+		return h.audit.Record(tx, actorID, "user.role", "user", targetID.String(), c.GetString("request_id"), "",
+			userRoleAudit(target.RoleKey, beforeName), userRoleAudit(nil, ""))
 	})
+	if errors.Is(err, errLastSystemMember) {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"id": "至少保留一个管理员"}))
+		return
+	}
 	if err != nil {
+		slog.Error("撤销管理员失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}

@@ -20,6 +20,9 @@ sanitize_text() {
 GA4_ID=$(sanitize_id "${ANALYTICS_GA4_ID:-}")
 BAIDU_ID=$(sanitize_id "${ANALYTICS_BAIDU_ID:-}")
 API_BASE_URL=$(sanitize_text "${API_BASE_URL:-}")
+# Admin console origin. Empty means this environment has no separate admin site and the
+# user menu hides the entry; when set it must be an absolute URL (the admin app lives on its own domain).
+ADMIN_BASE_URL=$(sanitize_text "${ADMIN_BASE_URL:-}")
 SITE_ENV=$(sanitize_id "${SITE_ENV:-production}")
 
 cat > /usr/share/nginx/html/config.js <<EOF
@@ -27,6 +30,7 @@ window.__RUNTIME_CONFIG__ = {
   ANALYTICS_GA4_ID: "${GA4_ID}",
   ANALYTICS_BAIDU_ID: "${BAIDU_ID}",
   API_BASE_URL: "${API_BASE_URL}",
+  ADMIN_BASE_URL: "${ADMIN_BASE_URL}",
   SITE_ENV: "${SITE_ENV}"
 };
 EOF
