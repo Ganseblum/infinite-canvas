@@ -2,6 +2,7 @@
 
 ## Unreleased
 
++ [新增] 用量分析看板：生成请求落库 sessionId、请求参数与规格、按天统计日期（UTC+8 日界）三个分析维度；新增 `GET /admin/analytics/usage`（权限点 `stats.usage`）一次性返回 KPI 汇总、按天趋势（零填充）、模型/能力/规格分布与消费用户排行（失败请求不计消费，口径见接口注释）。admin 独立应用新增「用量分析」页（ECharts 按需注册，深浅色主题自适应），web 端四类生成请求（图片/视频/音频/文本对话）统一透传标签页会话 sessionId。
 + [新增] 管理后台拆分为独立应用 `admin/`（Vite + React），部署为独立容器与独立域名（测试 `sim-admin.youc.online` → 3101，正式预留 3201）。admin 通过路径别名复用 `web/src` 的会话、请求层、主题与 i18n 外壳，复用边界由白名单脚本在构建前断言；`admin/index.html` 不再加载主站的 `/admin` 路由。
 + [新增] 服务端新增 CORS 中间件与 `CORS_ALLOWED_ORIGINS` 白名单（默认空 = 关闭）：白名单来源精确回显 Origin 并允许凭证、放行 `Authorization` 预检、暴露 `Retry-After`；非白名单来源不加任何 CORS 头且正常放行。这是 admin 独立域名跨源直连主站 API 的前提。
 + [新增] 完整 RBAC：`roles` / `permissions` / `role_permissions` 三张表与 `users.role_key`，23 个权限点绑定现有全部管理路由；权限目录在代码中定义、启动时幂等同步进库，界面只配置「角色 ↔ 权限」分配。管理路由改为经强制权限参数的注册器注册，漏挂权限在编译期即不可能。

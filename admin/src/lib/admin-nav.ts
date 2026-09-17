@@ -6,6 +6,7 @@
 // 真正的判断在服务端的 RequirePermission 中间件。
 export const PERM = {
     statsRead: "stats.read",
+    statsUsage: "stats.usage",
     usersRead: "users.read",
     usersWrite: "users.write",
     usersCredits: "users.credits",
@@ -32,6 +33,7 @@ export type AdminNavItem = {
 
 export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     { path: "/admin", labelKey: "admin.tabs.dashboard", anyOf: [PERM.statsRead] },
+    { path: "/admin/analytics", labelKey: "admin.tabs.analytics", anyOf: [PERM.statsUsage] },
     { path: "/admin/users", labelKey: "admin.tabs.users", anyOf: [PERM.usersRead] },
     { path: "/admin/models", labelKey: "admin.tabs.models", anyOf: [PERM.modelsRead] },
     { path: "/admin/channels", labelKey: "admin.tabs.channels", anyOf: [PERM.channelsRead] },

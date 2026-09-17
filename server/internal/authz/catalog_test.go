@@ -28,6 +28,7 @@ var goldenPermissionKeys = []string{
 	"settings.write",
 	"stats.read",
 	"stats.revenue",
+	"stats.usage",
 	"users.credits",
 	"users.read",
 	"users.write",
@@ -51,7 +52,7 @@ func TestRegistryMatchesGoldenKeys(t *testing.T) {
 // 避免新增常量却忘了登记（登记表才是路由注册与中间件的唯一依据）。
 func TestRegistryCoversEveryPermissionConstant(t *testing.T) {
 	constants := []string{
-		PermStatsRead, PermStatsRevenue,
+		PermStatsRead, PermStatsRevenue, PermStatsUsage,
 		PermUsersRead, PermUsersWrite, PermUsersCredits,
 		PermModelsRead, PermModelsWrite,
 		PermChannelsRead, PermChannelsWrite,
@@ -90,8 +91,8 @@ func TestRegistryDefinitionIsComplete(t *testing.T) {
 			t.Fatalf("权限点 %s 的模块 %s 缺少展示名", def.Key, def.Module)
 		}
 	}
-	if len(registry) != 23 {
-		t.Fatalf("权限点总数应为 23, got %d", len(registry))
+	if len(registry) != 24 {
+		t.Fatalf("权限点总数应为 24, got %d", len(registry))
 	}
 	if IsKnown("stats.unknown") || IsKnown("") {
 		t.Fatalf("未注册的 key 不允许通过 IsKnown")

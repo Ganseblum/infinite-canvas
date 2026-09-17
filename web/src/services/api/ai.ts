@@ -1,5 +1,6 @@
 import { API_BASE_URL, apiRequest, refreshSession } from "@/services/api/client";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { getSessionId } from "@/lib/session-id";
 import type { ModelParameterValue } from "@/services/api/catalog";
 
 // 全部生成行为的唯一调用方。浏览器不持有任何上游地址与密钥。
@@ -112,7 +113,7 @@ export function generateImages(input: {
     const { signal, ...body } = input;
     return apiRequest<GenerateImagesResponse>("/ai/images/generations", {
         method: "POST",
-        body: { ...body, idempotencyKey: newIdempotencyKey() },
+        body: { ...body, sessionId: getSessionId(), idempotencyKey: newIdempotencyKey() },
         signal,
     });
 }
@@ -130,7 +131,7 @@ export function generateSpeech(input: {
     const { signal, ...body } = input;
     return apiRequest<GenerateSpeechResponse>("/ai/audio/speech", {
         method: "POST",
-        body: { ...body, idempotencyKey: newIdempotencyKey() },
+        body: { ...body, sessionId: getSessionId(), idempotencyKey: newIdempotencyKey() },
         signal,
     });
 }
@@ -153,7 +154,7 @@ export function createVideoTask(input: {
     const { signal, ...body } = input;
     return apiRequest<CreateVideoTaskResponse>("/ai/videos/generations", {
         method: "POST",
-        body: { ...body, idempotencyKey: newIdempotencyKey() },
+        body: { ...body, sessionId: getSessionId(), idempotencyKey: newIdempotencyKey() },
         signal,
     });
 }
@@ -182,7 +183,7 @@ export async function streamChat(
     handlers: ChatStreamHandlers = {},
     signal?: AbortSignal,
 ): Promise<void> {
-    const body = { ...input, stream: true, idempotencyKey: newIdempotencyKey() };
+    const body = { ...input, stream: true, sessionId: getSessionId(), idempotencyKey: newIdempotencyKey() };
     const response = await authedFetch("/ai/chat/completions", body, signal, true);
     if (!response.ok) {
         // SSE 建立前的错误走普通 HTTP 状态码与统一错误结构。

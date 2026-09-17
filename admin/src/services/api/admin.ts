@@ -162,6 +162,56 @@ export function getAdminStats(signal?: AbortSignal) {
     return apiRequest<AdminStats>("/admin/stats", { signal });
 }
 
+// ===== 用量分析 =====
+
+export type AdminUsageRangeDays = 7 | 30 | 90;
+
+export type AdminUsageSummary = {
+    requests: number;
+    succeeded: number;
+    failed: number;
+    // 0-1 区间的比例（succeeded/(succeeded+failed)，4 位小数），页面乘 100 拼百分号展示。
+    successRate: number;
+    costMicros: number;
+    activeUsers: number;
+    activeSessions: number;
+};
+
+export type AdminUsageDailyPoint = {
+    date: string;
+    requests: number;
+    succeeded: number;
+    failed: number;
+    costMicros: number;
+    activeUsers: number;
+    sessions: number;
+};
+
+export type AdminUsageBreakdown = { key: string; requests: number; costMicros: number };
+
+export type AdminUsageSpecBreakdown = AdminUsageBreakdown & { capability: string };
+
+export type AdminUsageTopUser = {
+    userId: string;
+    email: string;
+    displayName: string;
+    requests: number;
+    costMicros: number;
+};
+
+export type AdminUsageAnalytics = {
+    summary: AdminUsageSummary;
+    daily: AdminUsageDailyPoint[];
+    byModel: AdminUsageBreakdown[];
+    byCapability: AdminUsageBreakdown[];
+    bySpec: AdminUsageSpecBreakdown[];
+    topUsers: AdminUsageTopUser[];
+};
+
+export function getAdminUsageAnalytics(days: AdminUsageRangeDays, signal?: AbortSignal) {
+    return apiRequest<AdminUsageAnalytics>("/admin/analytics/usage", { query: { days }, signal });
+}
+
 export function listAdminUsers(params: AdminUserListParams, signal?: AbortSignal) {
     return apiRequest<{ items: AdminUser[]; total: number; page: number; size: number }>("/admin/users", {
         query: { page: params.page, size: params.size, q: params.q, status: params.status, planId: params.planId, sort: params.sort },

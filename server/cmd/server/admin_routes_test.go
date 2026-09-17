@@ -10,9 +10,9 @@ import (
 	"github.com/infinite-canvas/server/internal/handler"
 )
 
-// expectedAdminRouteCount 是管理后台的路由总数：41 条既有路由 + 7 条 RBAC 路由 + 管理员建号。
+// expectedAdminRouteCount 是管理后台的路由总数：41 条既有路由 + 7 条 RBAC 路由 + 管理员建号 + 用量分析。
 // 增删管理路由必须同步改这个数字，让漏改权限的改动无法悄悄通过。
-const expectedAdminRouteCount = 49
+const expectedAdminRouteCount = 50
 
 func newAdminRouteTestEngine(t *testing.T) (*gin.Engine, []adminRouteSpec) {
 	t.Helper()

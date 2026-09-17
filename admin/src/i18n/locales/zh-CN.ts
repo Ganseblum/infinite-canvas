@@ -1,3 +1,5 @@
+import i18n from "@/i18n";
+
 // admin 应用外壳自己的文案，与 web 语言包里的 admin.* 键组分属不同命名空间：
 // t("admin.title") 读默认 translation 命名空间里的键组，useTranslation("admin") 读本文件。
 export default {
@@ -109,3 +111,31 @@ export default {
         roleUpdated: "角色已更新",
     },
 };
+
+// ===== translation 命名空间补丁：用量分析页 =====
+// admin 页面文案按命名空间分层约定走 translation（见 admin/src/i18n/index.ts 的注释），
+// 但那批键一直放在 web 语言包里，web 侧不在本应用的改动范围内；这里沿用 index.ts
+// 补 admin.tabs.system 的同一做法（deep + 不覆盖），把用量分析页缺失的键补进 translation，
+// 侧边栏 labelKey（admin-layout 用默认命名空间渲染菜单）与页面文案才能解析。
+// web 语言包以后补上同名键时会被保留，两边不会互相覆盖。
+i18n.addResourceBundle(
+    "zh-CN",
+    "translation",
+    {
+        admin: {
+            tabs: { analytics: "用量分析" },
+            analytics: {
+                loadFailed: "用量分析数据加载失败",
+                range: { d7: "近 7 天", d30: "近 30 天", d90: "近 90 天" },
+                kpi: { requests: "生成请求", successRate: "成功率", cost: "消费点数", activeUsers: "活跃用户", activeSessions: "活跃会话" },
+                trend: { title: "按天趋势", requests: "请求数", cost: "消费点数" },
+                byModel: { title: "模型分布", requests: "请求数" },
+                byCapability: { title: "能力分布" },
+                bySpec: { title: "规格分布", requests: "请求数" },
+                topUsers: { title: "消费用户排行", user: "用户", requests: "请求数", cost: "消费点数" },
+            },
+        },
+    },
+    true,
+    false,
+);

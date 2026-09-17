@@ -18,6 +18,7 @@ const SystemRoleKey = "admin"
 const (
 	PermStatsRead            = "stats.read"
 	PermStatsRevenue         = "stats.revenue"
+	PermStatsUsage           = "stats.usage"
 	PermUsersRead            = "users.read"
 	PermUsersWrite           = "users.write"
 	PermUsersCredits         = "users.credits"
@@ -69,6 +70,7 @@ var moduleLabels = map[string]string{
 var registry = []PermissionDef{
 	{Key: PermStatsRead, Module: "stats", Name: "查看总览", Description: "查看用户、生成、存储与订单总量", Sort: 10},
 	{Key: PermStatsRevenue, Module: "stats", Name: "查看营收", Description: "查看充值金额、付费用户数与转化率", Sort: 20},
+	{Key: PermStatsUsage, Module: "stats", Name: "查看用量分析", Description: "查看 AI 生成的按天用量与模型、能力、规格、用户消费分布", Sort: 25},
 	{Key: PermUsersRead, Module: "users", Name: "查看用户", Description: "查看用户列表与用户详情", Sort: 30},
 	{Key: PermUsersWrite, Module: "users", Name: "管理用户", Description: "修改用户状态、重置密码、重算用量、回收媒体", Sort: 40},
 	{Key: PermUsersCredits, Module: "users", Name: "调整点数", Description: "增减用户点数余额，属资金性质操作", Sort: 50},

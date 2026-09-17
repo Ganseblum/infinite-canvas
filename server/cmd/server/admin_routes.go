@@ -70,6 +70,7 @@ func registerAdminRoutes(g *gin.RouterGroup, h *handler.AdminHandler) []adminRou
 	r.GET("/me", "", h.Me)
 	r.GET("/stats", authz.PermStatsRead, h.Stats)
 	r.GET("/stats/revenue", authz.PermStatsRevenue, h.RevenueStats)
+	r.GET("/analytics/usage", authz.PermStatsUsage, h.UsageAnalytics)
 
 	r.GET("/users", authz.PermUsersRead, h.ListUsers)
 	r.POST("/users", authz.PermRolesManage, h.CreateUser)

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 
 import { FullScreenLoading } from "@admin/components/full-screen-loading";
@@ -20,6 +20,9 @@ import AdminOrdersPage from "@admin/pages/orders";
 import AdminSystemPage from "@admin/pages/system";
 import AdminUsersPage from "@admin/pages/users";
 import { useAuthStore } from "@/stores/use-auth-store";
+
+// 用量分析页独占 echarts：懒加载把这块体积隔离在该路由的分包里，其余页面不支付这份成本。
+const AdminAnalyticsPage = lazy(() => import("@admin/pages/analytics"));
 
 // 应用挂载后只执行一次 bootstrap；store 内部有模块级单飞守卫。
 function RootBootstrap() {
@@ -64,6 +67,16 @@ export const router = createBrowserRouter([
                 ),
                 children: [
                     { path: "/admin", element: <AdminHomeRoute /> },
+                    {
+                        path: "/admin/analytics",
+                        element: (
+                            <RequirePermission required={permissionsForPath("/admin/analytics")}>
+                                <Suspense fallback={<FullScreenLoading />}>
+                                    <AdminAnalyticsPage />
+                                </Suspense>
+                            </RequirePermission>
+                        ),
+                    },
                     {
                         path: "/admin/users",
                         element: (

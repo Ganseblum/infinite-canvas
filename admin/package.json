@@ -14,6 +14,7 @@
         "@tanstack/react-query": "^5.100.9",
         "antd": "6.4.2",
         "dayjs": "^1.11.20",
+        "echarts": "^6.1.0",
         "i18next": "26.3.6",
         "react": "19.2.5",
         "react-dom": "19.2.5",

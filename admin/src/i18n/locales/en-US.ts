@@ -1,3 +1,5 @@
+import i18n from "@/i18n";
+
 export default {
     docTitle: "Admin · YOUC",
     previewFailed: "Failed to load the quarantined original. Refresh and try again.",
@@ -106,3 +108,32 @@ export default {
         roleUpdated: "Role updated",
     },
 };
+
+// ===== Translation namespace patch: usage analytics =====
+// Admin page copy lives in the translation namespace by convention (see the comment in
+// admin/src/i18n/index.ts), but those keys ship in the web language packs, which are outside
+// this app's change scope. Reuse the same approach index.ts applies to admin.tabs.system
+// (deep merge, never overwrite) to fill the missing usage-analytics keys, so the sidebar
+// labelKey (rendered by admin-layout through the default namespace) and page copy resolve.
+// If the web packs gain the same keys later, those win and this patch stays harmless.
+i18n.addResourceBundle(
+    "en-US",
+    "translation",
+    {
+        admin: {
+            tabs: { analytics: "Usage analytics" },
+            analytics: {
+                loadFailed: "Failed to load usage analytics",
+                range: { d7: "Last 7 days", d30: "Last 30 days", d90: "Last 90 days" },
+                kpi: { requests: "Generation requests", successRate: "Success rate", cost: "Credits spent", activeUsers: "Active users", activeSessions: "Active sessions" },
+                trend: { title: "Daily trend", requests: "Requests", cost: "Credits spent" },
+                byModel: { title: "By model", requests: "Requests" },
+                byCapability: { title: "By capability" },
+                bySpec: { title: "By spec", requests: "Requests" },
+                topUsers: { title: "Top consumers", user: "User", requests: "Requests", cost: "Credits spent" },
+            },
+        },
+    },
+    true,
+    false,
+);

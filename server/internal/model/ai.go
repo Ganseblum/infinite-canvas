@@ -44,8 +44,13 @@ type AIRequest struct {
 	RefundPending         bool           `gorm:"not null;default:false;comment:退款待重试标记，为真表示预扣尚未退还，由补偿任务按该标记重试"`
 	UpstreamStatus        int            `gorm:"comment:上游返回的 HTTP 状态码，未拿到响应时为 0"`
 	DurationMs            int            `gorm:"comment:上游调用耗时，单位毫秒"`
-	CreatedAt             time.Time      `gorm:"index:idx_ai_request_user_created,priority:2,sort:desc;comment:创建时间"`
-	UpdatedAt             time.Time      `gorm:"comment:状态最近变更时间"`
+	// 以下四个是用量分析维度，只在请求创建时写入一次，幂等命中既有请求时不回写。
+	SessionID *string        `gorm:"type:varchar(64);index;comment:客户端会话标识，用于按会话统计活跃度，空表示未携带"`
+	Params    datatypes.JSON `gorm:"type:json;comment:请求参数快照 JSON，报价参数按字符串键值序列化，空表示无参数"`
+	ParamSpec string         `gorm:"type:varchar(64);not null;default:'';index;comment:主规格串，image 取 size、video 取 resolution、audio 取 voice，文本对话为空"`
+	StatDate  string         `gorm:"type:varchar(10);not null;default:'';index;comment:统计日期，创建时间按 UTC+8 日界格式化为 2006-01-02，过滤时用字符串比较"`
+	CreatedAt time.Time      `gorm:"index:idx_ai_request_user_created,priority:2,sort:desc;comment:创建时间"`
+	UpdatedAt time.Time      `gorm:"comment:状态最近变更时间"`
 }
 
 // AITask 是视频等异步能力的上游任务。服务端主动轮询，进程重启后按非终态恢复。

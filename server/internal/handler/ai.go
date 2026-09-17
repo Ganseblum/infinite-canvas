@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
@@ -134,6 +135,7 @@ type imageRequest struct {
 	Mask           string   `json:"mask"`
 	QuoteToken     string   `json:"quoteToken"`
 	IdempotencyKey string   `json:"idempotencyKey"`
+	SessionID      string   `json:"sessionId"`
 }
 
 func (h *AIHandler) Images(c *gin.Context) {
@@ -194,7 +196,7 @@ func (h *AIHandler) Images(c *gin.Context) {
 	}
 	defer h.slots.release("image", user.ID.String())
 
-	request, reserved, ok := h.beginRequest(c, user, catalogItem, "image", payload, req.IdempotencyKey)
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "image", payload, req.IdempotencyKey, requestDims{SessionID: req.SessionID, Params: params, Spec: req.Size})
 	if !ok {
 		return
 	}
@@ -488,6 +490,7 @@ type speechRequest struct {
 	Instructions   string  `json:"instructions"`
 	QuoteToken     string  `json:"quoteToken"`
 	IdempotencyKey string  `json:"idempotencyKey"`
+	SessionID      string  `json:"sessionId"`
 }
 
 func (h *AIHandler) Speech(c *gin.Context) {
@@ -523,15 +526,23 @@ func (h *AIHandler) Speech(c *gin.Context) {
 	}
 	defer h.slots.release("audio", user.ID.String())
 
-	request, reserved, ok := h.beginRequest(c, user, catalogItem, "audio", payload, req.IdempotencyKey)
-	if !ok {
-		return
-	}
-	started := time.Now()
+	// 音频报价不依赖参数，快照在预扣前组装好，供用量分析按 voice 等维度拆分。
 	format := req.Format
 	if format == "" {
 		format = "mp3"
 	}
+	audioParams := map[string]string{"format": format}
+	if req.Voice != "" {
+		audioParams["voice"] = req.Voice
+	}
+	if req.Speed != 0 {
+		audioParams["speed"] = strconv.FormatFloat(req.Speed, 'f', -1, 64)
+	}
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "audio", payload, req.IdempotencyKey, requestDims{SessionID: req.SessionID, Params: audioParams, Spec: req.Voice})
+	if !ok {
+		return
+	}
+	started := time.Now()
 	result, err := h.callSpeech(c.Request.Context(), catalogItem, provider.SpeechRequest{
 		Model:        catalogItem.Name,
 		Input:        req.Input,
@@ -611,6 +622,7 @@ type videoRequest struct {
 	AudioReferences []string `json:"audioReferences"`
 	QuoteToken      string   `json:"quoteToken"`
 	IdempotencyKey  string   `json:"idempotencyKey"`
+	SessionID       string   `json:"sessionId"`
 }
 
 func (h *AIHandler) CreateVideo(c *gin.Context) {
@@ -673,7 +685,7 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 		h.abortConcurrency(c)
 		return
 	}
-	request, reserved, ok := h.beginRequest(c, user, catalogItem, "video", payload, req.IdempotencyKey)
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "video", payload, req.IdempotencyKey, requestDims{SessionID: req.SessionID, Params: params, Spec: req.Resolution})
 	if !ok {
 		return
 	}
@@ -855,6 +867,7 @@ type chatRequest struct {
 	Stream          *bool                  `json:"stream"`
 	QuoteToken      string                 `json:"quoteToken"`
 	IdempotencyKey  string                 `json:"idempotencyKey"`
+	SessionID       string                 `json:"sessionId"`
 }
 
 func (h *AIHandler) Chat(c *gin.Context) {
@@ -892,7 +905,7 @@ func (h *AIHandler) Chat(c *gin.Context) {
 	defer h.slots.release("text", user.ID.String())
 
 	stream := req.Stream == nil || *req.Stream
-	request, reserved, ok := h.beginRequest(c, user, catalogItem, "text", payload, req.IdempotencyKey)
+	request, reserved, ok := h.beginRequest(c, user, catalogItem, "text", payload, req.IdempotencyKey, requestDims{SessionID: req.SessionID})
 	if !ok {
 		return
 	}
@@ -1160,9 +1173,17 @@ func (h *AIHandler) precheck(c *gin.Context, user model.User) bool {
 	return true
 }
 
+// requestDims 携带请求落库时的用量分析维度：客户端会话标识、报价参数快照与主规格串。
+// 幂等命中既有请求时这些值不会写回，保留首次提交的维度。
+type requestDims struct {
+	SessionID string
+	Params    map[string]string
+	Spec      string
+}
+
 // beginRequest 预扣或占用免费额度并落 ai_requests 行。
-// 重复的 idempotencyKey 会返回既有请求，此时不重复扣点。
-func (h *AIHandler) beginRequest(c *gin.Context, user model.User, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload, idempotencyKey string) (*model.AIRequest, *service.ReserveResult, bool) {
+// 重复的 idempotencyKey 会返回既有请求，此时不重复扣点，分析维度也保留首次的值。
+func (h *AIHandler) beginRequest(c *gin.Context, user model.User, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload, idempotencyKey string, dims requestDims) (*model.AIRequest, *service.ReserveResult, bool) {
 	reserved, err := h.reserve(c.Request.Context(), user, catalogItem, capability, payload)
 	if err != nil {
 		if errors.Is(err, service.ErrFreeTrialTaken) || errors.Is(err, service.ErrQuoteStale) {
@@ -1216,6 +1237,10 @@ func (h *AIHandler) beginRequest(c *gin.Context, user model.User, catalogItem mo
 		PromotionVersion: payload.PromotionVersion,
 		PromotionEnabled: payload.PromotionEnabled,
 		PricingSnapshot:  snapshot,
+		SessionID:        sessionIDOf(dims.SessionID),
+		Params:           paramsSnapshot(dims.Params),
+		ParamSpec:        clipRunes(dims.Spec, 64),
+		StatDate:         time.Now().In(statZone).Format(statDateFormat),
 		Status:           "running",
 	}
 	if reserved != nil && len(reserved.Transactions) > 0 {
@@ -1463,6 +1488,42 @@ func requireIdempotencyKey(c *gin.Context, key string) bool {
 		return false
 	}
 	return true
+}
+
+// statZone 是用量统计统一使用的 UTC+8 时区；statDateFormat 是统计日期列的格式。
+// 用 FixedZone 而不是 LoadLocation，避免容器缺少 tzdata 时 panic。
+var statZone = time.FixedZone("UTC+8", 8*3600)
+
+const statDateFormat = "2006-01-02"
+
+// sessionIDOf 清洗客户端会话标识：去首尾空白、按字符截断到 64，空白返回 nil。
+func sessionIDOf(raw string) *string {
+	id := clipRunes(strings.TrimSpace(raw), 64)
+	if id == "" {
+		return nil
+	}
+	return &id
+}
+
+// clipRunes 按字符数截断字符串，避免超长客户端输入撑爆 varchar 列。
+func clipRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) > n {
+		return string(runes[:n])
+	}
+	return s
+}
+
+// paramsSnapshot 把报价参数序列化成 JSON 快照，空参数返回 nil。
+func paramsSnapshot(params map[string]string) datatypes.JSON {
+	if len(params) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func stringifyParams(params map[string]any) map[string]string {
