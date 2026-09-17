@@ -60,8 +60,9 @@ services:
       # S3_PRESIGN_TTL 必须等于 2 × S3_PRESIGN_ALIGN，不满足 api 启动失败
       S3_PRESIGN_ALIGN: ${S3_PRESIGN_ALIGN:-1h}
       S3_PRESIGN_TTL: ${S3_PRESIGN_TTL:-2h}
+    # 绑挂载而非命名卷，与 docker-compose.yml 保持一致
     volumes:
-      - media:/data/media
+      - ./data/media:/data/media
     depends_on:
       db:
         condition: service_healthy
@@ -82,14 +83,10 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     volumes:
-      - mysqldata:/var/lib/mysql
+      - ./data/mysql:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 15s
-
-volumes:
-  mysqldata:
-  media:

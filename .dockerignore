@@ -12,3 +12,9 @@ web/out
 *.log
 .env*
 !.env.example
+# 部署环境文件里是真实密钥；虽然 Dockerfile 只 COPY web/，不进镜像层，
+# 但仍不该进构建上下文。模板保留，只排除实际值。
+deploy/env.test
+deploy/env.prod
+# 本地实施手册含服务器地址与服务安排，只保存在本机与服务器
+我的规划/部署方案（测试与正式环境）.md

@@ -674,10 +674,8 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 		return
 	}
 
-	mode := req.Mode
-	if mode == "" {
-		mode = "reference"
-	}
+	// mode 不在这里兜底：是否走首尾帧要结合参考图数量判断，交给 provider 的
+	// resolveVideoMode 决定（显式 reference 或超过 2 张才走 reference，否则 frames）。
 	generateAudio := req.GenerateAudio == nil || *req.GenerateAudio
 	watermark := req.Watermark != nil && *req.Watermark
 	task, generationID, err := h.createUpstreamVideoTask(c, user, request, catalogItem, provider.VideoRequest{
@@ -688,7 +686,7 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 		Resolution:      req.Resolution,
 		GenerateAudio:   generateAudio,
 		Watermark:       watermark,
-		Mode:            mode,
+		Mode:            req.Mode,
 		References:      images,
 		VideoReferences: videos,
 		AudioReferences: audios,

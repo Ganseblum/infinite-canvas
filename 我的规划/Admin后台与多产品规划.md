@@ -81,6 +81,35 @@ description: 把管理后台拆到独立域名（admin.youc.online）、区分 s
 
 **前置条件**：多产品共用能否成立，取决于产品们是否复用同一套后端账号服务模板（同一份 `/api/admin/*` 接口形状）。新产品的后端若不采用该模板，需要先对齐接口，否则 admin 应用无法直接接入。
 
+## 技术栈与工程结构（P1 实施约定）
+
+**结论：沿用 web 现有技术栈，不引入新框架。** 管理页面约 3.1k 行已按此实现，换栈等于重写，而后台的价值在功能不在框架。
+
+| 层 | 选择 | 说明 |
+| --- | --- | --- |
+| 构建 | Vite 7 + bun | 与 web 一致，镜像构建流程可沿用 |
+| 框架 | React 19 + TypeScript | 页面已实现 |
+| 组件库 | Ant Design 6 | 现有页面用到 24 种 antd 组件（Table / Form / Modal / Drawer / Tabs 等） |
+| 布局与样式 | Tailwind 4 | 沿用现状分工：antd 管组件，Tailwind 管排布与主题 token |
+| 路由 | react-router 7（library 模式） | 纯客户端 SPA，不用 framework / loader 模式 |
+| 数据层 | @tanstack/react-query 5 | 现有页面在用，缓存与失效机制现成 |
+| 客户端状态 | zustand，只保留会话，不新增 | admin 没有跨页共享的客户端状态 |
+| i18n | react-i18next | `admin` 命名空间（中英各 294 行）已就绪 |
+| 日期 | dayjs | 现成 |
+
+不采用其它方案的理由：
+
+- **Refine / react-admin / Ant Design Pro 脚手架**：这类方案是「按其数据层模型写页面、由框架生成 CRUD」。现有 8 个页面已按 antd + react-query 手写完成，迁移等于重写 3.1k 行；且其 dataProvider 抽象与「同一契约 + 按 `apiBase` 切换产品」的方向不合。注：`@ant-design/pro-components` 已在 web 依赖中，但全仓仅用于 `ProConfigProvider` 做主题透传，ProTable / ProForm 未使用。
+- **Next.js / SSR**：admin 为纯客户端 SPA，数据全部来自带 Bearer 令牌的接口，无 SSR 与 SEO 需求；引入后镜像需额外承载 Node 运行时（现为 nginx 静态托管），只增加部署复杂度与资源占用。
+
+工程结构（P1 阶段）：
+
+- 新建 `admin/` 独立 Vite 应用，自带 `package.json`、vite/tsconfig、`index.html`、`Dockerfile`；8 个页面与 `services/api/admin.ts` 从 `web` 迁入。
+- 会话、请求层、主题、i18n 等外壳**先用路径别名复用 `web/src`**：不复制逻辑、不搭 monorepo，与「不提前抽组件库」的取舍一致；第二个产品立项时再抽 `packages/shell`。
+- 两个实施要点：`admin` 的 tsconfig 与 vite 别名的类型解析要跨目录可用；Tailwind 4 的 `@source` 必须同时覆盖 `admin/src` 与 `web/src`，否则复用外壳上的类名不会被生成。
+- 布局由顶栏 Tabs 改为侧边栏（antd Layout + Menu）：现有 8 个 tab 已铺满顶栏，产品切换器与按产品渲染模块都需要空间。
+- 打包与部署：独立镜像（bun 构建 → nginx 静态），运行时经 `docker-entrypoint.sh` 注入 `API_BASE_URL` / `SITE_ENV`，同一镜像可指向不同产品与环境；compose 新增 `admin` 服务，端口 3101（测试）/ 3201（正式），版本可独立于 web 发布。
+
 ## 后端角色与工单（后续，不在本期实施）
 
 - 角色从 `user` / `admin` 扩为 `user` / `support` / `admin`；中间件拆为 `AdminOnly`（仅 admin）与 `SupportOrAdmin`（工单接口）。
@@ -102,3 +131,4 @@ description: 把管理后台拆到独立域名（admin.youc.online）、区分 s
 - 不在应用内提供正式环境与测试环境的一键切换。
 - 不为多产品提前抽组件库或插件机制，等第二个产品立项再抽。
 - 不把 refresh cookie 提到根域名（`.youc.online`）共享，避免任何子域都能拿到令牌。
+- 不为 admin 单独换技术栈：不引入 Refine / react-admin 等后台脚手架，不用 Next.js 或 SSR，不上微前端；也不加图表库（仪表盘现为卡片数字，需要时再定）与组件二次封装层。

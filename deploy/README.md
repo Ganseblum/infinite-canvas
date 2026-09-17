@@ -27,11 +27,15 @@
 
 1. 复核现有容器、宿主机 Nginx、端口和证书。测试、正式使用独立代码目录，避免更新测试代码时改变正式构建目录。
 2. 在测试目录检出明确的功能分支或提交，填写 `deploy/env.test`：数据库凭据、真实 `APP_BASE_URL`、随机密钥、管理员和测试数据开关。数据库连接串使用容器服务名 `db`。
-3. 构建并启动测试 app / api / db；Nginx 新增测试域名并配置有效证书，反代到 `127.0.0.1:3100`。
-4. 验收登录、邮件、画布保存、媒体、AI、SSE、容器重启和数据库隧道；再补齐双 Go 共用测试数据的前置条件。
-5. 测试完成后，经用户明确同意合入 `main`，从已验收提交创建版本 tag。正式不直接部署规划分支或上游镜像。
-6. 在正式目录检出版本 tag，填写独立 `deploy/env.prod`，完成备份恢复准备，再启动正式服务到 `127.0.0.1:3200`。
-7. 先验收正式容器和反代，再切正式域名；保留既有 AI 上游服务的独立域名。
+3. 建数据目录并授权：`mkdir -p data/mysql data/media && chown -R 10001:10001 data/media`。api 容器以 uid 10001 运行；绑挂载不像命名卷那样继承镜像内目录的属主，漏掉这步媒体写入会失败。
+
+> **不要在检出目录上执行递归 chown。** `data/` 直接位于检出目录内，`chown -R root:root .`（同步代码、修属主时很容易顺手敲）会把 `data/media` 的 `10001` 和 `data/mysql` 的 `999` 一起改回 root，容器随即失去写权限。**症状是生成耗时几十秒后返回 502 `UPSTREAM_ERROR`**——看起来像上游故障，实际是产物落盘失败（`open /data/media/.../image/.upload-*: permission denied`），同时 MySQL 虽仍能读，但新建表、日志轮转与重启都会出问题。修复：`chown -R 10001:10001 data/media && chown -R 999:999 data/mysql && docker restart infinite-canvas-test-db-1`。
+4. 构建并启动测试 app / api / db。
+5. 宿主机 Nginx 新增测试域名：以 `deploy/nginx-sim-art.youc.online.conf` 为模板，先只上 HTTP（此时证书还不存在，直接写 TLS 段会让 `nginx -t` 失败），`nginx -t` 通过后 `systemctl reload nginx`，再 `certbot --nginx --redirect -d sim-art.youc.online` 签发证书并补上跳转，反代到 `127.0.0.1:3100`。
+6. 验收登录、邮件、画布保存、媒体、AI、SSE、容器重启和数据库隧道；再补齐双 Go 共用测试数据的前置条件。
+7. 测试完成后，经用户明确同意合入 `main`，从已验收提交创建版本 tag。正式不直接部署规划分支或上游镜像。
+8. 在正式目录检出版本 tag，填写独立 `deploy/env.prod`，完成备份恢复准备，再启动正式服务到 `127.0.0.1:3200`。
+9. 先验收正式容器和反代，再切正式域名；保留既有 AI 上游服务的独立域名。
 
 随机串可分别用 `openssl rand -hex 32` 生成 JWT secret、`openssl rand -hex 16` 生成凭据主密钥。后者输出 32 个 ASCII 字符，满足当前代码的 32 字节要求；每套环境分别生成，不使用模板占位值。
 
@@ -43,6 +47,8 @@
 
 ```bash
 cp deploy/env.test.example deploy/env.test   # 填写测试环境变量
+mkdir -p data/mysql data/media               # 仅首次部署需要
+chown -R 10001:10001 data/media              # api 容器 uid；漏掉会导致媒体写入失败
 ./deploy.sh test build                       # 构建测试镜像（infinite-canvas:test / infinite-canvas-api:test）
 ./deploy.sh test up -d
 
@@ -53,7 +59,7 @@ cp deploy/env.prod.example deploy/env.prod   # 填写正式变量，将镜像 ta
 
 测试更新流程：记录目标提交 → 在测试目录更新代码 → `./deploy.sh test build` → `./deploy.sh test up -d`。正式目录检出已验收版本 tag；将 `APP_IMAGE` / `API_IMAGE` 设置为包含版本号的独立标签并记录镜像 ID，不反复覆盖唯一的 `:prod` 镜像作为回滚依据。现有脚本支持 env 提供的镜像标签，不会自动检查分支、版本或保留旧镜像。
 `deploy.sh` 内部就是 `docker compose -p infinite-canvas-test --env-file deploy/env.test …`。
-不同项目名让容器、网络、命名卷（`mysqldata`、`media`）自动隔离，测试环境清库不会碰到正式数据；
+不同项目名让容器、网络与数据目录自动隔离（数据库与媒体落在各自仓库目录的 `./data` 下），测试环境清库不会碰到正式数据；
 镜像 tag 也按环境区分（env 文件里的 `APP_IMAGE` / `API_IMAGE`），测试构建不会覆盖正式正在用的镜像。
 `up` 会固定 `--force-recreate app api`：app 容器内 nginx 启动时缓存了 api 容器 IP，api 重建后必须连带重建 app，否则 `/api` 反代仍指向旧 IP；db 不受影响。
 
@@ -176,3 +182,54 @@ bun run dev
 每次正式升级前备份并保留旧版本镜像。当前 AutoMigrate 没有结构回滚，不能只退回旧镜像就宣称数据回滚成功；涉及不兼容结构时，在暂停写入后恢复对应数据库、媒体和密钥。公开上线后的结构变更需落实版本化 migration。定时备份频率、保留策略和异地位置在实施时确定，当前未配置自动备份。
 
 普通媒体的保留期/孤儿清理目前只有管理员手动入口，尚无周期执行任务。长期运行需要补齐清理调度和磁盘监控，不把已有隔离区定时清理当成所有媒体的自动回收。
+
+## 本地连接测试环境（SSH 隧道）
+
+本地开发不单独建库，测试环境的 MySQL 与 API 都只绑在服务器的 `127.0.0.1` 上，本地通过 SSH 隧道访问。**隧道是本机与服务器之间的一条通道，断了本地就连不上——报错很像服务端故障，先查隧道。**
+
+### 两条隧道
+
+| 本地端口 | 转发到服务器 | 用途 |
+| --- | --- | --- |
+| `13306` | `127.0.0.1:13306`（db 容器的端口映射） | Navicat / DBeaver / mysql 命令行直连测试库 |
+| `8080` | `127.0.0.1:3100`（app 容器） | 本地 Vite 的 `/api` 代理目标，见 `web/vite.config.ts` 的 `server.proxy` |
+
+`8080` 这条之所以能直接顶替本地 Go：Vite 把 `/api` 写死代理到 `127.0.0.1:8080`，隧道把该端口接到测试站的 app 容器，因此**不需要改前端配置**，本地页面就与测试站共用同一份数据和同一个后端。代价是本地的后端代码改动不会生效——要验证后端改动必须重新部署测试站。
+
+### 启动
+
+```bash
+ssh -f -N -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -L 13306:127.0.0.1:13306 root@<服务器>      # 数据库
+ssh -f -N -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -L 8080:127.0.0.1:3100 root@<服务器>        # API
+```
+
+`-f` 转后台、`-N` 不执行远程命令。`ServerAliveInterval` 让连接空闲断开时进程自己退出，而不是变成假死。
+
+关闭：`pkill -f "13306:127.0.0.1:13306"`、`pkill -f "8080:127.0.0.1:3100"`。
+
+### 连接凭据
+
+数据库名 `infinite_canvas_test`，用户名与密码在服务器的 `deploy/env.test`（`MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD`）。Navicat 等客户端**只填常规页签**（主机 `127.0.0.1`、端口 `13306`），不要同时配客户端自带的 SSH 通道——两套通道叠加会互相干扰。
+
+### 故障排查：隧道假死
+
+**症状**：客户端报 `2013 - Lost connection to server at 'handshake: reading initial communication packet'`（Navicat 常见写法），或命令行报 `ERROR 2013 ... system error: 2` / `ERROR 2003 ... (61)`。
+
+**判据**：下面两条同时成立就是假死——
+
+1. `lsof -nP -iTCP:13306 | grep LISTEN` **仍有输出**（端口在监听，所以看起来"隧道是好的"）
+2. 但 `mysql -h 127.0.0.1 -P 13306 -u<用户> -p<密码> -e "SELECT 1"` 也失败
+
+**成因**：本地 SSH 进程还活着，但它与服务器之间的底层连接已经断开，端口继续接受连接却转发不出去。端口上通常能看到残留的 `CLOSE_WAIT` 连接。
+
+**处理**：直接重启隧道（见上），不要怀疑数据库或容器。**先用同一台机器上的 `mysql` 命令行复现一次**——如果命令行也失败，问题在隧道；只有 Navicat 失败而命令行正常，才是客户端配置问题。
+
+服务器侧的判据：`ss -tlnp | grep 13306` 应看到 `docker-proxy` 在监听，`docker ps` 里三个容器应都是 Up。这两项正常就说明问题在本机隧道。
+
+### 注意
+
+- 隧道直达**测试环境的库**，Navicat 里的改动会立刻影响测试站和连同一后端的本地页面。
+- 本机若曾跑过独立的本地 Go + 本地 MySQL，那是另一套数据，与隧道无关；确认连接指向哪个端口，别把两套数据搞混。
+- 本机不要同时再起一个连测试库的 Go 进程：迁移、定时任务会双跑，且两端 `MEDIA_ROOT` 不同导致媒体互相读不到。共享媒体与执行开关尚未实现。

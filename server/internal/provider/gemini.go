@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -77,8 +79,15 @@ func (p *GeminiProvider) doJSON(ctx context.Context, method, url string, payload
 type geminiPart struct {
 	Text             string                  `json:"text,omitempty"`
 	InlineData       *geminiInlineData       `json:"inlineData,omitempty"`
+	FileData         *geminiFileData         `json:"fileData,omitempty"`
 	FunctionCall     *geminiFunction         `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFunctionResponse `json:"functionResponse,omitempty"`
+}
+
+// geminiFileData 是只给 URI 不给字节的媒体引用，图片响应里可能是这种形式。
+type geminiFileData struct {
+	MimeType string `json:"mimeType,omitempty"`
+	FileURI  string `json:"fileUri"`
 }
 
 type geminiFunctionResponse struct {
@@ -122,12 +131,15 @@ func (p *GeminiProvider) Images(ctx context.Context, req ImageRequest) (ImageRes
 	for _, ref := range req.References {
 		parts = append(parts, geminiMediaPart(ref))
 	}
+	generationConfig := map[string]any{"responseModalities": []string{"TEXT", "IMAGE"}}
+	// imageConfig 只在真有内容时才带：非 Gemini 3 系模型或尺寸为空时，
+	// 原版完全不发该字段，空对象可能被旧模型拒绝。
+	if imageConfig := geminiImageConfig(req); len(imageConfig) > 0 {
+		generationConfig["imageConfig"] = imageConfig
+	}
 	payload := map[string]any{
-		"contents": []geminiContent{{Role: "user", Parts: parts}},
-		"generationConfig": map[string]any{
-			"responseModalities": []string{"TEXT", "IMAGE"},
-			"imageConfig":        geminiImageConfig(req),
-		},
+		"contents":         []geminiContent{{Role: "user", Parts: parts}},
+		"generationConfig": generationConfig,
 	}
 	result := ImageResult{}
 	for i := 0; i < maxInt(req.N, 1); i++ {
@@ -145,18 +157,11 @@ func (p *GeminiProvider) Images(ctx context.Context, req ImageRequest) (ImageRes
 		found := false
 		for _, candidate := range parsed.Candidates {
 			for _, part := range candidate.Content.Parts {
-				if part.InlineData == nil || part.InlineData.Data == "" {
+				media, ok := geminiImageFromPart(part)
+				if !ok {
 					continue
 				}
-				decoded, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
-				if err != nil {
-					return ImageResult{}, fmt.Errorf("解码 Gemini 图像失败: %w", err)
-				}
-				mimeType := part.InlineData.MimeType
-				if mimeType == "" {
-					mimeType = "image/png"
-				}
-				result.Images = append(result.Images, GeneratedImage{Data: decoded, MimeType: mimeType})
+				result.Images = append(result.Images, media)
 				found = true
 			}
 		}
@@ -167,22 +172,24 @@ func (p *GeminiProvider) Images(ctx context.Context, req ImageRequest) (ImageRes
 	return result, nil
 }
 
-func geminiImageConfig(req ImageRequest) map[string]any {
-	config := map[string]any{}
-	if req.Size != "" {
-		if strings.Contains(req.Size, ":") {
-			config["aspectRatio"] = req.Size
-		} else {
-			config["imageSize"] = strings.ToUpper(req.Size)
+// geminiImageFromPart 从候选分片里取图像：inlineData 直接带字节，
+// fileData 只给 URI，需要交给上层下载（原版同样接受这种返回）。
+func geminiImageFromPart(part geminiPart) (GeneratedImage, bool) {
+	if part.InlineData != nil && part.InlineData.Data != "" {
+		decoded, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
+		if err != nil {
+			return GeneratedImage{}, false
 		}
+		mimeType := part.InlineData.MimeType
+		if mimeType == "" {
+			mimeType = "image/png"
+		}
+		return GeneratedImage{Data: decoded, MimeType: mimeType}, true
 	}
-	switch req.Quality {
-	case "low":
-		config["imageSize"] = "1K"
-	case "high":
-		config["imageSize"] = "2K"
+	if part.FileData != nil && part.FileData.FileURI != "" {
+		return GeneratedImage{URL: part.FileData.FileURI}, true
 	}
-	return config
+	return GeneratedImage{}, false
 }
 
 func geminiMediaPart(media InlineMedia) geminiPart {
@@ -199,8 +206,10 @@ func (p *GeminiProvider) Speech(context.Context, SpeechRequest) (SpeechResult, e
 
 // CreateVideo 走 predictLongRunning，轮询用返回的 operation name。
 func (p *GeminiProvider) CreateVideo(ctx context.Context, req VideoRequest) (VideoTask, error) {
+	// 模式判定与原版一致：显式 reference 或参考图超过 2 张走参考图，否则首尾帧。
+	mode := resolveVideoMode(req.Mode, len(req.References))
 	instance := map[string]any{"prompt": req.Prompt}
-	if req.Mode == "frames" {
+	if mode == "frames" {
 		if len(req.References) > 0 {
 			instance["image"] = geminiInlinePayload(req.References[0])
 		}
@@ -214,14 +223,26 @@ func (p *GeminiProvider) CreateVideo(ctx context.Context, req VideoRequest) (Vid
 		}
 		instance["referenceImages"] = references
 	}
+	// 参考视频与参考音频原版也会带上（各取第一件），缺失时不能静默丢掉。
+	if len(req.VideoReferences) > 0 {
+		instance["video"] = geminiInlinePayload(req.VideoReferences[0])
+	}
+	if len(req.AudioReferences) > 0 {
+		instance["audio"] = geminiInlinePayload(req.AudioReferences[0])
+	}
+	duration, err := strconv.Atoi(normalizeVideoSeconds(strconv.Itoa(req.Duration)))
+	if err != nil || duration <= 0 {
+		duration = 8
+	}
 	payload := map[string]any{
 		"instances": []map[string]any{instance},
 		"parameters": map[string]any{
 			"aspectRatio":     defaultString(req.Ratio, "16:9"),
-			"durationSeconds": maxInt(req.Duration, 8),
-			"resolution":      req.Resolution,
-			"generateAudio":   req.GenerateAudio,
-			"addWatermark":    req.Watermark,
+			"durationSeconds": duration,
+			// resolution 必须非空：原版任何取值都会兜底成 720p。
+			"resolution":    normalizeVideoResolution(req.Resolution),
+			"generateAudio": req.GenerateAudio,
+			"addWatermark":  req.Watermark,
 		},
 	}
 	data, err := p.doJSON(ctx, http.MethodPost, p.modelURL(req.Model, "predictLongRunning"), payload)
@@ -404,7 +425,8 @@ func geminiErrorMessage(payload geminiPayload) string {
 
 func (p *GeminiProvider) modelURL(model, action string) string {
 	clean := strings.TrimPrefix(model, "models/")
-	return p.baseURL() + "/models/" + clean + ":" + action
+	// 模型名要转义后再拼路径：带 / 或空格的标识（如 google/veo-3）不转义会拼出错误路径。
+	return p.baseURL() + "/models/" + url.PathEscape(clean) + ":" + action
 }
 
 func toGeminiContents(messages []ChatMessage) ([]geminiContent, string) {
@@ -421,6 +443,9 @@ func toGeminiContents(messages []ChatMessage) ([]geminiContent, string) {
 			if name == "" {
 				name = "tool_result"
 			}
+			// 原版把 message.content 按 JSON 解析成结构化值，本 Fork 固定传字符串。
+			// 当前前端不给上游发 tools，此分支不可达；启用 tools 时需同步修改此处
+			// 与 toGeminiTools 的 id/name 映射。
 			contents = append(contents, geminiContent{Role: "user", Parts: []geminiPart{{
 				FunctionResponse: &geminiFunctionResponse{
 					ID:   message.ToolCallID,

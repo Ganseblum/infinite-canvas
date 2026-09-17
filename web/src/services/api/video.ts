@@ -1,5 +1,6 @@
 import i18n from "@/i18n";
 import { ApiError } from "@/lib/api-error";
+import { VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN } from "@/lib/media-size";
 import { createVideoTask, getVideoTask, quoteGeneration, type VideoTaskStatus } from "@/services/api/ai";
 import { mediaUrl } from "@/services/api/media";
 import { uploadMediaFile } from "@/services/media-ingest";
@@ -47,8 +48,11 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const referencesKeys = await toStorageKeys(references, "image");
     const videoKeys = await toStorageKeys(options?.videos || [], "video");
     const audioKeys = await toStorageKeys(options?.audios || [], "audio");
+    // mode 不参与计价，只用于上游请求，不能进报价参数：服务端校验报价时重建的参数集是
+    // ratio/resolution/duration，多带 mode 会让参数哈希对不上并返回 409 QUOTE_STALE。
+    const { mode, ...quoteParams } = params;
     // 报价与创建接口读取同一组参数，报价过期时静默重报一次；再次过期由页面提示用户重新生成。
-    let quote = await quoteGeneration({ model, capability: "video", params });
+    let quote = await quoteGeneration({ model, capability: "video", params: quoteParams });
     let response;
     try {
         response = await createVideoTask({
@@ -99,6 +103,8 @@ function videoRequestParams(config: AiConfig) {
     const duration = normalizeDuration(config.videoSeconds);
     return {
         duration,
+        // 模式必须传给服务端：不传会退化成 reference，与界面上选的「首尾帧」不符。
+        mode: config.videoMode === "reference" ? "reference" : "frames",
         ...(ratio && ratio !== "auto" && ratio.includes(":") ? { ratio } : {}),
         ...(resolution && resolution !== "auto" ? { resolution: /p$/i.test(resolution) ? resolution : `${resolution}p` } : {}),
     };
@@ -106,8 +112,8 @@ function videoRequestParams(config: AiConfig) {
 
 function normalizeDuration(value: string) {
     const duration = Number(value);
-    if (!Number.isFinite(duration) || duration <= 0) return 5;
-    return Math.floor(duration);
+    if (!Number.isFinite(duration) || duration <= 0) return 6;
+    return Math.max(VIDEO_SECONDS_MIN, Math.min(VIDEO_SECONDS_MAX, Math.floor(duration)));
 }
 
 async function toStorageKeys(items: Array<{ storageKey?: string; url?: string; dataUrl?: string }>, prefix: string) {

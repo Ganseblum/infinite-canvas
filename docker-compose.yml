@@ -104,8 +104,12 @@ services:
       # S3_PRESIGN_TTL 必须等于 2 × S3_PRESIGN_ALIGN，不满足 api 启动失败
       S3_PRESIGN_ALIGN: ${S3_PRESIGN_ALIGN:-1h}
       S3_PRESIGN_TTL: ${S3_PRESIGN_TTL:-2h}
+    # 绑挂载而非命名卷：数据落在仓库目录下的 ./data，备份与迁移就是打包一个目录，
+    # 磁盘占用在宿主机上直接可见，也与服务器上既有项目的 ./data 约定一致。
+    # 注意：api 容器以 uid 10001 运行，命名卷会自动继承镜像内 /data/media 的属主，
+    # 绑挂载不会。首次部署前必须执行 chown -R 10001:10001 ./data/media，否则媒体写入失败。
     volumes:
-      - media:/data/media
+      - ./data/media:/data/media
     depends_on:
       db:
         condition: service_healthy
@@ -127,14 +131,10 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     volumes:
-      - mysqldata:/var/lib/mysql
+      - ./data/mysql:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 15s
-
-volumes:
-  mysqldata:
-  media:

@@ -79,9 +79,6 @@ func ValidateParams(constraints ModelConstraints, params QuoteParams, n *int) er
 	if n != nil && constraints.N != nil && constraints.N.Max > 0 && *n > constraints.N.Max {
 		return &ParamNotSupportedError{Param: "n", Allowed: []string{fmt.Sprintf("1-%d", constraints.N.Max)}}
 	}
-	if n != nil && *n > 15 {
-		return &ParamNotSupportedError{Param: "n", Allowed: []string{"1-15"}}
-	}
 	return nil
 }
 
