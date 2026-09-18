@@ -4,3 +4,8 @@ services:
   db:
     ports:
       - "127.0.0.1:13306:3306"
+  # 水印字体挂载（只读）：WATERMARK_ENABLED=true 时 WATERMARK_FONT_PATH 指向 /data/fonts 下的
+  # CJK 字体；字体文件放在宿主机 ./data/fonts/（随数据目录一起备份）。
+  api:
+    volumes:
+      - ./data/fonts:/data/fonts:ro
