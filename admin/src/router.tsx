@@ -19,6 +19,7 @@ import AdminModerationPage from "@admin/pages/moderation";
 import NoPermissionPage from "@admin/pages/no-permission";
 import AdminOrdersPage from "@admin/pages/orders";
 import AdminProductPlaceholderPage from "@admin/pages/product";
+import AdminSsoPage from "@admin/pages/sso";
 import AdminSystemPage from "@admin/pages/system";
 import AdminUsersPage from "@admin/pages/users";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -92,6 +93,14 @@ export const router = createBrowserRouter([
                         element: (
                             <RequirePermission required={permissionsForPath("/admin/membership")}>
                                 <AdminMembershipPage />
+                            </RequirePermission>
+                        ),
+                    },
+                    {
+                        path: "/admin/sso",
+                        element: (
+                            <RequirePermission required={permissionsForPath("/admin/sso")}>
+                                <AdminSsoPage />
                             </RequirePermission>
                         ),
                     },

@@ -684,3 +684,39 @@ export function compensateAdminMembership(input: AdminMembershipGrantInput) {
 export function revokeAdminMembership(id: string, reason: string) {
     return apiRequest<{ id: string; status: "ended" }>(`/admin/membership/subscriptions/${id}`, { method: "DELETE", body: { reason } });
 }
+
+// ===== OAuth 客户端（SSO 接入）=====
+
+export type AdminSsoClient = {
+    id: string;
+    productId: string;
+    name: string;
+    clientId: string;
+    redirectUris: string[];
+    enabled: boolean;
+    createdAt: string;
+    updatedAt: string;
+};
+
+// 客户端列表不回传 secret；条目量小，全量拉取后由表格前端分页。
+export function listAdminSsoClients(signal?: AbortSignal) {
+    return apiRequest<{ items: AdminSsoClient[]; total: number; page: number; size: number }>("/admin/sso/clients", { signal });
+}
+
+// 新建客户端：clientSecret 仅此一次明文返回，前端弹出一次性展示，之后任何接口都不再回传。
+export function createAdminSsoClient(input: { name: string; redirectUris: string[]; productId: string }) {
+    return apiRequest<{ client: AdminSsoClient; clientSecret: string }>("/admin/sso/clients", { method: "POST", body: input });
+}
+
+export function updateAdminSsoClient(id: string, input: { name?: string; redirectUris?: string[]; enabled?: boolean }) {
+    return apiRequest<{ client: AdminSsoClient }>(`/admin/sso/clients/${id}`, { method: "PATCH", body: input });
+}
+
+// 重置密钥：旧 secret 立即失效，新 secret 仅此一次明文返回。
+export function resetAdminSsoClientSecret(id: string) {
+    return apiRequest<{ clientSecret: string }>(`/admin/sso/clients/${id}/reset-secret`, { method: "POST" });
+}
+
+export function deleteAdminSsoClient(id: string) {
+    return apiRequest<void>(`/admin/sso/clients/${id}`, { method: "DELETE" });
+}
