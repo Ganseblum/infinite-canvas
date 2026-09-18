@@ -146,7 +146,7 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 // ListAdmins 返回系统角色成员列表，附带注册时间与最近登录时间。
 // 过渡期保留：等价于筛选 role_key = admin 的后台成员。
 func (h *AdminHandler) ListAdmins(c *gin.Context) {
-	var admins []model.User
+	var admins []model.PlatformUser
 	if err := h.db.Where("role_key = ?", authz.SystemRoleKey).Order("created_at ASC").Find(&admins).Error; err != nil {
 		slog.Error("读取管理员列表失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -180,7 +180,7 @@ func (h *AdminHandler) AddAdmin(c *gin.Context) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.Where("email = ?", email).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"email": "该邮箱尚未注册，请先让用户注册账号"}))
@@ -202,9 +202,7 @@ func (h *AdminHandler) AddAdmin(c *gin.Context) {
 			return err
 		}
 		// 角色变更后撤销该用户全部 refresh token，避免旧会话沿用旧角色。
-		if err := tx.Model(&model.RefreshToken{}).
-			Where("user_id = ? AND revoked_at IS NULL", user.ID).
-			Update("revoked_at", time.Now()).Error; err != nil {
+		if err := h.identity.RevokeSessionsTx(tx, user.ID, time.Now()); err != nil {
 			return err
 		}
 		return h.audit.Record(tx, actorID, "user.role", "user", user.ID.String(), c.GetString("request_id"), "",
@@ -229,7 +227,7 @@ func (h *AdminHandler) RemoveAdmin(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"id": "不能撤销自己的管理员权限"}))
 		return
 	}
-	var target model.User
+	var target model.PlatformUser
 	if err := h.db.First(&target, "id = ?", targetID).Error; err != nil {
 		errs.Abort(c, errs.ErrNotFound)
 		return
@@ -251,7 +249,7 @@ func (h *AdminHandler) RemoveAdmin(c *gin.Context) {
 			return err
 		}
 		// 降权后撤销其全部 refresh token，管理权限下一次请求即失效。
-		if err := tx.Model(&model.RefreshToken{}).
+		if err := tx.Model(&model.Session{}).
 			Where("user_id = ? AND revoked_at IS NULL", targetID).
 			Update("revoked_at", time.Now()).Error; err != nil {
 			return err
@@ -344,7 +342,7 @@ func (h *AdminHandler) RevenueStats(c *gin.Context) {
 		Select("COALESCE(SUM(price_micros), 0) AS amount, COUNT(*) AS orders").Scan(&total)
 
 	var userTotal, paidUsers int64
-	h.db.Model(&model.User{}).Count(&userTotal)
+	h.db.Model(&model.PlatformUser{}).Count(&userTotal)
 	// 付费用户 = 购买桶非零或权益未过期，与档位解析器口径一致。
 	h.db.Model(&model.Credit{}).Where("purchased_micros > 0 OR (paid_until IS NOT NULL AND paid_until > ?)", now).Count(&paidUsers)
 	conversion := 0.0

@@ -271,7 +271,7 @@ func (h *AIHandler) Images(c *gin.Context) {
 }
 
 // writeRejectedGeneration 为被拒产物补一条生成记录，状态与审核结论都标记为拒绝。
-func (h *AIHandler) writeRejectedGeneration(user model.User, request *model.AIRequest, catalogItem model.ModelCatalog, prompt string, durationMs int) {
+func (h *AIHandler) writeRejectedGeneration(user model.PlatformUser, request *model.AIRequest, catalogItem model.ModelCatalog, prompt string, durationMs int) {
 	generation := &model.Generation{
 		ID:               uuid.New(),
 		UserID:           user.ID,
@@ -347,7 +347,7 @@ func (h *AIHandler) callImages(ctx context.Context, catalogItem model.ModelCatal
 
 // persistImages 下载或解码产物、审核通过后落盘、写生成记录并返回响应。
 // 产物先进入隔离区；审核拒绝时不进入正式存储，点数不自动退还。
-func (h *AIHandler) persistImages(c *gin.Context, user model.User, request *model.AIRequest, catalogItem model.ModelCatalog, prompt string, result provider.ImageResult, n int, started time.Time) error {
+func (h *AIHandler) persistImages(c *gin.Context, user model.PlatformUser, request *model.AIRequest, catalogItem model.ModelCatalog, prompt string, result provider.ImageResult, n int, started time.Time) error {
 	maxFile, err := h.maxFileBytes(user.ID)
 	if err != nil {
 		return err
@@ -413,7 +413,7 @@ func (h *AIHandler) persistImages(c *gin.Context, user model.User, request *mode
 
 // moderateAndStoreArtifact 把产物写入隔离区、送审，通过后才提交正式存储。
 // 拒绝时返回 ErrContentRejected，由调用方按「产物拒绝不自动退点」处理。
-func (h *AIHandler) moderateAndStoreArtifact(c *gin.Context, user model.User, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {
+func (h *AIHandler) moderateAndStoreArtifact(c *gin.Context, user model.PlatformUser, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {
 	data := image.Data
 	mimeType := image.MimeType
 	if len(data) == 0 && image.URL != "" {
@@ -893,7 +893,7 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 	})
 }
 
-func (h *AIHandler) createUpstreamVideoTask(c *gin.Context, user model.User, request *model.AIRequest, catalogItem model.ModelCatalog, videoReq provider.VideoRequest, prompt string) (*model.AITask, uuid.UUID, error) {
+func (h *AIHandler) createUpstreamVideoTask(c *gin.Context, user model.PlatformUser, request *model.AIRequest, catalogItem model.ModelCatalog, videoReq provider.VideoRequest, prompt string) (*model.AITask, uuid.UUID, error) {
 	channels, err := h.channelsFor(catalogItem)
 	if err != nil {
 		return nil, uuid.Nil, err
@@ -1092,7 +1092,7 @@ func (h *AIHandler) Chat(c *gin.Context) {
 	h.chatStream(c, user, request, reserved, catalogItem, req)
 }
 
-func (h *AIHandler) chatNonStream(c *gin.Context, user model.User, request *model.AIRequest, reserved *service.ReserveResult, catalogItem model.ModelCatalog, req chatRequest) {
+func (h *AIHandler) chatNonStream(c *gin.Context, user model.PlatformUser, request *model.AIRequest, reserved *service.ReserveResult, catalogItem model.ModelCatalog, req chatRequest) {
 	started := time.Now()
 	// 非流式每次尝试都用全新的 collectSink（由 callChat 逐次调用），
 	// 避免上一渠道的半截 tool_calls 与下一渠道的结果在累积式 sink 里叠加成脏数据。
@@ -1211,13 +1211,13 @@ func (h *AIHandler) callChat(ctx context.Context, catalogItem model.ModelCatalog
 
 // ===== 公共辅助 =====
 
-func (h *AIHandler) currentUser(c *gin.Context) (model.User, bool) {
+func (h *AIHandler) currentUser(c *gin.Context) (model.PlatformUser, bool) {
 	uid, err := uuid.Parse(c.GetString("user_id"))
 	if err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
-		return model.User{}, false
+		return model.PlatformUser{}, false
 	}
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return user, false
@@ -1311,7 +1311,7 @@ func (h *AIHandler) checkVideoReferences(c *gin.Context, catalogItem model.Model
 }
 
 // verifyQuote 校验报价凭证，失败返回 false 并已写入错误响应。
-func (h *AIHandler) verifyQuote(c *gin.Context, user model.User, catalogItem model.ModelCatalog, capability string, params map[string]string, n int, token string) (service.QuotePayload, bool) {
+func (h *AIHandler) verifyQuote(c *gin.Context, user model.PlatformUser, catalogItem model.ModelCatalog, capability string, params map[string]string, n int, token string) (service.QuotePayload, bool) {
 	if token == "" {
 		errs.Abort(c, errs.ErrQuoteStale)
 		return service.QuotePayload{}, false
@@ -1329,7 +1329,7 @@ func (h *AIHandler) verifyQuote(c *gin.Context, user model.User, catalogItem mod
 }
 
 // precheck 邮箱已在 currentUser 校验；这里补存储配额预检，避免生成后才发现存不下。
-func (h *AIHandler) precheck(c *gin.Context, user model.User) bool {
+func (h *AIHandler) precheck(c *gin.Context, user model.PlatformUser) bool {
 	now := time.Now()
 	credit, plan, err := service.NewQuotaService(h.db).DerivePlan(c.Request.Context(), user.ID, now)
 	if err != nil {
@@ -1359,7 +1359,7 @@ type requestDims struct {
 
 // beginRequest 预扣或占用免费额度并落 ai_requests 行。
 // 重复的 idempotencyKey 会返回既有请求，此时不重复扣点，分析维度也保留首次的值。
-func (h *AIHandler) beginRequest(c *gin.Context, user model.User, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload, idempotencyKey string, dims requestDims) (*model.AIRequest, *service.ReserveResult, bool) {
+func (h *AIHandler) beginRequest(c *gin.Context, user model.PlatformUser, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload, idempotencyKey string, dims requestDims) (*model.AIRequest, *service.ReserveResult, bool) {
 	reserved, err := h.reserve(c.Request.Context(), user, catalogItem, capability, payload)
 	if err != nil {
 		if errors.Is(err, service.ErrFreeTrialTaken) || errors.Is(err, service.ErrQuoteStale) {
@@ -1465,7 +1465,7 @@ func transactionIDs(transactions []model.CreditTransaction) []uuid.UUID {
 }
 
 // reserve 原子占用免费额度或按报价预扣。免费额度被并发占用时返回 ErrFreeTrialTaken。
-func (h *AIHandler) reserve(ctx context.Context, user model.User, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload) (*service.ReserveResult, error) {
+func (h *AIHandler) reserve(ctx context.Context, user model.PlatformUser, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload) (*service.ReserveResult, error) {
 	if payload.BillingMode == service.BillingModeFreeTrial {
 		metric := ""
 		switch capability {
@@ -1513,7 +1513,7 @@ func (h *AIHandler) failRequest(c *gin.Context, request *model.AIRequest, reserv
 }
 
 // moderateInput 审核提示词与参考图。被拒返回 422，服务不可用按 fail mode 返回 503 或放行。
-func (h *AIHandler) moderateInput(c *gin.Context, user model.User, prompt string, references []provider.InlineMedia) bool {
+func (h *AIHandler) moderateInput(c *gin.Context, user model.PlatformUser, prompt string, references []provider.InlineMedia) bool {
 	if h.moderation == nil || !h.moderation.Enabled() {
 		return true
 	}

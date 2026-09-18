@@ -14,6 +14,7 @@ import (
 	"github.com/infinite-canvas/server/internal/auth"
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 )
 
 func newAuthzTestDB(t *testing.T) *gorm.DB {
@@ -29,7 +30,7 @@ func newAuthzTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("获取底层连接失败: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := g.AutoMigrate(&model.User{}, &model.Role{}, &model.Permission{}, &model.RolePermission{}); err != nil {
+	if err := g.AutoMigrate(&model.PlatformUser{}, &model.Role{}, &model.Permission{}, &model.RolePermission{}); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
 	if err := authz.Sync(g); err != nil {
@@ -38,9 +39,9 @@ func newAuthzTestDB(t *testing.T) *gorm.DB {
 	return g
 }
 
-func newAuthzUser(t *testing.T, g *gorm.DB, roleKey *string) model.User {
+func newAuthzUser(t *testing.T, g *gorm.DB, roleKey *string) model.PlatformUser {
 	t.Helper()
-	user := model.User{
+	user := model.PlatformUser{
 		ID:           uuid.New(),
 		Email:        uuid.NewString() + "@example.com",
 		Username:     "u" + uuid.NewString()[:8],
@@ -63,7 +64,7 @@ func newAuthzRouter(t *testing.T, g *gorm.DB, withLoader bool, permission string
 	secret := []byte("middleware-authz-test-secret-middleware")
 	group := r.Group("/api/admin", Auth(secret))
 	if withLoader {
-		group.Use(LoadAdminAccess(g))
+		group.Use(LoadAdminAccess(identity.NewService(g), g))
 	}
 	group.GET("/probe", RequirePermission(permission), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})

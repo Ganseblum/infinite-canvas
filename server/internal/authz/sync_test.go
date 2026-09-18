@@ -25,7 +25,7 @@ func newAuthzTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("获取底层连接失败: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := g.AutoMigrate(&model.User{}, &model.Role{}, &model.Permission{}, &model.RolePermission{}); err != nil {
+	if err := g.AutoMigrate(&model.PlatformUser{}, &model.Role{}, &model.Permission{}, &model.RolePermission{}); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
 	return g
@@ -168,15 +168,15 @@ func TestSyncBackfillsLegacyRoleColumn(t *testing.T) {
 	if err := Sync(g); err != nil {
 		t.Fatalf("同步失败: %v", err)
 	}
-	legacyAdmin := model.User{
+	legacyAdmin := model.PlatformUser{
 		ID: uuid.New(), Email: "legacy-admin@example.com", Username: "legacyadmin",
 		PasswordHash: "x", Role: "admin", Status: "active",
 	}
-	legacyUser := model.User{
+	legacyUser := model.PlatformUser{
 		ID: uuid.New(), Email: "legacy-user@example.com", Username: "legacyuser",
 		PasswordHash: "x", Role: "user", Status: "active",
 	}
-	for _, user := range []*model.User{&legacyAdmin, &legacyUser} {
+	for _, user := range []*model.PlatformUser{&legacyAdmin, &legacyUser} {
 		if err := g.Create(user).Error; err != nil {
 			t.Fatalf("写入老用户失败: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestSyncBackfillsLegacyRoleColumn(t *testing.T) {
 	if err := Sync(g); err != nil {
 		t.Fatalf("再次同步失败: %v", err)
 	}
-	var reloadedAdmin, reloadedUser model.User
+	var reloadedAdmin, reloadedUser model.PlatformUser
 	if err := g.First(&reloadedAdmin, "id = ?", legacyAdmin.ID).Error; err != nil {
 		t.Fatalf("读取老管理员失败: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestSyncBackfillsLegacyRoleColumn(t *testing.T) {
 	if err := g.Create(&model.Role{Key: editor, Name: "编辑"}).Error; err != nil {
 		t.Fatalf("写入自定义角色失败: %v", err)
 	}
-	drifted := model.User{
+	drifted := model.PlatformUser{
 		ID: uuid.New(), Email: "drifted@example.com", Username: "drifted",
 		PasswordHash: "x", Role: "admin", Status: "active", RoleKey: &editor,
 	}
@@ -212,7 +212,7 @@ func TestSyncBackfillsLegacyRoleColumn(t *testing.T) {
 	if err := Sync(g); err != nil {
 		t.Fatalf("再次同步失败: %v", err)
 	}
-	var reloadedDrift model.User
+	var reloadedDrift model.PlatformUser
 	if err := g.First(&reloadedDrift, "id = ?", drifted.ID).Error; err != nil {
 		t.Fatalf("读取漂移用户失败: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestAssignRoleWritesProjection(t *testing.T) {
 	if err := Sync(g); err != nil {
 		t.Fatalf("同步失败: %v", err)
 	}
-	user := model.User{
+	user := model.PlatformUser{
 		ID: uuid.New(), Email: "assign@example.com", Username: "assign",
 		PasswordHash: "x", Role: "user", Status: "active",
 	}
@@ -237,7 +237,7 @@ func TestAssignRoleWritesProjection(t *testing.T) {
 	if err := AssignRole(g, user.ID, &systemKey); err != nil {
 		t.Fatalf("分配系统角色失败: %v", err)
 	}
-	var promoted model.User
+	var promoted model.PlatformUser
 	if err := g.First(&promoted, "id = ?", user.ID).Error; err != nil {
 		t.Fatalf("读取用户失败: %v", err)
 	}

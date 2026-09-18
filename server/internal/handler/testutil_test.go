@@ -29,6 +29,7 @@ import (
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 	"github.com/infinite-canvas/server/internal/watermark"
@@ -252,7 +253,7 @@ func tableReadBarrier(g *gorm.DB, table string, n int) {
 // refreshReadBarrier 让 n 个并发刷新请求都查完令牌后再继续，
 // 确保测试稳定命中「并发轮换竞争失败」分支，而不是读到已撤销令牌的复用检测分支。
 func refreshReadBarrier(g *gorm.DB, n int) {
-	tableReadBarrier(g, "refresh_tokens", n)
+	tableReadBarrier(g, "sessions", n)
 }
 
 type sessionResp struct {
@@ -289,13 +290,13 @@ func registerUser(t *testing.T, r http.Handler, email, username, password string
 }
 
 // createUser 直接写入用户，密码哈希用最低 cost，加速登录相关用例。
-func createUser(t *testing.T, g *gorm.DB, email, username, password string, verified bool) model.User {
+func createUser(t *testing.T, g *gorm.DB, email, username, password string, verified bool) model.PlatformUser {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 	if err != nil {
 		t.Fatalf("生成密码哈希失败: %v", err)
 	}
-	user := model.User{
+	user := model.PlatformUser{
 		ID:           uuid.New(),
 		Email:        email,
 		Username:     username,
@@ -314,7 +315,7 @@ func createUser(t *testing.T, g *gorm.DB, email, username, password string, veri
 	return user
 }
 
-func accessToken(t *testing.T, cfg *config.Config, user *model.User) string {
+func accessToken(t *testing.T, cfg *config.Config, user *model.PlatformUser) string {
 	t.Helper()
 	token, err := auth.IssueAccessToken(user, []byte(cfg.JWTSecret))
 	if err != nil {
@@ -324,7 +325,7 @@ func accessToken(t *testing.T, cfg *config.Config, user *model.User) string {
 }
 
 // setUserRole 直接写库分配角色（同时更新旧 role 投影列），用于构造后台角色夹具。
-func setUserRole(t *testing.T, g *gorm.DB, user *model.User, roleKey *string) {
+func setUserRole(t *testing.T, g *gorm.DB, user *model.PlatformUser, roleKey *string) {
 	t.Helper()
 	if err := authz.AssignRole(g, user.ID, roleKey); err != nil {
 		t.Fatalf("分配角色失败: %v", err)
@@ -334,7 +335,7 @@ func setUserRole(t *testing.T, g *gorm.DB, user *model.User, roleKey *string) {
 }
 
 // promoteAdmin 把用户提升为系统角色管理员。
-func promoteAdmin(t *testing.T, g *gorm.DB, user *model.User) {
+func promoteAdmin(t *testing.T, g *gorm.DB, user *model.PlatformUser) {
 	t.Helper()
 	key := authz.SystemRoleKey
 	setUserRole(t, g, user, &key)
@@ -381,14 +382,14 @@ func newResourceRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Confi
 	generations.GET("/:id", genH.Get)
 	generations.DELETE("/:id", genH.Delete)
 
-	media := api.Group("/media", middleware.MediaAuth(secret, g))
+	media := api.Group("/media", middleware.MediaAuth(secret, identity.NewService(g)))
 	media.HEAD("/:storageKey", mediaH.Head)
 	media.GET("/:storageKey", mediaH.Get)
 	media.PUT("/:storageKey", mediaH.Put)
 	media.DELETE("/:storageKey", mediaH.Delete)
 	media.POST("/:storageKey/download", mediaH.RequestDownload)
 
-	download := api.Group("/media-download", middleware.MediaAuth(secret, g))
+	download := api.Group("/media-download", middleware.MediaAuth(secret, identity.NewService(g)))
 	download.GET("/:token", mediaH.ServeDownload)
 	return r
 }

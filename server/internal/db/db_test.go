@@ -39,7 +39,7 @@ func TestEnsureAdminWritesSystemRoleKey(t *testing.T) {
 	if err := EnsureAdmin(g, "root@example.com", "password123"); err != nil {
 		t.Fatalf("创建管理员失败: %v", err)
 	}
-	var created model.User
+	var created model.PlatformUser
 	if err := g.First(&created, "email = ?", "root@example.com").Error; err != nil {
 		t.Fatalf("读取管理员失败: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestEnsureAdminWritesSystemRoleKey(t *testing.T) {
 	originalHash := created.PasswordHash
 
 	// 老用户（role='admin'，role_key 为空）应被提升为系统角色，且不重置密码。
-	legacy := model.User{
+	legacy := model.PlatformUser{
 		ID: uuid.New(), Email: "legacy@example.com", Username: "legacy",
 		PasswordHash: "legacy-hash", Role: "admin", Status: "active",
 	}
@@ -62,7 +62,7 @@ func TestEnsureAdminWritesSystemRoleKey(t *testing.T) {
 	if err := EnsureAdmin(g, "legacy@example.com", "newpassword"); err != nil {
 		t.Fatalf("提升老管理员失败: %v", err)
 	}
-	var reloaded model.User
+	var reloaded model.PlatformUser
 	if err := g.First(&reloaded, "id = ?", legacy.ID).Error; err != nil {
 		t.Fatalf("读取老管理员失败: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestEnsureAdminWritesSystemRoleKey(t *testing.T) {
 	if err := EnsureAdmin(g, "root@example.com", "password123"); err != nil {
 		t.Fatalf("重复执行 EnsureAdmin 失败: %v", err)
 	}
-	var again model.User
+	var again model.PlatformUser
 	if err := g.First(&again, "email = ?", "root@example.com").Error; err != nil {
 		t.Fatalf("读取管理员失败: %v", err)
 	}

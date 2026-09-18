@@ -6,8 +6,10 @@ import (
 	"github.com/google/uuid"
 )
 
-type User struct {
-	ID           uuid.UUID `gorm:"type:char(36);primaryKey;comment:用户主键，UUID v4 文本"`
+// PlatformUser 是平台账号主表（platform_users）：全产品共享的唯一身份，
+// 各业务表通过 user_id 列引用它，语义即平台用户 id。
+type PlatformUser struct {
+	ID           uuid.UUID `gorm:"type:char(36);primaryKey;comment:平台账号主键，UUID v4 文本"`
 	Email        string    `gorm:"type:varchar(255);uniqueIndex;not null;comment:登录邮箱，全站唯一"`
 	Username     string    `gorm:"type:varchar(64);uniqueIndex;not null;comment:用户名，全站唯一，用于展示与他人搜索"`
 	PasswordHash string    `gorm:"type:varchar(100);not null;comment:登录密码的 bcrypt 哈希，不存明文"`
@@ -32,15 +34,17 @@ type User struct {
 	UpdatedAt           time.Time  `gorm:"comment:记录最近更新时间"`
 }
 
-type RefreshToken struct {
-	ID        uuid.UUID  `gorm:"type:char(36);primaryKey;comment:刷新令牌主键"`
-	UserID    uuid.UUID  `gorm:"type:char(36);index;not null;comment:令牌所属用户"`
+// Session 是平台会话表（sessions）：一次登录签发的刷新令牌记录，
+// 取代旧 refresh_tokens 表；字段语义不变。
+type Session struct {
+	ID        uuid.UUID  `gorm:"type:char(36);primaryKey;comment:会话主键"`
+	UserID    uuid.UUID  `gorm:"type:char(36);index;not null;comment:会话所属平台账号"`
 	TokenHash string     `gorm:"type:varchar(64);uniqueIndex;not null;comment:刷新令牌原文的 SHA-256 哈希，不存原始令牌"`
-	ExpiresAt time.Time  `gorm:"not null;comment:令牌过期时间，过期后拒绝刷新"`
-	RevokedAt *time.Time `gorm:"comment:令牌被吊销的时间，未吊销为空"`
+	ExpiresAt time.Time  `gorm:"not null;comment:会话过期时间，过期后拒绝刷新"`
+	RevokedAt *time.Time `gorm:"comment:会话被吊销的时间，未吊销为空"`
 	UserAgent string     `gorm:"type:varchar(512);comment:签发时浏览器的 User-Agent，用于会话列表展示"`
 	IP        string     `gorm:"type:varchar(64);comment:签发时的客户端 IP，用于会话列表展示"`
-	CreatedAt time.Time  `gorm:"comment:令牌签发时间"`
+	CreatedAt time.Time  `gorm:"comment:会话签发时间"`
 }
 
 type EmailToken struct {

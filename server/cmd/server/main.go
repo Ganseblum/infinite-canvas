@@ -22,6 +22,7 @@ import (
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/moderation"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 	"github.com/infinite-canvas/server/internal/watermark"
@@ -137,6 +138,8 @@ func main() {
 		slog.Error("读取站点设置失败", "err", err)
 		os.Exit(1)
 	}
+	// 平台身份域：认证、授权与管理端的身份读写统一入口。
+	idn := identity.NewService(gormDB)
 	authHandler := handler.NewAuthHandler(gormDB, cfg, mailer)
 	authHandler.SetSettings(siteSettings)
 	grantService := service.NewFreeGrantService(gormDB)
@@ -267,11 +270,11 @@ func main() {
 
 	// 维护模式写拦截（差异清单 #117）：开启后非管理员的写请求 503，
 	// 读操作、认证、管理端与支付回调放行。
-	api.Use(middleware.MaintenanceGate(siteSettings, gormDB, secret))
+	api.Use(middleware.MaintenanceGate(siteSettings, idn, secret))
 
 	// 强制改密：must_change_password 的账号只能登出、刷新或改密，其余接口一律 403。
 	// 挂到每个需要登录的路由上，新增受保护分组必须一并挂上。
-	passwordGate := middleware.RequirePasswordChanged(gormDB)
+	passwordGate := middleware.RequirePasswordChanged(idn)
 
 	authGroup := api.Group("/auth")
 	{
@@ -286,7 +289,7 @@ func main() {
 	}
 
 	// 全站业务接口要求登录且账号未封禁；注销冷静期的账号可以浏览，但生成与下单被拦截。
-	active := middleware.RequireActiveUser(gormDB)
+	active := middleware.RequireActiveUser(idn)
 
 	me := api.Group("/me", middleware.Auth(secret), active, passwordGate)
 	{
@@ -365,7 +368,7 @@ func main() {
 	}
 
 	// 媒体读路径额外认 ic_media cookie（GET/HEAD），写路径只认 Bearer。
-	media := api.Group("/media", middleware.MediaAuth(secret, gormDB), active, passwordGate)
+	media := api.Group("/media", middleware.MediaAuth(secret, idn), active, passwordGate)
 	{
 		media.HEAD("/:storageKey", mediaHandler.Head)
 		media.GET("/:storageKey", mediaHandler.Get)
@@ -379,7 +382,7 @@ func main() {
 
 	// 干净原件取件：签名 URL 必须同时过 MediaAuth（ic_media cookie 或 Bearer），
 	// 这是防盗链的第二道闸；签名、过期与归属校验在 handler 内完成，任一失败一律 404。
-	mediaDownload := api.Group("/media-download", middleware.MediaAuth(secret, gormDB), active, passwordGate)
+	mediaDownload := api.Group("/media-download", middleware.MediaAuth(secret, idn), active, passwordGate)
 	{
 		mediaDownload.GET("/:token", mediaHandler.ServeDownload)
 	}
@@ -410,7 +413,7 @@ func main() {
 
 	// 管理后台：每请求按库里的角色判定权限（不读 JWT 里的 role claim，避免 15 分钟陈旧授权），
 	// 具体权限点由 registerAdminRoutes 逐条挂载。
-	admin := api.Group("/admin", middleware.Auth(secret), active, passwordGate, middleware.LoadAdminAccess(gormDB))
+	admin := api.Group("/admin", middleware.Auth(secret), active, passwordGate, middleware.LoadAdminAccess(idn, gormDB))
 	registerAdminRoutes(admin, adminHandler)
 
 	srv := &http.Server{

@@ -310,7 +310,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 	}
 
 	// 未验证邮箱禁止上传：只限制媒体写路径，画布/素材/生成记录不受影响。
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return

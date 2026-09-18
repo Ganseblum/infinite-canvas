@@ -20,7 +20,7 @@ func RoleProjection(roleKey *string) string {
 // AssignRole 是唯一的角色写入助手：一次写入 role_key 与旧 role 投影列。
 // 所有角色变更（含清空角色）都必须走这里，避免两列漂移。
 func AssignRole(tx *gorm.DB, userID uuid.UUID, roleKey *string) error {
-	return tx.Model(&model.User{}).Where("id = ?", userID).Updates(map[string]any{
+	return tx.Model(&model.PlatformUser{}).Where("id = ?", userID).Updates(map[string]any{
 		"role_key": roleKey,
 		"role":     RoleProjection(roleKey),
 	}).Error

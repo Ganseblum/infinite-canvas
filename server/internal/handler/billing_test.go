@@ -15,6 +15,7 @@ import (
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/payment"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -56,7 +57,7 @@ func newBillingRouter(t *testing.T, g *gorm.DB, cfg *config.Config, provider pay
 	adminH := NewAdminHandler(g, cfg, newFakeStorage("local"))
 
 	api := r.Group("/api")
-	active := middleware.RequireActiveUser(g)
+	active := middleware.RequireActiveUser(identity.NewService(g))
 	me := api.Group("/me", middleware.Auth(secret), active)
 	me.GET("", accountH.GetMe)
 	me.POST("/deletion", accountH.RequestDeletion)
@@ -76,7 +77,7 @@ func newBillingRouter(t *testing.T, g *gorm.DB, cfg *config.Config, provider pay
 
 	api.POST("/payments/webhook/:provider", paymentH.Webhook)
 
-	admin := api.Group("/admin", middleware.Auth(secret), middleware.LoadAdminAccess(g))
+	admin := api.Group("/admin", middleware.Auth(secret), middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/stats", middleware.RequirePermission(authz.PermStatsRead), adminH.Stats)
 	admin.GET("/users", middleware.RequirePermission(authz.PermUsersRead), adminH.ListUsers)
 	admin.GET("/users/:id", middleware.RequirePermission(authz.PermUsersRead), adminH.GetUser)
@@ -199,7 +200,7 @@ func TestPendingDeletionCanLoginRefreshAndCancel(t *testing.T) {
 	r := newAuthRouter(t, cfg, h)
 	// 同一引擎上补挂注销申请/撤销，中间件与 main.go 的 me 分组一致
 	accountH := NewAccountHandler(g, cfg, service.NewFreeGrantService(g), h)
-	me := r.Group("/api/me", middleware.Auth([]byte(cfg.JWTSecret)), middleware.RequireActiveUser(g))
+	me := r.Group("/api/me", middleware.Auth([]byte(cfg.JWTSecret)), middleware.RequireActiveUser(identity.NewService(g)))
 	me.POST("/deletion", accountH.RequestDeletion)
 	me.POST("/deletion/cancel", accountH.CancelDeletion)
 
@@ -232,7 +233,7 @@ func TestPendingDeletionCanLoginRefreshAndCancel(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("撤销注销失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	var fresh model.User
+	var fresh model.PlatformUser
 	if err := g.First(&fresh, "id = ?", user.ID).Error; err != nil {
 		t.Fatalf("读取用户失败: %v", err)
 	}
@@ -242,7 +243,7 @@ func TestPendingDeletionCanLoginRefreshAndCancel(t *testing.T) {
 
 	// 封禁账号仍拒绝登录
 	banned := createUser(t, g, "banned@example.com", "banneduser", "password123", true)
-	if err := g.Model(&model.User{}).Where("id = ?", banned.ID).Update("status", "disabled").Error; err != nil {
+	if err := g.Model(&model.PlatformUser{}).Where("id = ?", banned.ID).Update("status", "disabled").Error; err != nil {
 		t.Fatalf("置为封禁失败: %v", err)
 	}
 	w = doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "banned@example.com", "password": "password123"})

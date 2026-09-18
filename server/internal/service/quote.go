@@ -384,7 +384,8 @@ func (s *QuoteService) VerifyQuote(ctx context.Context, userID uuid.UUID, token 
 // 免费额度优先于折扣，且只对标记了 free_trial_eligible 的模型生效，同时满足：
 // ① 存在已批准的领取记录（差异清单 #5，风控拒绝或未领取的账号不享受）；
 // ② n == 1 且参数组合落在锁定组合内（差异清单 #4，免费只覆盖最便宜组合，
-//    超出锁定组合的请求改走点数分支），防止任意参数按 0 元放行。
+//
+//	超出锁定组合的请求改走点数分支），防止任意参数按 0 元放行。
 func (s *QuoteService) FreeTrialFor(userID uuid.UUID, catalogItem model.ModelCatalog, capability string, params QuoteParams, n int) (bool, int64) {
 	if !catalogItem.FreeTrialEligible {
 		return false, 0

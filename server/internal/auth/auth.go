@@ -53,7 +53,7 @@ type AccessClaims struct {
 	jwt.RegisteredClaims
 }
 
-func IssueAccessToken(user *model.User, secret []byte) (string, error) {
+func IssueAccessToken(user *model.PlatformUser, secret []byte) (string, error) {
 	now := time.Now()
 	claims := AccessClaims{
 		Sub:  user.ID.String(),

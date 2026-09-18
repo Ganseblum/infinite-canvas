@@ -15,6 +15,7 @@ import (
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -25,7 +26,7 @@ type AccountHandler struct {
 	authH    *AuthHandler
 	credits  *service.CreditService
 	quota    *service.QuotaService
-	deletion *service.DeletionService
+	identity *identity.Service
 }
 
 func NewAccountHandler(db *gorm.DB, cfg *config.Config, grant *service.FreeGrantService, authH *AuthHandler) *AccountHandler {
@@ -36,13 +37,13 @@ func NewAccountHandler(db *gorm.DB, cfg *config.Config, grant *service.FreeGrant
 		authH:    authH,
 		credits:  service.NewCreditService(db),
 		quota:    service.NewQuotaService(db),
-		deletion: service.NewDeletionService(db),
+		identity: identity.NewService(db),
 	}
 }
 
 func (h *AccountHandler) GetMe(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -134,7 +135,7 @@ func formatTimePtr(t *time.Time) any {
 // 订单列表、生成记录与画布列表的元数据；媒体二进制与画布正文 JSON 不在导出范围。
 func (h *AccountHandler) ExportMe(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -247,12 +248,12 @@ func (h *AccountHandler) UpdateMe(c *gin.Context) {
 		errs.Abort(c, errs.ErrValidation)
 		return
 	}
-	if err := h.db.Model(&model.User{}).Where("id = ?", uid).Updates(updates).Error; err != nil {
+	if err := h.db.Model(&model.PlatformUser{}).Where("id = ?", uid).Updates(updates).Error; err != nil {
 		slog.Error("更新资料失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	var user model.User
+	var user model.PlatformUser
 	h.db.First(&user, "id = ?", uid)
 	c.JSON(http.StatusOK, gin.H{"user": userPayload(&user)})
 }
@@ -273,7 +274,7 @@ func (h *AccountHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 	uid, _ := uuid.Parse(c.GetString("user_id"))
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -298,13 +299,10 @@ func (h *AccountHandler) ChangePassword(c *gin.Context) {
 		}
 		// 撤销该用户全部 refresh token（含当前会话），旧令牌一律失效；
 		// 同时递增媒体令牌版本，ic_media cookie 随之失效（差异清单 #9）。
-		if err := tx.Model(&model.User{}).Where("id = ?", uid).
-			UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
+		if err := h.identity.BumpMediaTokenVersionTx(tx, uid); err != nil {
 			return err
 		}
-		return tx.Model(&model.RefreshToken{}).
-			Where("user_id = ? AND revoked_at IS NULL", uid).
-			Update("revoked_at", now).Error
+		return h.identity.RevokeSessionsTx(tx, uid, now)
 	})
 	if err != nil {
 		slog.Error("修改密码失败", "err", err)
@@ -324,7 +322,7 @@ func (h *AccountHandler) ClaimFreeGrant(c *gin.Context) {
 		errs.Abort(c, errs.ErrFreeGrantUnav)
 		return
 	}
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -407,7 +405,7 @@ func (h *AccountHandler) RequestDeletion(c *gin.Context) {
 		return
 	}
 	uid, _ := uuid.Parse(c.GetString("user_id"))
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -416,7 +414,7 @@ func (h *AccountHandler) RequestDeletion(c *gin.Context) {
 		errs.Abort(c, errs.ErrInvalidCreds)
 		return
 	}
-	scheduledAt, err := h.deletion.Request(c.Request.Context(), uid, time.Now())
+	scheduledAt, err := h.identity.RequestDeletion(c.Request.Context(), uid, time.Now())
 	if err != nil {
 		slog.Error("申请注销失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -428,8 +426,8 @@ func (h *AccountHandler) RequestDeletion(c *gin.Context) {
 // CancelDeletion 撤销注销申请，仅当处于冷静期时有效。
 func (h *AccountHandler) CancelDeletion(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
-	if err := h.deletion.Cancel(c.Request.Context(), uid); err != nil {
-		if errors.Is(err, service.ErrNotPendingDeletion) {
+	if err := h.identity.CancelDeletion(c.Request.Context(), uid); err != nil {
+		if errors.Is(err, identity.ErrNotPendingDeletion) {
 			errs.Abort(c, errs.ErrDeletionNotPending)
 			return
 		}

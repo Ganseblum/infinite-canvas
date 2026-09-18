@@ -38,9 +38,9 @@ func newServiceDB(t *testing.T) *gorm.DB {
 	return g
 }
 
-func createUserRow(t *testing.T, g *gorm.DB) model.User {
+func createUserRow(t *testing.T, g *gorm.DB) model.PlatformUser {
 	t.Helper()
-	user := model.User{
+	user := model.PlatformUser{
 		ID:           uuid.New(),
 		Email:        uuid.NewString() + "@example.com",
 		Username:     uuid.NewString()[:16],

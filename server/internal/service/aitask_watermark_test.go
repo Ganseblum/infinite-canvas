@@ -150,9 +150,9 @@ func newWMTaskService(t *testing.T, g *gorm.DB, stor *wmStorage, wm videoWaterma
 // 退款断言才有消费流水可依。isPaid=false 时只入赠送桶，保持 free 档身份；
 // isPaid=true 时入账两倍金额：PlanOf 按 purchased 余额判 paid（quota.go PlanOf），
 // 预扣恰好消耗 costMicros，只入账一份会把余额扣空退化为 free 档。
-func seedWMTask(t *testing.T, g *gorm.DB, isPaid bool, costMicros int64) (*model.AITask, *model.AIRequest, model.User) {
+func seedWMTask(t *testing.T, g *gorm.DB, isPaid bool, costMicros int64) (*model.AITask, *model.AIRequest, model.PlatformUser) {
 	t.Helper()
-	user := model.User{
+	user := model.PlatformUser{
 		ID:       uuid.New(),
 		Email:    uuid.NewString() + "@example.com",
 		Username: uuid.NewString()[:8],

@@ -13,6 +13,7 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -34,7 +35,7 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 	}
 	secret := []byte(cfg.JWTSecret)
 	api := r.Group("/api")
-	active := middleware.RequireActiveUser(g)
+	active := middleware.RequireActiveUser(identity.NewService(g))
 
 	group := api.Group("/community", middleware.Auth(secret), active)
 	group.GET("/works", community.List)
@@ -59,7 +60,7 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 	me := api.Group("/me", middleware.Auth(secret), active)
 	me.GET("", accountHandler.GetMe)
 
-	admin := api.Group("/admin", middleware.Auth(secret), active, middleware.LoadAdminAccess(g))
+	admin := api.Group("/admin", middleware.Auth(secret), active, middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/settings", middleware.RequirePermission(authz.PermSettingsRead), adminHandler.GetSettings)
 	admin.PATCH("/settings", middleware.RequirePermission(authz.PermSettingsWrite), adminHandler.UpdateSettings)
 	admin.GET("/admins", middleware.RequirePermission(authz.PermRolesRead), adminHandler.ListAdmins)
@@ -74,7 +75,7 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 	return r, settings
 }
 
-func createAdminUser(t *testing.T, g *gorm.DB, cfg *config.Config, email, username string) (model.User, string) {
+func createAdminUser(t *testing.T, g *gorm.DB, cfg *config.Config, email, username string) (model.PlatformUser, string) {
 	t.Helper()
 	user := createUser(t, g, email, username, "password123", true)
 	promoteAdmin(t, g, &user)
@@ -203,7 +204,7 @@ func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
 	inviterToken := accessToken(t, cfg, &inviter)
 	invitee := createUser(t, g, "invitee@example.com", "invitee", "password123", true)
 	// 邀请防刷要求被邀请人注册满 inviteMinAccountAge，测试账号回拨注册时间。
-	if err := g.Model(&model.User{}).Where("id = ?", invitee.ID).
+	if err := g.Model(&model.PlatformUser{}).Where("id = ?", invitee.ID).
 		Update("created_at", time.Now().Add(-2*time.Hour)).Error; err != nil {
 		t.Fatalf("回拨邀请账号注册时间失败: %v", err)
 	}
@@ -283,7 +284,7 @@ func TestAdminManagementGuards(t *testing.T) {
 	if remove.Code != http.StatusNoContent {
 		t.Fatalf("撤销管理员失败: %d %s", remove.Code, remove.Body.String())
 	}
-	var reloaded model.User
+	var reloaded model.PlatformUser
 	g.First(&reloaded, "id = ?", target.ID)
 	if reloaded.Role != "user" {
 		t.Fatalf("撤销后角色应为 user, got %s", reloaded.Role)

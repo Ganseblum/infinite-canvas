@@ -362,7 +362,7 @@ func (h *CommunityHandler) UserProfile(c *gin.Context) {
 		errs.Abort(c, errs.ErrNotFound)
 		return
 	}
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.Select("id", "username", "display_name", "avatar_url", "created_at").
 		First(&user, "id = ?", userID).Error; err != nil {
 		errs.Abort(c, errs.ErrNotFound)
@@ -434,9 +434,9 @@ func (h *CommunityHandler) payloads(works []model.CommunityWork) []gin.H {
 		workIDs = append(workIDs, work.ID)
 		assetIDs = append(assetIDs, work.AssetID)
 	}
-	var users []model.User
+	var users []model.PlatformUser
 	h.db.Where("id IN ?", userIDs).Find(&users)
-	userByID := map[uuid.UUID]model.User{}
+	userByID := map[uuid.UUID]model.PlatformUser{}
 	for _, user := range users {
 		userByID[user.ID] = user
 	}

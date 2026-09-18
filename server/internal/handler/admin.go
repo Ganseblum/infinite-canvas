@@ -19,6 +19,7 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 )
@@ -26,6 +27,7 @@ import (
 // AdminHandler 提供管理后台的全部接口，路由挂在 /api/admin 下并由 RequireAdmin 保护。
 type AdminHandler struct {
 	db         *gorm.DB
+	identity   *identity.Service
 	cfg        *config.Config
 	credits    *service.CreditService
 	quota      *service.QuotaService
@@ -47,6 +49,7 @@ func NewAdminHandler(db *gorm.DB, cfg *config.Config, stor storage.Storage) *Adm
 func NewAdminHandlerWithUpstream(db *gorm.DB, cfg *config.Config, stor storage.Storage, upstream *service.UpstreamService) *AdminHandler {
 	return &AdminHandler{
 		db:       db,
+		identity: identity.NewService(db),
 		cfg:      cfg,
 		credits:  service.NewCreditService(db),
 		quota:    service.NewQuotaService(db),
@@ -62,7 +65,7 @@ func NewAdminHandlerWithUpstream(db *gorm.DB, cfg *config.Config, stor storage.S
 // ===== 用户管理 =====
 
 var adminUserSorts = map[string]string{
-	"createdAt":       "users.created_at",
+	"createdAt":       "platform_users.created_at",
 	"purchasedMicros": "purchased_micros",
 	"grantedMicros":   "granted_micros",
 	"storageBytes":    "storage_bytes",
@@ -117,7 +120,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		return
 	}
 	now := time.Now()
-	user := model.User{
+	user := model.PlatformUser{
 		ID:                 uuid.New(),
 		Email:              email,
 		PasswordHash:       hash,
@@ -192,7 +195,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 func pickUsername(tx *gorm.DB, email string) (string, error) {
 	base := usernameBase(email)
 	var taken []string
-	if err := tx.Model(&model.User{}).
+	if err := tx.Model(&model.PlatformUser{}).
 		Where("username = ? OR username LIKE ?", base, base+"%").
 		Pluck("username", &taken).Error; err != nil {
 		return "", err
@@ -271,16 +274,16 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 
 	now := time.Now()
 	sunsetLine := now.AddDate(0, 0, -60)
-	base := h.db.Table("users").
-		Joins("LEFT JOIN credits c ON c.user_id = users.id").
-		Joins("LEFT JOIN usage_records u ON u.user_id = users.id AND u.metric = ? AND u.period = ?", service.MetricStorageBytes, service.PeriodTotal).
-		Where("users.id <> ?", uuid.Nil)
+	base := h.db.Model(&model.PlatformUser{}).
+		Joins("LEFT JOIN credits c ON c.user_id = platform_users.id").
+		Joins("LEFT JOIN usage_records u ON u.user_id = platform_users.id AND u.metric = ? AND u.period = ?", service.MetricStorageBytes, service.PeriodTotal).
+		Where("platform_users.id <> ?", uuid.Nil)
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		pattern := searchPattern(q)
-		base = base.Where("LOWER(users.email) LIKE ? OR LOWER(users.username) LIKE ?", pattern, pattern)
+		base = base.Where("LOWER(platform_users.email) LIKE ? OR LOWER(platform_users.username) LIKE ?", pattern, pattern)
 	}
 	if status != "" {
-		base = base.Where("users.status = ?", status)
+		base = base.Where("platform_users.status = ?", status)
 	}
 	if planID != "" {
 		base = base.Where("("+planIDExpr+") = ?", now, sunsetLine, planID)
@@ -307,15 +310,15 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		PaidUntil       *time.Time
 		StorageBytes    int64
 	}
-	selectExpr := fmt.Sprintf(`users.id, users.email, users.username, users.role, users.role_key, users.status,
-		users.email_verified_at, users.created_at,
+	selectExpr := fmt.Sprintf(`platform_users.id, platform_users.email, platform_users.username, platform_users.role, platform_users.role_key, platform_users.status,
+		platform_users.email_verified_at, platform_users.created_at,
 		COALESCE(c.purchased_micros, 0) AS purchased_micros,
 		COALESCE(c.granted_micros, 0) AS granted_micros,
 		c.paid_until,
 		COALESCE(u.value, 0) AS storage_bytes,
 		(%s) AS plan_id`, planIDExpr)
 	err := base.Select(selectExpr, now, sunsetLine).
-		Order(sortColumn).Order("users.id ASC").
+		Order(sortColumn).Order("platform_users.id ASC").
 		Offset((params.Page - 1) * params.Size).Limit(params.Size).
 		Scan(&rows).Error
 	if err != nil {
@@ -351,8 +354,8 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var user model.User
-	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
+	user, err := h.identity.GetByID(c.Request.Context(), userID)
+	if err != nil {
 		errs.Abort(c, errs.ErrNotFound)
 		return
 	}
@@ -417,7 +420,7 @@ func (h *AdminHandler) PatchUser(c *gin.Context) {
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		// 封禁前先确认不会把系统角色上的最后一个 active 用户停掉。
 		if *req.Status == "disabled" {
-			var target model.User
+			var target model.PlatformUser
 			if err := tx.First(&target, "id = ?", userID).Error; err != nil {
 				return err
 			}
@@ -431,19 +434,16 @@ func (h *AdminHandler) PatchUser(c *gin.Context) {
 				}
 			}
 		}
-		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("status", *req.Status).Error; err != nil {
+		if err := h.identity.SetStatusTx(tx, userID, *req.Status); err != nil {
 			return err
 		}
 		// 封禁必须同时撤销全部 refresh token，最多 15 分钟后彻底掉线。
 		if *req.Status == "disabled" {
 			// 封禁同时递增媒体令牌版本，ic_media 立即失效（差异清单 #9）。
-			if err := tx.Model(&model.User{}).Where("id = ?", userID).
-				UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
+			if err := h.identity.BumpMediaTokenVersionTx(tx, userID); err != nil {
 				return err
 			}
-			if err := tx.Model(&model.RefreshToken{}).
-				Where("user_id = ? AND revoked_at IS NULL", userID).
-				Update("revoked_at", now).Error; err != nil {
+			if err := h.identity.RevokeSessionsTx(tx, userID, now); err != nil {
 				return err
 			}
 		}
@@ -489,20 +489,17 @@ func (h *AdminHandler) ResetPassword(c *gin.Context) {
 	mustChange := actorID != userID
 	err = h.db.Transaction(func(tx *gorm.DB) error {
 		// 密码由管理员指定，接口不回传明文。
-		if err := tx.Model(&model.User{}).Where("id = ?", userID).Updates(map[string]any{
+		if err := tx.Model(&model.PlatformUser{}).Where("id = ?", userID).Updates(map[string]any{
 			"password_hash":        hash,
 			"must_change_password": mustChange,
 		}).Error; err != nil {
 			return err
 		}
 		// 管理员重置密码：媒体令牌版本一并递增（差异清单 #9）。
-		if err := tx.Model(&model.User{}).Where("id = ?", userID).
-			UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
+		if err := h.identity.BumpMediaTokenVersionTx(tx, userID); err != nil {
 			return err
 		}
-		if err := tx.Model(&model.RefreshToken{}).
-			Where("user_id = ? AND revoked_at IS NULL", userID).
-			Update("revoked_at", now).Error; err != nil {
+		if err := h.identity.RevokeSessionsTx(tx, userID, now); err != nil {
 			return err
 		}
 		return h.audit.Record(tx, actorID, "user.password_reset", "user", userID.String(), c.GetString("request_id"), "",
@@ -614,8 +611,8 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 	dayStart := now.UTC().Truncate(24 * time.Hour)
 	var userTotal, userToday, generationToday, orderToday int64
 	var storageTotal, creditsTotal, revenueToday int64
-	h.db.Model(&model.User{}).Count(&userTotal)
-	h.db.Model(&model.User{}).Where("created_at >= ?", dayStart).Count(&userToday)
+	h.db.Model(&model.PlatformUser{}).Count(&userTotal)
+	h.db.Model(&model.PlatformUser{}).Where("created_at >= ?", dayStart).Count(&userToday)
 	h.db.Model(&model.Generation{}).Where("created_at >= ?", dayStart).Count(&generationToday)
 	h.db.Model(&model.Order{}).Where("status = ? AND paid_at >= ?", "paid", dayStart).Count(&orderToday)
 	h.db.Model(&model.MediaFile{}).Select("COALESCE(SUM(bytes), 0)").Scan(&storageTotal)

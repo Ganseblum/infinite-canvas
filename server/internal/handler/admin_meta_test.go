@@ -12,6 +12,7 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 )
 
 func newAdminMetaRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engine {
@@ -23,7 +24,7 @@ func newAdminMetaRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engin
 	secret := []byte(cfg.JWTSecret)
 	h := NewAdminHandler(g, cfg, newFakeStorage("local"))
 	api := r.Group("/api")
-	admin := api.Group("/admin", middleware.Auth(secret), middleware.RequireActiveUser(g), middleware.LoadAdminAccess(g))
+	admin := api.Group("/admin", middleware.Auth(secret), middleware.RequireActiveUser(identity.NewService(g)), middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/meta", h.AdminMeta)
 	return r
 }

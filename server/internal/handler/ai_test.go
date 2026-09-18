@@ -21,6 +21,7 @@ import (
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/provider"
 	"github.com/infinite-canvas/server/internal/service"
 	"gorm.io/datatypes"
@@ -95,7 +96,7 @@ func newAITestRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Config,
 	if moderationService != nil {
 		adminHandler.SetModeration(moderationService)
 	}
-	admin := api.Group("/admin", middleware.Auth(secret), middleware.LoadAdminAccess(g))
+	admin := api.Group("/admin", middleware.Auth(secret), middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/moderation/records", middleware.RequirePermission(authz.PermModerationRead), adminHandler.ListModerationRecords)
 	admin.GET("/moderation/records/:id", middleware.RequirePermission(authz.PermModerationRead), adminHandler.GetModerationRecord)
 	admin.GET("/moderation/records/:id/preview", middleware.RequirePermission(authz.PermModerationRead), adminHandler.PreviewModerationArtifact)
@@ -590,7 +591,7 @@ func TestChatStreamStopsFailoverAfterProducedOutput(t *testing.T) {
 // 首字节前失败才允许原渠道重试一次再切渠道；重试与切渠道都不重复扣点，
 // 全部失败时全额退款并给出 error 事件。
 func TestChatStreamRetryAndFailoverBilling(t *testing.T) {
-	newFixture := func(t *testing.T) (*gorm.DB, *gin.Engine, model.User, string) {
+	newFixture := func(t *testing.T) (*gorm.DB, *gin.Engine, model.PlatformUser, string) {
 		g := newTestDB(t)
 		cfg := testConfig()
 		cfg.CredentialKey = "0123456789abcdef0123456789abcdef"

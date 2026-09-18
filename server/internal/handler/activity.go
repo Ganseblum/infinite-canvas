@@ -153,7 +153,7 @@ func (h *ActivityHandler) streakDays(tx *gorm.DB, uid uuid.UUID, today string) i
 // InviteInfo 返回当前用户的邀请码、邀请记录与奖励配置。
 func (h *ActivityHandler) InviteInfo(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -166,7 +166,7 @@ func (h *ActivityHandler) InviteInfo(c *gin.Context) {
 	if code == "" {
 		for attempt := 0; attempt < 3; attempt++ {
 			candidate := randomInviteCode()
-			if err := h.db.Model(&model.User{}).Where("id = ?", uid).Update("invite_code", candidate).Error; err != nil {
+			if err := h.db.Model(&model.PlatformUser{}).Where("id = ?", uid).Update("invite_code", candidate).Error; err != nil {
 				if service.IsDuplicateKey(err) {
 					continue
 				}
@@ -209,7 +209,7 @@ func (h *ActivityHandler) BindInvite(c *gin.Context) {
 		errs.Abort(c, errs.ErrValidation)
 		return
 	}
-	var inviter model.User
+	var inviter model.PlatformUser
 	if err := h.db.Where("invite_code = ?", req.Code).First(&inviter).Error; err != nil {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"code": "邀请码不存在"}))
 		return
@@ -220,7 +220,7 @@ func (h *ActivityHandler) BindInvite(c *gin.Context) {
 	}
 	// 防刷（差异清单 #35）：被邀请人必须邮箱已验证且注册满最短时长，
 	// 并与免费领取共用同一套风控评分与每日预算，补前端入口前先补风控。
-	var invitee model.User
+	var invitee model.PlatformUser
 	if err := h.db.First(&invitee, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return

@@ -118,7 +118,7 @@ func TestRefreshReuseRevokesAllTokens(t *testing.T) {
 	}
 
 	var active int64
-	if err := g.Model(&model.RefreshToken{}).
+	if err := g.Model(&model.Session{}).
 		Where("user_id = ? AND revoked_at IS NULL", sess.User.ID).
 		Count(&active).Error; err != nil {
 		t.Fatalf("统计有效令牌失败: %v", err)
@@ -300,7 +300,7 @@ func TestConcurrentEmailVerifyOnlyOneSucceeds(t *testing.T) {
 	if winner < 0 {
 		t.Fatal("并发验证没有任何请求成功")
 	}
-	var verified model.User
+	var verified model.PlatformUser
 	if err := g.Where("username = ?", "racetoken").First(&verified).Error; err != nil {
 		t.Fatalf("读取用户失败: %v", err)
 	}

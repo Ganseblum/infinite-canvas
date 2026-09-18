@@ -7,15 +7,16 @@ import (
 	"time"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/storage"
 )
 
 // requestExpiredDeletion 预约注销并把冷静期推到已届满，供匿名化测试直接触发。
-func requestExpiredDeletion(t *testing.T, svc *DeletionService, userID model.User) {
+func requestExpiredDeletion(t *testing.T, svc *DeletionService, userID model.PlatformUser) {
 	t.Helper()
 	// 预约时间往前推「冷静期 + 1」天，到期时间即落在昨天。
-	expired := time.Now().AddDate(0, 0, -DeletionCoolingDays-1)
-	if _, err := svc.Request(context.Background(), userID.ID, expired); err != nil {
+	expired := time.Now().AddDate(0, 0, -identity.DeletionCoolingDays-1)
+	if _, err := svc.identity.RequestDeletion(context.Background(), userID.ID, expired); err != nil {
 		t.Fatalf("申请注销失败: %v", err)
 	}
 }

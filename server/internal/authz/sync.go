@@ -151,17 +151,17 @@ func applyRetiredAliases(db *gorm.DB, retired map[string]string) error {
 //   - 老 role='admin' 且尚未分配角色的用户 → 系统角色（老 role='user' 本身就是 role_key 为空）；
 //   - 旧 role 列同步为保守投影：role_key 为 admin 时是 admin，其余一律 user。
 func backfillUserRoles(db *gorm.DB) error {
-	if err := db.Model(&model.User{}).
+	if err := db.Model(&model.PlatformUser{}).
 		Where("role = ? AND role_key IS NULL", "admin").
 		Update("role_key", SystemRoleKey).Error; err != nil {
 		return fmt.Errorf("回填 role_key 失败: %w", err)
 	}
-	if err := db.Model(&model.User{}).
+	if err := db.Model(&model.PlatformUser{}).
 		Where("role = ? AND role_key = ?", "user", SystemRoleKey).
 		Update("role", "admin").Error; err != nil {
 		return fmt.Errorf("修复 role 投影失败: %w", err)
 	}
-	if err := db.Model(&model.User{}).
+	if err := db.Model(&model.PlatformUser{}).
 		Where("(role_key IS NULL OR role_key <> ?) AND role <> ?", SystemRoleKey, "user").
 		Update("role", "user").Error; err != nil {
 		return fmt.Errorf("修复 role 投影失败: %w", err)

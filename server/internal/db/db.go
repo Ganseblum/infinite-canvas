@@ -50,8 +50,8 @@ func Connect(databaseURL string) (*gorm.DB, error) {
 
 func Migrate(gormDB *gorm.DB) error {
 	return gormDB.AutoMigrate(
-		&model.User{},
-		&model.RefreshToken{},
+		&model.PlatformUser{},
+		&model.Session{},
 		&model.EmailToken{},
 		&model.FreeGrantClaim{},
 		&model.Plan{},
@@ -113,14 +113,14 @@ func EnsureAdmin(gormDB *gorm.DB, email, password string) error {
 		return errors.New("ADMIN_EMAIL 与 ADMIN_PASSWORD 不能为空")
 	}
 	roleKey := authz.SystemRoleKey
-	var user model.User
+	var user model.PlatformUser
 	err := gormDB.Where("email = ?", email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if hashErr != nil {
 			return fmt.Errorf("生成管理员密码哈希失败: %w", hashErr)
 		}
-		admin := model.User{
+		admin := model.PlatformUser{
 			ID:           uuid.New(),
 			Email:        email,
 			Username:     "admin",

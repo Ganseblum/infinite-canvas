@@ -10,6 +10,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 )
 
 // ctxAdminAccess 是 LoadAdminAccess 写入请求上下文的权限快照。
@@ -53,27 +54,25 @@ func (a AdminAccess) Has(key string) bool {
 // 不能作为授权依据，降权必须立即生效。管理流量低，初期不加缓存。
 //
 // 失败关闭：没有后台角色、角色已不存在、或角色分配了代码注册表之外的权限点，一律拒绝/忽略。
-func LoadAdminAccess(db *gorm.DB) gin.HandlerFunc {
+func LoadAdminAccess(idn *identity.Service, db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, err := uuid.Parse(c.GetString("user_id"))
 		if err != nil {
 			errs.Abort(c, errs.ErrUnauthorized)
 			return
 		}
-		var userRow struct {
-			RoleKey *string
-		}
-		if err := db.Table("users").Select("role_key").Where("id = ?", userID).Scan(&userRow).Error; err != nil {
+		user, err := idn.GetByID(c.Request.Context(), userID)
+		if err != nil {
 			slog.Error("读取用户角色失败", "err", err, "user_id", userID)
 			errs.Abort(c, errs.ErrInternal)
 			return
 		}
-		if userRow.RoleKey == nil || *userRow.RoleKey == "" {
+		if user.RoleKey == nil || *user.RoleKey == "" {
 			// 没有后台角色：/admin/me 之外的管理接口由 RequirePermission 再拦一层。
 			errs.Abort(c, errs.ErrForbidden)
 			return
 		}
-		roleKey := *userRow.RoleKey
+		roleKey := *user.RoleKey
 		var rows []struct {
 			Name          string
 			IsSystem      bool

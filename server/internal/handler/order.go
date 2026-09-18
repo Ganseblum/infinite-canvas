@@ -46,7 +46,7 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"provider": "provider 取值非法"}))
 		return
 	}
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return

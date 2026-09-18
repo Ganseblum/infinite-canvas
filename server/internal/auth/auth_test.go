@@ -30,7 +30,7 @@ func TestMediaTokenScopeBoundary(t *testing.T) {
 	}
 
 	// access token 不得当媒体 cookie 用
-	user := model.User{ID: uid, Role: "user"}
+	user := model.PlatformUser{ID: uid, Role: "user"}
 	access, err := IssueAccessToken(&user, secret)
 	if err != nil {
 		t.Fatalf("签发 access token 失败: %v", err)

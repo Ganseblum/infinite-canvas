@@ -23,7 +23,7 @@ import (
 // ===== 媒体水印下发闸门（T4）测试夹具 =====
 
 // makePaid 写入非零充值桶余额，使 DerivePlan 派生为 paid 档。
-func makePaid(t *testing.T, g *gorm.DB, user model.User) {
+func makePaid(t *testing.T, g *gorm.DB, user model.PlatformUser) {
 	t.Helper()
 	if err := g.Create(&model.Credit{UserID: user.ID, PurchasedMicros: 1_000_000}).Error; err != nil {
 		t.Fatalf("写入付费余额失败: %v", err)
@@ -31,7 +31,7 @@ func makePaid(t *testing.T, g *gorm.DB, user model.User) {
 }
 
 // seedMediaFile 直接写入媒体行（绕过上传流程），返回该行。
-func seedMediaFile(t *testing.T, g *gorm.DB, user model.User, key, mimeType string, body []byte) model.MediaFile {
+func seedMediaFile(t *testing.T, g *gorm.DB, user model.PlatformUser, key, mimeType string, body []byte) model.MediaFile {
 	t.Helper()
 	sum := sha256.Sum256(body)
 	file := model.MediaFile{

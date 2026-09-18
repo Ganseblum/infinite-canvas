@@ -12,6 +12,7 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 )
 
 // newAdminAccessRouter 按生产同样的组级中间件与权限参数注册管理路由，用于 RBAC 行为测试。
@@ -24,7 +25,7 @@ func newAdminAccessRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Eng
 	secret := []byte(cfg.JWTSecret)
 	h := NewAdminHandler(g, cfg, newFakeStorage("local"))
 	api := r.Group("/api")
-	admin := api.Group("/admin", middleware.Auth(secret), middleware.RequireActiveUser(g), middleware.LoadAdminAccess(g))
+	admin := api.Group("/admin", middleware.Auth(secret), middleware.RequireActiveUser(identity.NewService(g)), middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/me", h.Me)
 	admin.GET("/users", middleware.RequirePermission(authz.PermUsersRead), h.ListUsers)
 	admin.PATCH("/users/:id", middleware.RequirePermission(authz.PermUsersWrite), h.PatchUser)
@@ -218,7 +219,7 @@ func TestRoleChangeTakesEffectImmediately(t *testing.T) {
 	}
 	// refresh token 同步撤销。
 	var revoked int64
-	if err := g.Model(&model.RefreshToken{}).Where("user_id = ? AND revoked_at IS NULL", operator.ID).Count(&revoked).Error; err != nil {
+	if err := g.Model(&model.Session{}).Where("user_id = ? AND revoked_at IS NULL", operator.ID).Count(&revoked).Error; err != nil {
 		t.Fatalf("统计 refresh token 失败: %v", err)
 	}
 	if revoked != 0 {
@@ -295,7 +296,7 @@ func TestLockoutGuards(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("封禁最后一个系统角色成员应被拒, got %d %s", w.Code, w.Body.String())
 	}
-	var reloaded model.User
+	var reloaded model.PlatformUser
 	if err := g.First(&reloaded, "id = ?", admin.ID).Error; err != nil {
 		t.Fatalf("读取管理员失败: %v", err)
 	}

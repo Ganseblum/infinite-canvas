@@ -172,13 +172,13 @@ func (h *AdminHandler) UsageAnalytics(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	users := make(map[uuid.UUID]model.User, len(userRows))
+	users := make(map[uuid.UUID]model.PlatformUser, len(userRows))
 	if len(userRows) > 0 {
 		ids := make([]uuid.UUID, 0, len(userRows))
 		for _, row := range userRows {
 			ids = append(ids, row.UserID)
 		}
-		var found []model.User
+		var found []model.PlatformUser
 		if err := h.db.Where("id IN ?", ids).Find(&found).Error; err != nil {
 			slog.Error("读取用户消费排行信息失败", "err", err)
 			errs.Abort(c, errs.ErrInternal)

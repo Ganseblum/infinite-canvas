@@ -39,7 +39,7 @@ type CreateOrderResult struct {
 }
 
 // CreateOrder 建单并生成支付参数。价格、两个桶与权益天数在建单时从档位快照到订单行。
-func (s *OrderService) CreateOrder(ctx context.Context, user model.User, packageID, providerName string) (*CreateOrderResult, error) {
+func (s *OrderService) CreateOrder(ctx context.Context, user model.PlatformUser, packageID, providerName string) (*CreateOrderResult, error) {
 	if user.Status == "pending_deletion" {
 		return nil, ErrAccountPendingDeletion
 	}

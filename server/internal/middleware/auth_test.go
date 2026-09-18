@@ -89,7 +89,7 @@ func TestAuthExpiredToken(t *testing.T) {
 
 func TestAuthValidTokenWritesUserContext(t *testing.T) {
 	uid := uuid.New()
-	user := model.User{ID: uid, Role: "admin"}
+	user := model.PlatformUser{ID: uid, Role: "admin"}
 	token, err := auth.IssueAccessToken(&user, testSecret)
 	if err != nil {
 		t.Fatalf("签发 access token 失败: %v", err)

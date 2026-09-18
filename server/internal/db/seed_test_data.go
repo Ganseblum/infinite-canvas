@@ -22,7 +22,7 @@ func SeedTestData(gormDB *gorm.DB, email, password string) error {
 		return errors.New("测试账号邮箱与密码不能为空")
 	}
 
-	var user model.User
+	var user model.PlatformUser
 	err := gormDB.Where("email = ?", email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -30,7 +30,7 @@ func SeedTestData(gormDB *gorm.DB, email, password string) error {
 			return fmt.Errorf("生成测试账号密码哈希失败: %w", hashErr)
 		}
 		now := time.Now()
-		user = model.User{
+		user = model.PlatformUser{
 			ID:              uuid.New(),
 			Email:           email,
 			Username:        "tester",

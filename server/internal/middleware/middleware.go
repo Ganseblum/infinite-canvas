@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/auth"
 	"github.com/infinite-canvas/server/internal/errs"
-	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -134,8 +135,8 @@ func Auth(secret []byte) gin.HandlerFunc {
 //	PUT / DELETE 只接受 Bearer，不认 cookie。
 //
 // cookie 是专为 <img src> 准备的只读凭据，写操作认 cookie 等于给跨站请求开写入口。
-// db 用于媒体令牌版本校验：安全事件递增 media_token_version 后旧 cookie 立即失效（差异清单 #9）。
-func MediaAuth(secret []byte, db *gorm.DB) gin.HandlerFunc {
+// idn 用于媒体令牌版本校验：安全事件递增 media_token_version 后旧 cookie 立即失效（差异清单 #9）。
+func MediaAuth(secret []byte, idn *identity.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		readMethod := c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead
 		header := c.GetHeader("Authorization")
@@ -166,9 +167,13 @@ func MediaAuth(secret []byte, db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 		// 媒体令牌版本校验（差异清单 #9）：改密/重置/封禁递增版本后旧令牌失效。
-		var ver int
-		if err := db.Model(&model.User{}).Select("media_token_version").
-			Where("id = ?", claims.Sub).Scan(&ver).Error; err != nil || ver != claims.Ver {
+		uid, err := uuid.Parse(claims.Sub)
+		if err != nil {
+			errs.Abort(c, errs.ErrUnauthorized)
+			return
+		}
+		ver, err := idn.MediaTokenVersion(c.Request.Context(), uid)
+		if err != nil || ver != claims.Ver {
 			errs.Abort(c, errs.ErrUnauthorized)
 			return
 		}
@@ -182,15 +187,15 @@ func MediaAuth(secret []byte, db *gorm.DB) gin.HandlerFunc {
 // 由 RequireNotPendingDeletion 按路由口径拦截。
 // 第一期签发的 access token 在封禁后 15 分钟内仍有效，这里按库里的最新状态拦截，
 // 撤销 refresh token 负责让会话在那之后彻底失效。
-func RequireActiveUser(db *gorm.DB) gin.HandlerFunc {
+func RequireActiveUser(idn *identity.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		uid, err := uuid.Parse(c.GetString("user_id"))
 		if err != nil {
 			errs.Abort(c, errs.ErrUnauthorized)
 			return
 		}
-		var user model.User
-		if err := db.First(&user, "id = ?", uid).Error; err != nil {
+		user, err := idn.GetByID(c.Request.Context(), uid)
+		if err != nil {
 			errs.Abort(c, errs.ErrUnauthorized)
 			return
 		}
@@ -227,7 +232,7 @@ var passwordChangeAllowlist = map[string]bool{
 // 必须挂在 Auth（以及 RequireActiveUser）之后：只读上下文里的 user_id，标志每请求从库里读，
 // 用户改密成功后下一个请求立即放行，不需要等 access token 过期。
 // 未挂 Auth 的路由不会命中（user_id 为空即按未授权拒绝），fail closed。
-func RequirePasswordChanged(db *gorm.DB) gin.HandlerFunc {
+func RequirePasswordChanged(idn *identity.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if passwordChangeAllowlist[c.Request.Method+" "+c.FullPath()] {
 			c.Next()
@@ -238,8 +243,7 @@ func RequirePasswordChanged(db *gorm.DB) gin.HandlerFunc {
 			errs.Abort(c, errs.ErrUnauthorized)
 			return
 		}
-		var row struct{ MustChangePassword bool }
-		err = db.Model(&model.User{}).Select("must_change_password").Where("id = ?", uid).Take(&row).Error
+		user, err := idn.GetByID(c.Request.Context(), uid)
 		if err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				slog.Error("读取强制改密标记失败", "err", err, "user_id", uid)
@@ -247,7 +251,7 @@ func RequirePasswordChanged(db *gorm.DB) gin.HandlerFunc {
 			errs.Abort(c, errs.ErrUnauthorized)
 			return
 		}
-		if row.MustChangePassword {
+		if user.MustChangePassword {
 			errs.Abort(c, errs.ErrPasswordChangeRequired)
 			return
 		}
@@ -263,8 +267,8 @@ var errMaintenanceMode = errs.New(503, "MAINTENANCE_MODE", "站点维护中，�
 // GET/HEAD/OPTIONS 放行，/api/auth/* 与 /api/admin/* 放行（健康检查不在 /api 组，天然不受影响）。
 //
 // 挂载在 /api 组级、Auth 之前：匿名与普通用户的写请求在这里被挡下。管理员判定按 RBAC
-// 现状每请求查库（users.role_key 非空即有后台角色），只在「维护中 + 写请求 + 非豁免路径」时才查。
-func MaintenanceGate(settings *service.SiteSettingService, db *gorm.DB, secret []byte) gin.HandlerFunc {
+// 现状每请求查库（platform_users.role_key 非空即有后台角色），只在「维护中 + 写请求 + 非豁免路径」时才查。
+func MaintenanceGate(settings *service.SiteSettingService, idn *identity.Service, secret []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		switch c.Request.Method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
@@ -284,7 +288,7 @@ func MaintenanceGate(settings *service.SiteSettingService, db *gorm.DB, secret [
 			c.Next()
 			return
 		}
-		if hasBackendRole(c, db, secret) {
+		if hasBackendRole(c, idn, secret) {
 			c.Next()
 			return
 		}
@@ -294,7 +298,7 @@ func MaintenanceGate(settings *service.SiteSettingService, db *gorm.DB, secret [
 
 // hasBackendRole 判定请求者是否持有后台角色。组级中间件先于 Auth 执行，这里直接
 // 解析 Bearer 拿用户 id，再按库里的 role_key 判定，不读 access token 里的角色投影。
-func hasBackendRole(c *gin.Context, db *gorm.DB, secret []byte) bool {
+func hasBackendRole(c *gin.Context, idn *identity.Service, secret []byte) bool {
 	claims, appErr := authenticateBearer(c.GetHeader("Authorization"), secret)
 	if appErr != nil {
 		return false
@@ -303,11 +307,9 @@ func hasBackendRole(c *gin.Context, db *gorm.DB, secret []byte) bool {
 	if err != nil {
 		return false
 	}
-	var row struct {
-		RoleKey *string
-	}
-	if err := db.Model(&model.User{}).Select("role_key").Where("id = ?", uid).Take(&row).Error; err != nil {
+	user, err := idn.GetByID(context.Background(), uid)
+	if err != nil {
 		return false
 	}
-	return row.RoleKey != nil && *row.RoleKey != ""
+	return user.RoleKey != nil && *user.RoleKey != ""
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -27,8 +28,8 @@ func newAdminUsersRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engi
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
 	secret := []byte(cfg.JWTSecret)
-	active := middleware.RequireActiveUser(g)
-	gate := middleware.RequirePasswordChanged(g)
+	active := middleware.RequireActiveUser(identity.NewService(g))
+	gate := middleware.RequirePasswordChanged(identity.NewService(g))
 	authH := NewAuthHandler(g, cfg, testMailer())
 	acct := NewAccountHandler(g, cfg, service.NewFreeGrantService(g), authH)
 	adminH := NewAdminHandler(g, cfg, newFakeStorage("local"))
@@ -46,7 +47,7 @@ func newAdminUsersRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engi
 	canvases := api.Group("/canvases", middleware.Auth(secret), active, gate)
 	canvases.GET("", canvasH.List)
 
-	admin := api.Group("/admin", middleware.Auth(secret), active, gate, middleware.LoadAdminAccess(g))
+	admin := api.Group("/admin", middleware.Auth(secret), active, gate, middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.POST("/users", middleware.RequirePermission(authz.PermRolesManage), adminH.CreateUser)
 	admin.GET("/users/:id", middleware.RequirePermission(authz.PermUsersRead), adminH.GetUser)
 	admin.POST("/users/:id/password", middleware.RequirePermission(authz.PermUsersWrite), adminH.ResetPassword)
@@ -92,7 +93,7 @@ func TestAdminCreateUserReturnsOneTimeTemporaryPassword(t *testing.T) {
 		t.Fatalf("角色与昵称应写入: %s", w.Body.String())
 	}
 
-	var row model.User
+	var row model.PlatformUser
 	if err := g.First(&row, "email = ?", "new.user@example.com").Error; err != nil {
 		t.Fatalf("新账号未写库: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestAdminCreateUserReturnsOneTimeTemporaryPassword(t *testing.T) {
 	}
 	// 明文不落库：密码列里存的是 bcrypt 哈希而不是原文。
 	var plainRows int64
-	if err := g.Model(&model.User{}).Where("password_hash = ?", password).Count(&plainRows).Error; err != nil {
+	if err := g.Model(&model.PlatformUser{}).Where("password_hash = ?", password).Count(&plainRows).Error; err != nil {
 		t.Fatalf("查询密码列失败: %v", err)
 	}
 	if plainRows != 0 {
@@ -149,7 +150,7 @@ func TestAdminCreateUserRejectsDuplicateEmail(t *testing.T) {
 		t.Fatalf("重复邮箱应复用既有 409 EMAIL_TAKEN, got %d %s", w.Code, w.Body.String())
 	}
 	var count int64
-	g.Model(&model.User{}).Where("email = ?", "taken@example.com").Count(&count)
+	g.Model(&model.PlatformUser{}).Where("email = ?", "taken@example.com").Count(&count)
 	if count != 1 {
 		t.Fatalf("重复邮箱建号不应写入新行, count=%d", count)
 	}
@@ -168,7 +169,7 @@ func TestAdminCreateUserRejectsUnknownRole(t *testing.T) {
 		t.Fatalf("未知 roleKey 应 400 VALIDATION_FAILED, got %d %s", w.Code, w.Body.String())
 	}
 	var count int64
-	g.Model(&model.User{}).Where("email = ?", "ghost-role@example.com").Count(&count)
+	g.Model(&model.PlatformUser{}).Where("email = ?", "ghost-role@example.com").Count(&count)
 	if count != 0 {
 		t.Fatal("角色不存在的请求不应建号")
 	}
@@ -197,7 +198,7 @@ func TestAdminCreateUserRequiresRolesManagePermission(t *testing.T) {
 		t.Fatalf("无 roles.manage 权限应 403 FORBIDDEN, got %d %s", w.Code, w.Body.String())
 	}
 	var count int64
-	g.Model(&model.User{}).Where("email = ?", "should-not-exist@example.com").Count(&count)
+	g.Model(&model.PlatformUser{}).Where("email = ?", "should-not-exist@example.com").Count(&count)
 	if count != 0 {
 		t.Fatal("越权请求不应建号")
 	}
@@ -208,7 +209,7 @@ func TestForcedPasswordChangeGate(t *testing.T) {
 	cfg := testConfig()
 	r := newAdminUsersRouter(t, g, cfg)
 	user := createUser(t, g, "forced@example.com", "forced", "initial-pass-1", true)
-	if err := g.Model(&model.User{}).Where("id = ?", user.ID).
+	if err := g.Model(&model.PlatformUser{}).Where("id = ?", user.ID).
 		Update("must_change_password", true).Error; err != nil {
 		t.Fatalf("置位 must_change_password 失败: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestForcedPasswordChangeGate(t *testing.T) {
 	}
 
 	// 标志已清、业务接口恢复正常。
-	var row model.User
+	var row model.PlatformUser
 	if err := g.First(&row, "id = ?", user.ID).Error; err != nil {
 		t.Fatalf("读取用户失败: %v", err)
 	}
@@ -328,7 +329,7 @@ func TestAdminResetPasswordSetsMustChangeAndRevokesTokens(t *testing.T) {
 	r := newAdminUsersRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "creator4@example.com", "creator4")
 	target := createUser(t, g, "target@example.com", "targetuser", "password123", true)
-	rt := model.RefreshToken{
+	rt := model.Session{
 		ID:        uuid.New(),
 		UserID:    target.ID,
 		TokenHash: "target-refresh-hash",
@@ -344,7 +345,7 @@ func TestAdminResetPasswordSetsMustChangeAndRevokesTokens(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("管理员重置密码应 204, got %d %s", w.Code, w.Body.String())
 	}
-	var row model.User
+	var row model.PlatformUser
 	if err := g.First(&row, "id = ?", target.ID).Error; err != nil {
 		t.Fatalf("读取用户失败: %v", err)
 	}
@@ -354,7 +355,7 @@ func TestAdminResetPasswordSetsMustChangeAndRevokesTokens(t *testing.T) {
 	if !auth.CheckPassword(row.PasswordHash, "admin-set-pass-1") {
 		t.Fatal("重置后的密码应可通过校验")
 	}
-	var revoked model.RefreshToken
+	var revoked model.Session
 	if err := g.First(&revoked, "id = ?", rt.ID).Error; err != nil {
 		t.Fatalf("读取 refresh token 失败: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestAdminResetOwnPasswordKeepsUnforced(t *testing.T) {
 	admin := createUser(t, g, "selfreset@example.com", "selfreset", "password123", true)
 	promoteAdmin(t, g, &admin)
 	token := accessToken(t, cfg, &admin)
-	rt := model.RefreshToken{
+	rt := model.Session{
 		ID:        uuid.New(),
 		UserID:    admin.ID,
 		TokenHash: "self-reset-refresh-hash",
@@ -388,7 +389,7 @@ func TestAdminResetOwnPasswordKeepsUnforced(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("自重置应 204, got %d %s", w.Code, w.Body.String())
 	}
-	var row model.User
+	var row model.PlatformUser
 	if err := g.First(&row, "id = ?", admin.ID).Error; err != nil {
 		t.Fatalf("读取用户失败: %v", err)
 	}
@@ -398,7 +399,7 @@ func TestAdminResetOwnPasswordKeepsUnforced(t *testing.T) {
 	if !auth.CheckPassword(row.PasswordHash, "self-set-pass-1") {
 		t.Fatal("自重置后的密码应可通过校验")
 	}
-	var revoked model.RefreshToken
+	var revoked model.Session
 	if err := g.First(&revoked, "id = ?", rt.ID).Error; err != nil {
 		t.Fatalf("读取 refresh token 失败: %v", err)
 	}

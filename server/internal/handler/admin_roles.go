@@ -56,7 +56,7 @@ func (h *AdminHandler) ListRoles(c *gin.Context) {
 		RoleKey string
 		Total   int64
 	}
-	if err := h.db.Model(&model.User{}).
+	if err := h.db.Model(&model.PlatformUser{}).
 		Select("role_key, COUNT(*) AS total").
 		Where("role_key IS NOT NULL").
 		Group("role_key").Scan(&memberRows).Error; err != nil {
@@ -275,7 +275,7 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 		final = permissions
 	}
 	var members int64
-	h.db.Model(&model.User{}).Where("role_key = ?", role.Key).Count(&members)
+	h.db.Model(&model.PlatformUser{}).Where("role_key = ?", role.Key).Count(&members)
 	c.JSON(http.StatusOK, rolePayload(updated, final, members))
 }
 
@@ -300,7 +300,7 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 	actorID, _ := uuid.Parse(c.GetString("user_id"))
 	var members int64
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.User{}).Where("role_key = ?", role.Key).Count(&members).Error; err != nil {
+		if err := tx.Model(&model.PlatformUser{}).Where("role_key = ?", role.Key).Count(&members).Error; err != nil {
 			return err
 		}
 		if members > 0 {
@@ -362,7 +362,7 @@ func (h *AdminHandler) AssignUserRole(c *gin.Context) {
 			roleName = role.Name
 		}
 	}
-	var target model.User
+	var target model.PlatformUser
 	if err := h.db.First(&target, "id = ?", targetID).Error; err != nil {
 		errs.Abort(c, errs.ErrNotFound)
 		return
@@ -392,9 +392,7 @@ func (h *AdminHandler) AssignUserRole(c *gin.Context) {
 			return err
 		}
 		// 角色变更后撤销该用户全部 refresh token，避免旧会话继续使用旧角色。
-		if err := tx.Model(&model.RefreshToken{}).
-			Where("user_id = ? AND revoked_at IS NULL", targetID).
-			Update("revoked_at", time.Now()).Error; err != nil {
+		if err := h.identity.RevokeSessionsTx(tx, targetID, time.Now()); err != nil {
 			return err
 		}
 		return h.audit.Record(tx, actorID, "user.role", "user", targetID.String(), c.GetString("request_id"), "",
@@ -565,7 +563,7 @@ func (h *AdminHandler) roleDisplayName(roleKey *string) string {
 // countActiveSystemMembers 统计除 exclude 之外仍在系统角色上的 active 用户数。
 func (h *AdminHandler) countActiveSystemMembers(tx *gorm.DB, exclude uuid.UUID) (int64, error) {
 	var remain int64
-	err := tx.Model(&model.User{}).
+	err := tx.Model(&model.PlatformUser{}).
 		Where("role_key = ? AND status = ? AND id <> ?", authz.SystemRoleKey, "active", exclude).
 		Count(&remain).Error
 	return remain, err

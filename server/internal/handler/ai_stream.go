@@ -20,7 +20,7 @@ import (
 
 // chatStream 是文本对话的流式实现：统一的自有事件流，不是上游原始 SSE 的透传。
 // 事件固定为 delta / tool_call / error / done 四种，厂商差异全部挡在 provider 里。
-func (h *AIHandler) chatStream(c *gin.Context, user model.User, request *model.AIRequest, reserved *service.ReserveResult, catalogItem model.ModelCatalog, req chatRequest) {
+func (h *AIHandler) chatStream(c *gin.Context, user model.PlatformUser, request *model.AIRequest, reserved *service.ReserveResult, catalogItem model.ModelCatalog, req chatRequest) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		h.failRequest(c, request, reserved, errors.New("响应流不可用"), 0)

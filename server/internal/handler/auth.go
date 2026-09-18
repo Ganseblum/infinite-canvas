@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -33,6 +35,7 @@ var (
 
 type AuthHandler struct {
 	db           *gorm.DB
+	identity     *identity.Service
 	cfg          *config.Config
 	mail         *mail.Mailer
 	failLim      *middleware.Limiter // 账号连续失败锁定
@@ -56,6 +59,7 @@ func (h *AuthHandler) registrationEnabled() bool {
 func NewAuthHandler(db *gorm.DB, cfg *config.Config, mailer *mail.Mailer) *AuthHandler {
 	return &AuthHandler{
 		db:           db,
+		identity:     identity.NewService(db),
 		cfg:          cfg,
 		mail:         mailer,
 		failLim:      middleware.NewLimiter(15*time.Minute, 5),
@@ -89,7 +93,7 @@ func (h *AuthHandler) clearRefreshCookie(c *gin.Context) {
 
 // setMediaCookie 下发只读媒体 cookie（ic_media），与 refresh token 同周期。
 // 带上签发时用户的媒体令牌版本，改密等安全事件递增版本后旧 cookie 失效。
-func (h *AuthHandler) setMediaCookie(c *gin.Context, user *model.User) {
+func (h *AuthHandler) setMediaCookie(c *gin.Context, user *model.PlatformUser) {
 	token, err := auth.IssueMediaToken(user.ID, []byte(h.cfg.JWTSecret), user.MediaTokenVersion)
 	if err != nil {
 		slog.Error("签发媒体令牌失败", "err", err)
@@ -163,7 +167,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	user := model.User{
+	user := model.PlatformUser{
 		ID:           uuid.New(),
 		Email:        email,
 		Username:     req.Username,
@@ -258,12 +262,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		errs.Abort(c, errs.WithRetryAfter(errs.ErrRateLimited, retry))
 		return
 	}
-	var user model.User
-	q := h.db.Where("email = ?", accountKey)
-	if !strings.Contains(req.Account, "@") {
-		q = h.db.Where("username = ?", req.Account)
+	var user *model.PlatformUser
+	var err error
+	if strings.Contains(req.Account, "@") {
+		user, err = h.identity.GetByEmail(c.Request.Context(), accountKey)
+	} else {
+		user, err = h.identity.GetByUsername(c.Request.Context(), req.Account)
 	}
-	if err := q.First(&user).Error; err != nil {
+	if err != nil {
 		// 用户不存在与密码错误不区分，避免账号枚举
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			h.failLim.Allow("fail:"+accountKey, time.Now())
@@ -288,9 +294,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	// 登录成功清除该账号的连续失败计数
 	h.failLim.Reset("fail:" + accountKey)
-	h.db.Model(&user).Update("last_login_at", time.Now())
-	accessToken := h.issueSession(c, &user)
-	c.JSON(http.StatusOK, sessionPayload(&user, h.planFor(&user), accessToken))
+	h.db.Model(user).Update("last_login_at", time.Now())
+	accessToken := h.issueSession(c, user)
+	c.JSON(http.StatusOK, sessionPayload(user, h.planFor(user), accessToken))
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
@@ -301,8 +307,8 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 	tokenHash := auth.HashToken(cookie)
-	var rt model.RefreshToken
-	if err := h.db.Where("token_hash = ?", tokenHash).First(&rt).Error; err != nil {
+	rt, err := h.identity.GetSessionByHash(c.Request.Context(), tokenHash)
+	if err != nil {
 		// 已撤销令牌被复用 → 撤销该用户全部令牌
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			h.clearSessionCookies(c)
@@ -321,13 +327,13 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 	if time.Now().After(rt.ExpiresAt) {
-		h.db.Model(&rt).Update("revoked_at", time.Now())
+		h.identity.RevokeSessionIfActive(c.Request.Context(), rt.ID, time.Now())
 		h.clearSessionCookies(c)
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
 	}
-	var user model.User
-	if err := h.db.First(&user, "id = ?", rt.UserID).Error; err != nil {
+	user, err := h.identity.GetByID(c.Request.Context(), rt.UserID)
+	if err != nil {
 		h.clearSessionCookies(c)
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -340,46 +346,46 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 	// 轮换：原子撤销旧令牌，保证并发刷新只有一个请求成功
 	now := time.Now()
-	res := h.db.Model(&model.RefreshToken{}).
-		Where("id = ? AND revoked_at IS NULL", rt.ID).
-		Update("revoked_at", now)
-	if res.Error != nil {
-		slog.Error("撤销刷新令牌失败", "err", res.Error)
+	rotated, err := h.identity.RevokeSessionIfActive(c.Request.Context(), rt.ID, now)
+	if err != nil {
+		slog.Error("撤销刷新令牌失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	if res.RowsAffected == 0 {
+	if !rotated {
 		// 并发轮换竞争失败：令牌已被胜者轮换。不能按复用处理，
 		// 否则会撤销胜者刚签发的新令牌，并清掉胜者写入的新 cookie。
 		// 真正的复用由上面的 RevokedAt != nil 分支处理。
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
 	}
-	h.db.Model(&user).Update("last_login_at", time.Now())
-	accessToken := h.issueSession(c, &user)
-	c.JSON(http.StatusOK, sessionPayload(&user, h.planFor(&user), accessToken))
+	h.db.Model(user).Update("last_login_at", now)
+	accessToken := h.issueSession(c, user)
+	c.JSON(http.StatusOK, sessionPayload(user, h.planFor(user), accessToken))
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
 	cookie, err := c.Cookie(RefreshCookieName)
 	if err == nil && cookie != "" {
-		h.db.Model(&model.RefreshToken{}).Where("token_hash = ?", auth.HashToken(cookie)).Update("revoked_at", time.Now())
+		h.identity.RevokeSessionByHash(c.Request.Context(), auth.HashToken(cookie), time.Now())
 	}
 	h.clearSessionCookies(c)
 	c.Status(http.StatusNoContent)
 }
 
 func (h *AuthHandler) revokeAllUserTokens(userID uuid.UUID) {
+	ctx := context.Background()
 	// 复用检测属安全事件：媒体令牌版本一并递增（差异清单 #9）。
-	if err := h.db.Model(&model.User{}).Where("id = ?", userID).
-		UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
+	if err := h.identity.BumpMediaTokenVersion(ctx, userID); err != nil {
 		slog.Error("递增媒体令牌版本失败", "err", err)
 	}
-	h.db.Model(&model.RefreshToken{}).Where("user_id = ? AND revoked_at IS NULL", userID).Update("revoked_at", time.Now())
+	if err := h.identity.RevokeSessions(ctx, userID, time.Now()); err != nil {
+		slog.Error("撤销用户全部会话失败", "err", err)
+	}
 }
 
 // issueSession 签发 access token + refresh token，写库并下发 cookie，返回 access token。
-func (h *AuthHandler) issueSession(c *gin.Context, user *model.User) string {
+func (h *AuthHandler) issueSession(c *gin.Context, user *model.PlatformUser) string {
 	accessToken, err := auth.IssueAccessToken(user, []byte(h.cfg.JWTSecret))
 	if err != nil {
 		slog.Error("签发 access token 失败", "err", err)
@@ -392,7 +398,7 @@ func (h *AuthHandler) issueSession(c *gin.Context, user *model.User) string {
 		errs.Abort(c, errs.ErrInternal)
 		return ""
 	}
-	rt := model.RefreshToken{
+	rt := model.Session{
 		ID:        uuid.New(),
 		UserID:    user.ID,
 		TokenHash: tokenHash,
@@ -400,7 +406,7 @@ func (h *AuthHandler) issueSession(c *gin.Context, user *model.User) string {
 		UserAgent: c.Request.UserAgent(),
 		IP:        middleware.ClientIP(c),
 	}
-	if err := h.db.Create(&rt).Error; err != nil {
+	if err := h.identity.CreateSession(c.Request.Context(), &rt); err != nil {
 		slog.Error("写入 refresh token 失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return ""
@@ -412,7 +418,7 @@ func (h *AuthHandler) issueSession(c *gin.Context, user *model.User) string {
 	return accessToken
 }
 
-func (h *AuthHandler) planFor(user *model.User) model.Plan {
+func (h *AuthHandler) planFor(user *model.PlatformUser) model.Plan {
 	var plan model.Plan
 	if err := h.db.First(&plan, "id = ?", "free").Error; err != nil {
 		return model.Plan{ID: "free", Name: "免费"}
@@ -420,7 +426,7 @@ func (h *AuthHandler) planFor(user *model.User) model.Plan {
 	return plan
 }
 
-func sessionPayload(user *model.User, plan model.Plan, accessToken string) gin.H {
+func sessionPayload(user *model.PlatformUser, plan model.Plan, accessToken string) gin.H {
 	return gin.H{
 		"user":        userPayload(user),
 		"accessToken": accessToken,
@@ -433,7 +439,7 @@ func sessionPayload(user *model.User, plan model.Plan, accessToken string) gin.H
 	}
 }
 
-func userPayload(user *model.User) gin.H {
+func userPayload(user *model.PlatformUser) gin.H {
 	payload := gin.H{
 		"id":                 user.ID.String(),
 		"email":              user.Email,
@@ -461,7 +467,7 @@ func isUniqueViolation(err error, column string) bool {
 // VerifyEmailSend 重发验证邮件（需登录）。
 func (h *AuthHandler) VerifyEmailSend(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
-	var user model.User
+	var user model.PlatformUser
 	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
@@ -514,13 +520,13 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 		errs.Abort(c, errs.ErrTokenInvalid)
 		return
 	}
-	err := h.db.Model(&model.User{}).Where("id = ?", et.UserID).Update("email_verified_at", now).Error
+	err := h.db.Model(&model.PlatformUser{}).Where("id = ?", et.UserID).Update("email_verified_at", now).Error
 	if err != nil {
 		slog.Error("验证邮箱失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	var user model.User
+	var user model.PlatformUser
 	h.db.First(&user, "id = ?", et.UserID)
 	c.JSON(http.StatusOK, gin.H{"user": userPayload(&user)})
 }
@@ -541,7 +547,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		errs.Abort(c, errs.WithRetryAfter(errs.ErrRateLimited, retry))
 		return
 	}
-	var user model.User
+	var user model.PlatformUser
 	// 无论邮箱是否存在都返回 204
 	if err := h.db.Where("email = ?", email).First(&user).Error; err == nil {
 		plain, err := createEmailToken(h.db, user.ID, "reset_password")
@@ -599,15 +605,16 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.PlatformUser{}).Where("id = ?", et.UserID).
+			Update("password_hash", hash).Error; err != nil {
+			return err
+		}
 		// 重置密码同时递增媒体令牌版本，ic_media cookie 立即失效（差异清单 #9）。
-		if err := tx.Model(&model.User{}).Where("id = ?", et.UserID).Updates(map[string]any{
-			"password_hash":       hash,
-			"media_token_version": gorm.Expr("media_token_version + 1"),
-		}).Error; err != nil {
+		if err := h.identity.BumpMediaTokenVersionTx(tx, et.UserID); err != nil {
 			return err
 		}
 		// 撤销该用户全部 refresh token，强制所有设备重新登录
-		return tx.Model(&model.RefreshToken{}).Where("user_id = ? AND revoked_at IS NULL", et.UserID).Update("revoked_at", now).Error
+		return h.identity.RevokeSessionsTx(tx, et.UserID, now)
 	})
 	if err != nil {
 		slog.Error("重置密码失败", "err", err)
