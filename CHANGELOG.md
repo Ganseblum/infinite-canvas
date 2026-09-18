@@ -2,6 +2,13 @@
 
 ## Unreleased
 
++ [新增] 平台账号与会员体系一期（PLAN-PLATFORM-ACCOUNT-MEMBERSHIP M1-M3 全量落地）：身份域收敛为 `platform_users`/`sessions` 并建 identity 域统一入口，登录/注销/封禁/媒体令牌行为与切换前完全一致（画布前端零改动）；会员、点数、空间升级为平台级权益——会员一次订阅全产品生效（`membership_plans` + `membership_subscriptions`，订阅到期后 60 天日落宽限）、点数全产品共享余额（`credit_accounts` + 流水带 product 维度，先扣赠送再扣购入）、存储平台共享池（`storage_accounts`/`storage_usage` 分产品记账）；「充值即付费」旧派生废除，付费身份只由订阅表达；点数包与会员档位两表拆分（D5），`/api/orders` 支持购买会员（请求加 `planId`），`paidUntil`/`planId` 等既有键保留、值来源改为订阅。
++ [新增] 管理后台会员管理模块：订阅列表（用户/档位/状态筛选 + 分页）、发放/续期、补偿发放、作废（立即失效并同步存储配额）；users 列表与详情追加会员/存储/产品维度字段；新增 `membership.read`/`membership.write` 权限点。
++ [新增] OIDC Provider（单点登录基础）：`/api/oidc/authorize`（授权码 + 强制 PKCE S256、redirect_uri 精确匹配、code 一次性）、`/api/oidc/token`（RS256 签名 15 分钟、client_secret 恒时比对）、`/api/oidc/userinfo`、`/api/oidc/jwks.json` 四端点与 `oauth_clients` 表；`ic_refresh` cookie Path 扩为 `/api`（仍 host-only + Lax + HttpOnly）；新增 `OIDC_JWKS_PRIVATE_KEY` 配置（未配置时临时密钥，生产必须配置）。
++ [新增] 管理后台 SSO 接入模块：OAuth 客户端的列表/新增/编辑/重置密钥/删除，密钥明文仅创建与重置时展示一次；新增 `sso.read`/`sso.write` 权限点。
++ [新增] 夜间存储记账对账任务：比对 media_files 聚合、storage_usage 与 storage_accounts 三层记账，不平自动按事实源重算收敛并落结构化日志（告警通道待 D9 拍板后接线）；订阅自然到期的配额回写也由该任务兜底。
++ [调整] 部署与运维：api 镜像内置 ffmpeg（含 libx264）供媒体水印使用；`WATERMARK_*` 与 `OIDC_JWKS_PRIVATE_KEY` 进 compose 与 env 模板；测试环境挂载水印字体目录。
+
 + [新增] 媒体水印与干净原件安全下发：免费/日落档用户 AI 生成的图片/视频由服务端烧录平铺文字水印，展示与下载均为水印版；付费用户不加水印，且免费期生成的历史素材在其升级后下发自动变干净（生成时即留存无水印原件于服务端隐藏路径）。无水印原件仅可经「申请下载」接口签发的 5 分钟签名 URL 取走，签名须同时通过媒体登录态校验，防篡改、防转借、过期即失效；水印任一环节失败按生成失败退款处理（fail-closed），绝不回退下发无水印字节。新增 `WATERMARK_ENABLED`（默认 false，关闭时行为与现状一致）/ `WATERMARK_FONT_PATH` / `WATERMARK_TEXT` 配置；下载按钮统一改为「先申请、再取件」两步。
 + [新增] 主站静态站点 `main-site/`：Next.js（App Router）全站静态导出（`output: "export"`），暗色放映厅视觉（基于 `design/html/home-draft-cinema.html`），五页结构（首页 / 影像作品 / 视频短片 / 三件套模板 / 手记博客）+ sitemap / robots / OG 分享图 + JSON-LD 结构化数据；内容集中在 `src/data/site.ts`，构建产物 `out/` 由 nginx 直接托管、服务器无需 Node 运行时，字体经 `next/font` 构建期自托管。占位资源（Hero 视频、作品图、社媒与下载链接）待替换为自有内容。
 + [新增] 多产品后台引导与产品切换：服务端新增 `GET /admin/meta`（免权限点，任何后台角色可调）返回产品标识、版本与按调用者权限过滤的模块清单；admin 前端新增静态产品注册表与侧边栏产品切换器，blog / 办公套件等规划中产品落到「未接入」占位页并说明接入条件（同一套 `/api/admin/*` 契约 + CORS 白名单）。

@@ -5,13 +5,22 @@ description: Planned follow-up work
 
 # TODO
 
+## 平台账号与会员体系：遗留与后续（本版本新增）
+
+- **OIDC token 端点限流**：authorize/token 未挂 IP 级限流（auth 的 login/register 有）；新增限流参数属行为边界值，按仓库规则需先确认再实现。
+- **authorize 浏览器直跳承接**：authorize 目前认 Bearer（自动化测试口径），第三方产品浏览器直跳需平台前端承接页或 cookie 会话兼容——新产品正式接入前必须补的设计项。
+- **会员订单支付回调端到端用例**：markPaid「加点 + 发会员同事务」的会员分支目前只有域单测，建议补一条集成用例。
+- **对账告警通道（D9）**：`storage_reconcile_drift` 已落结构化日志，通知方式（邮件/IM/admin 站内）与值守口径待拍板后接线。
+- **deletion 多产品记账**：注销清理把全部释放字节记到 canvas 产品，当前单产品无害，第二产品接入前需按 product 聚合。
+- **admin users 存储配额列 0 值展示**：已用量为 0 时渲染为「/ 1.0 GB」，补 0 值展示。
+- **测试名纠偏**：`TestMediaUploadReadOnlyReturns403` 已改名；其余「文档写 402、实码 403」的口径以 T02 奇偶清单为准。
+
 ## 媒体水印与干净原件下发：未完成与将要完成（本版本新增）
 
 ### 未完成（已实现但未闭环，按发布顺序）
 
 - **浏览器级端到端验收**：`pending-test.mdx` 「媒体水印」节全部条目——flag=false 回归、免费链路展示/下载均水印、付费链路与升级后历史自动变干净、申请下载两步流、防盗链（过期/篡改/转借 404）、社区语义、orig 清理、限流。需真实 AI 上游与部署环境，代码层已由 HTTP 集成测试覆盖（14 包全绿、三个泄漏面与 fail-closed 均有注入测试锁死）。
-- **灰度发布（阶段②③④）**：测试环境开 `WATERMARK_ENABLED=true` + `WATERMARK_FONT_PATH` 验证新产物水印与申请下载全链路 → 真实 MySQL 跑一次启动/迁移确认（本 feature 无 schema 变更，仍按纪律执行）→ 灰度观察 `watermark_failed` 结构化日志与下载端点 4xx 比例一周。回滚点全程是关 flag。
-- **部署前提落地**：api 镜像确认 PATH 内有 ffmpeg/ffprobe（ffmpeg 需含 libx264，视频水印重编码用）；`WATERMARK_FONT_PATH` 指向可读 CJK 字体（建议 Noto Sans SC，缺失时 flag=true 拒绝启动）；`WATERMARK_ENABLED` / `WATERMARK_FONT_PATH` / `WATERMARK_TEXT` 三个 env 进部署模板与 `.env.example`。
+- **灰度发布（阶段③④）**：测试环境已开 `WATERMARK_ENABLED=true` 且字体已挂载（阶段② 部署完成）→ 真实 MySQL 跑一次启动/迁移确认已随平台账号部署完成 → 灰度观察 `watermark_failed` 结构化日志与下载端点 4xx 比例一周。回滚点全程是关 flag。
 - **隔离件人工放行的水印归属语义（评审 E-4）**：admin「释放隔离件」（`releaseQuarantined`）以隔离区原始字节直接落正式对象、不经生成链路的水印挂钩，免费用户被拒生成件经人工放行后为无水印版（无跨用户泄漏，操作者 gated）。需独立设计「生成件应烧录 / 上传件不应烧录」的按素材来源归属判定与用例后再修（admin 侧代码当时处于保护区未动）。
 
 ### 将要完成（后续 backlog）

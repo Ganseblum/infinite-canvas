@@ -7,6 +7,19 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+## 平台账号与会员体系（本版本新增，已部署测试环境并完成首轮自动化验收）
+
+以下各项已在 sim 测试环境完成一轮浏览器自动化验收（发放→生效→作废→回落全链路），正式验收以你的人工复核为准：
+
+- **登录与回归**：注册/登录/刷新/登出行为与切换前一致；`ic_refresh` cookie Path 已从 `/api/auth` 扩为 `/api`（仍 host-only + Lax + HttpOnly）；F5 硬刷新保持登录。
+- **会员订阅链路**：admin「会员管理」发放会员 → 主站个人中心「当前档位」立即变付费、存储配额同步升档（免费 50MB / 付费 1GB / 日落 200MB）；「作废」后立即失去付费身份并进入 60 天日落宽限（宽限至 = 作废时刻 + 60 天），配额同步回落。
+- **点数共享余额**：充值/消费/退款先扣赠送再扣购入；流水带 product 维度；`/api/orders` 请求体新增可选 `planId`（与 `packageId` 二选一）购买会员。
+- **admin 新模块**：会员管理（订阅列表筛选分页、发放/续期、补偿发放、作废）；users 列表与详情新增「会员档位」「存储配额」列；SSO 接入页（新增客户端 → 一次性密钥展示 → 编辑 → 重置密钥 → 删除）。
+- **OIDC**（自动化测试已覆盖，人工按需抽验）：authorize 强制 PKCE（S256）、未注册 redirect_uri 拒绝且不重定向、code 一次性、token 15 分钟 RS256、userinfo 拒绝平台会话令牌。
+- **对账兜底**：夜间对账任务（24h 周期）比对三层存储记账并自动收敛，订阅自然到期的配额回写由此兜底；`storage_reconcile_drift` 结构化日志可在 api 容器日志中观察。
+
+已知小瑕疵（不阻塞）：admin users 页「存储配额」列在已用量为 0 时渲染为「/ 1.0 GB」（用量数字留空），后续补一个 0 的展示。
+
 ## 媒体水印与干净原件下发（本版本新增，待验收）
 
 **部署前提**：api 容器 PATH 内需有 ffmpeg/ffprobe（ffmpeg 需含 libx264，视频水印重编码用），`WATERMARK_FONT_PATH` 指向一个可读的 CJK 字体文件（建议 Noto Sans SC）；`WATERMARK_ENABLED=true` 且字体缺失会拒绝启动（fail-fast）。`WATERMARK_ENABLED` 默认 false——关闭时生成/展示/下载行为与本功能上线前完全一致，先验这条回归再开 flag。

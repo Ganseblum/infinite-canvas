@@ -5,49 +5,47 @@ description: 当前交付状态、已完成与未完成清单、以及重新开�
 
 # 执行状态与续作指南
 
-本页是「重新开始时的入口」：汇总当前分支与部署状态、哪些已完成并验收、哪些已完成但待验收、哪些还没做，以及建议的继续顺序。状态截至 2026-09-18。
+本页是「重新开始时的入口」：汇总当前分支与部署状态、哪些已完成并验收、哪些已完成但待验收、哪些还没做，以及建议的继续顺序。状态截至 2026-09-19。
 
 ## 当前状态一览
 
-- **代码分支**：`feature-admin-usage-analytics`（已推 origin，并已合并回 `main`，两分支一致）。最新提交见 `git log -1`。
-- **测试环境**：`sim-art.youc.online` / `sim-admin.youc.online` 部署至 `edd7d86`（多产品侧边栏版本）。**注意**：之后的「媒体水印」功能（`ba48fa9`）已提交但**未部署**。
-- **测试库备份**：服务器 `/opt/backups/infinite-canvas-test/20260918-141558`（库+媒体+env）。
-- **平台账号体系执行计划**：`records/plans/PLAN-PLATFORM-ACCOUNT-MEMBERSHIP.md`（status: proposed，等决策表拍板）。
+- **代码分支**：`feature-platform-account-membership`（本地，未推 origin）。M1-M3 平台账号与会员体系全部落地，最新提交见 `git log -1`；`main` 仍停在 `53bff1e`，待你验收后按「合并 → 解决冲突 → 推送」流程处理。
+- **测试环境**：`sim-art.youc.online` / `sim-admin.youc.online` 部署至 feature 分支 HEAD（`673e04c7` 及文档提交之后的工作区状态），媒体水印 flag 已开（`WATERMARK_ENABLED=true` + Noto Sans SC 字体挂载）。
+- **测试库备份**：部署前全量备份在服务器 `/opt/backups/infinite-canvas-test/20260919-005912`（库+媒体+env）；测试库已按「重建而非原地升库」口径重建（未上线无数据搬迁）。
+- **平台账号体系执行计划**：`records/plans/PLAN-PLATFORM-ACCOUNT-MEMBERSHIP.md`（status: approved，11/11 任务完成，D1-D8 已拍板关闭、D9 待拍板）。
+- **接口奇偶清单**：`records/plans/PLAN-PLATFORM-ACCOUNT-MEMBERSHIP-parity-inventory.md`（118 端点全 replicate）。
+- **测试用例库**：`records/tests/infinite-canvas-platform-account-membership/`（148 条用例 + 74 冒烟测试索引）。
 
 ## 已完成且已验收 ✅
 
-- **差异清单 P0/P1 批量修复**：注销冷静期、免费额度四敞口、社区媒体裂图、starttls 邮件、视频审核卡死、上传嗅探、objectPath 统一、注销清理等（全量清单见 CHANGELOG 与 pending-test「差异清单批量修复」节；测试环境已逐项验收）。
-- **admin 多产品与模型能力分区**：`GET /admin/meta`、产品注册表与侧边栏两层菜单（产品父级 → 模块子级，模型按图片/视频/音频/文本带数量）、未接入占位页、模型编辑按能力分组。已部署验收。
-- **部署与运维**：`docker compose up` 可用、godotenv、备份/恢复脚本、`schema_migrations` 版本留痕、宿主机 nginx 主域 `/admin` 404、sim-admin noindex。
-- **合规批**：条款/隐私占位页、注册勾选、维护模式写拦截、数据导出、AIGC 标识、日志脱敏。
-- **ic_media 令牌可撤销**（版本号机制）、订单金额无条件比对、易支付通道（代码与测试，未接真实商户）。
-- **水印功能（代码层）**：免费档服务端烧录、付费档干净原件下发、申请下载签名 URL；HTTP 集成测试覆盖（14 包全绿）。**未部署、未做浏览器验收**。
+- **M1 身份切换（T01-T04）**：users→platform_users、refresh_tokens→sessions；auth/middleware/admin/authz 全量收敛 identity 域；裸 SQL 断裂点清零；评审门①通过；真实 MySQL 8.4 迁移验收（scratch 库启动 + 建表 + 登录冒烟）。
+- **M2 权益中心化（T05-T08）**：membership/billing/storage 三域建表与域服务；档位派生废除（D6）；生成扣费/支付回调/媒体记账同事务化；admin 会员管理模块（前后端）+ users 会员存储字段；夜间对账任务；评审门②③通过（P1×2 已修复：注销对象误删窗口、作废/到期配额同步）。
+- **M3 OIDC Provider（T09-T10）**：authorize/token/userinfo/jwks 四端点 + oauth_clients + PKCE/RS256/一次性 code；admin SSO 管理页（前后端）；评审门④通过（PKCE 强制、恒时比对、redirect_uri 精确匹配均有测试锚点）。
+- **测试环境部署 + 浏览器自动化验收**：登录/个人中心档位与配额展示/F5 保持登录/非管理员后台门/会员发放生效/作废回落（日落宽限 + 配额 200MB）/SSO CRUD 全流程通过；截图存档 `gui-test-screenshots/`。
+- **水印部署前提**：api 镜像 ffmpeg(libx264)、三个 `WATERMARK_*` env 进模板、服务器字体挂载、测试环境 flag 已开。
 
-## 已完成但待验收 ⏳（按 pending-test 逐项过）
+## 已完成但待人工复核 ⏳
 
-1. **媒体水印端到端**：`pending-test.mdx`「媒体水印」节全部条目；前置：api 镜像含 ffmpeg(+libx264)、`WATERMARK_FONT_PATH` 指向 CJK 字体、三个 `WATERMARK_*` env 进部署模板。
-2. **admin 运行时项**：F5 硬刷新保持登录（自动化内嵌浏览器有偶发丢会话现象，需真实浏览器确认）。
-3. **上游请求对齐**：真渠道逐项验证（systemPrompt 生效、尺寸换算、视频模式、语速音色）。
-4. **真实邮件 / 易支付真实商户 / 审核真实 sidecar**：依赖外部资源，代码与测试就绪。
+- **平台账号回归**（`pending-test.mdx`「平台账号与会员体系」节）：自动化验收已过一轮，以你的人工复核为正式验收。
+- **媒体水印端到端**：测试环境 flag 已开，`pending-test.mdx`「媒体水印」节的免费/付费/申请下载/防盗链链路待真实 AI 上游逐项人工验收。
+- **admin 运行时项**：F5 保持登录已在浏览器验收中通过；其余 admin 交互（角色增改删、强制改密、按权限隐藏菜单）待抽验。
 
 ## 未完成 ❌
 
-- **平台账号与会员体系 M1-M3**：执行计划 `PLAN-PLATFORM-ACCOUNT-MEMBERSHIP`（proposed）。**阻塞项 D1-D7 待拍板**（空间共享池/平台会员/点数共享余额/平台新人礼/套餐两表拆分/M2 档位派生变更知情/奖励中心立项），设计全文见 `我的规划/平台账号与会员体系设计.md`。
-- **水印灰度发布**：测试环境开 flag 全链路 → 真实 MySQL 迁移确认 → 观察一周（todo「媒体水印」节）。
-- **E-4 隔离件水印归属语义**：admin 人工放行当前不经水印挂钩，需先做「生成件烧录/上传件不烧录」的归属设计。
-- **遗留项**（todo「差异清单批量修复后的遗留项」）：#15 幂等重放回放、#88 密钥分域、真版本化迁移、孤儿对象 GC、社区 AIGC 标签接线、复刻完整链路。
-- **合规非代码项**：条款/隐私正文待法务、备案、人工复核值守。
+- **上游同步**：`upstream/main` 已到 v0.19.0（12 个提交，画布渲染性能优化等），按约定待你验收本地实现后再走「拉 main → 合并 → 解冲突 → 推送」。
+- **对账告警通道（D9）**：结构化日志已就位，通知方式与值守口径待拍板。
+- **OIDC 收尾**：token 端点 IP 限流（边界值待确认）、authorize 浏览器直跳承接页（新产品接入前必须）、会员订单回调端到端用例（todo「平台账号」节）。
+- **E-4 隔离件水印归属语义**、**遗留项**（#15 幂等重放、#88 密钥分域、真版本化迁移、孤儿对象 GC、社区 AIGC 标签、复刻链路）、**合规非代码项**（法务、备案、人工复核值守）——同上一版，未动。
 
 ## 从哪继续（建议顺序）
 
-1. **拍板 D1-D7**（回复「按建议」或点名调整）→ 计划置 approved。
-2. **部署最新代码到测试环境**（含水印）：`deploy/env.test` 补三个 `WATERMARK_*` 变量与字体路径 → `./deploy.sh test build && up -d` → 按 pending-test 过「媒体水印」+「多产品后台」两节浏览器验收。
-3. **M1 身份切换开工**（计划 T01→T04）：platform_users 落表 → 奇偶清单 → 全量切换 → 真实 MySQL 迁移验收。每步回滚点独立。
-4. **M2 → M3** 按计划推进；每步完成后回写计划任务表状态与证据。
+1. **人工复核** `pending-test.mdx`「平台账号与会员体系」与「媒体水印」两节（测试环境已是最新代码）。
+2. **验收通过后**：合并 `feature-platform-account-membership` 到 `main` → 按上游同步流程处理 v0.19.0 → 打版本 tag 部署正式链路。
+3. **D9 拍板**：对账告警通道选型后接线（改动很小）。
 
 ## 参考文档
 
-- 执行计划（任务板/回滚点/评审门）：`records/plans/PLAN-PLATFORM-ACCOUNT-MEMBERSHIP.md`
+- 执行计划（任务表/回滚点/评审门，11/11 完成含证据）：`records/plans/PLAN-PLATFORM-ACCOUNT-MEMBERSHIP.md`
 - 设计全文（调研+决策表）：`我的规划/平台账号与会员体系设计.md`
 - 验收清单：`docs/content/docs/progress/pending-test.mdx`
 - 遗留与待办：`docs/content/docs/progress/todo.mdx`
