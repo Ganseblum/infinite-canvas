@@ -40,6 +40,10 @@ const (
 	PermRolesRead            = "roles.read"
 	PermRolesManage          = "roles.manage"
 	PermAuditRead            = "audit.read"
+	PermMembershipRead       = "membership.read"
+	PermMembershipWrite      = "membership.write"
+	PermSSORead              = "sso.read"
+	PermSSOWrite             = "sso.write"
 )
 
 // PermissionDef 是一个权限点在代码里的定义。
@@ -64,6 +68,8 @@ var moduleLabels = map[string]string{
 	"community":  "社区",
 	"roles":      "角色权限",
 	"audit":      "审计日志",
+	"membership": "会员管理",
+	"sso":        "单点登录",
 }
 
 // registry 是权限点注册表，按模块与 Sort 升序排列。修改这里必须同步更新金标测试。
@@ -92,6 +98,10 @@ var registry = []PermissionDef{
 	{Key: PermRolesRead, Module: "roles", Name: "查看角色", Description: "查看角色、权限点清单与后台成员", Sort: 210},
 	{Key: PermRolesManage, Module: "roles", Name: "管理角色", Description: "增删改角色、分配权限、调整用户角色，属特权管理", Sort: 220},
 	{Key: PermAuditRead, Module: "audit", Name: "查看审计日志", Description: "查看管理操作审计", Sort: 230},
+	{Key: PermMembershipRead, Module: "membership", Name: "查看会员订阅", Description: "查看会员订阅列表与详情", Sort: 240},
+	{Key: PermMembershipWrite, Module: "membership", Name: "管理会员权益", Description: "发放、续期、补偿与作废会员订阅", Sort: 250},
+	{Key: PermSSORead, Module: "sso", Name: "查看 OAuth 接入", Description: "查看 OIDC 客户端接入配置", Sort: 260},
+	{Key: PermSSOWrite, Module: "sso", Name: "管理 OAuth 接入", Description: "新增、修改、停用 OIDC 客户端与密钥", Sort: 270},
 }
 
 var registryIndex = func() map[string]PermissionDef {
