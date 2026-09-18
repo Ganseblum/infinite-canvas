@@ -7,6 +7,15 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+## 主站静态站骨架（main-site，本版本新增）
+
+- `cd main-site && npm install && npm run build` 成功，`out/` 生成 `index.html`、`works/`、`films/`、`templates/`、`blog/`、`404.html`、`sitemap.xml`、`robots.txt`、`og.png`。
+- 静态服务器（如 `python3 -m http.server -d out 4173`）逐页打开：首页 Hero 视频背景、跑马灯滚动、横向轨道滑动正常；断网打开时视频自动降级为渐变底、版式不破。
+- 五页顶部导航互跳正确且当前页高亮；每页 title 与 canonical 唯一；页面源码可见 JSON-LD（Person + WebSite）与 OG 标签；`/sitemap.xml`、`/robots.txt` 可访问且域名取自 `site.url`。
+- 375px 手机宽度下五页布局不破、无横向溢出。
+- 内容更新流程演练：改 `src/data/site.ts`（如新增一张作品）→ `npm run build` → `out/` 生效。
+- 上线前替换占位资源（清单见 `main-site/README.md`）：Hero 视频、picsum 占位图、og.png、社媒与下载链接。
+
 ## 多产品后台与模型能力分区（本版本新增）
 
 **已在测试环境部署（`c32337b`）并验收通过**：产品切换器（当前产品带版本号、blog/办公套件落「未接入」占位页且不渲染管理菜单）；模型页能力筛选计数正确（全部/生图/视频…）；视频模型编辑抽屉只渲染视频分组（分辨率/比例/时长 + 自由输入），图片专属键不出现，老数据约束值与价格矩阵原样保留。修复了模型表列头显示原始 i18n key 的旧缺失（`admin.models.columns` 语言包键）。受限角色的模块过滤由自动化测试覆盖。**待你在常用浏览器复核**：admin 站 F5 硬刷新保持登录（服务端 cookie 旋转已用 curl 验证正常；自动化浏览器里发现整页加载后的会话恢复偶发失败，疑似内嵌浏览器环境的 cookie 存储怪癖，需要在真实浏览器确认）。
