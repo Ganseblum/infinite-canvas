@@ -21,8 +21,8 @@ description: Planned follow-up work
 
 ## 管理后台拆分与 RBAC（进行中）
 
-- **批次 4（模板已做，待宿主机应用）**：`deploy/nginx-sim-art.youc.online.conf` 已给主域加 `location = /admin` 与 `location ^~ /admin/` 返回 404（无 301）；**还需要在宿主机 nginx 应用该模板并 reload 后实测**。
-- **批次 3 的前端部分（已做）**：admin 前端已有强制改密闸门（会话 `mustChangePassword` 全局拦截，改密成功后进入后台）；`MAIN_SITE_BASE_URL` 已引入并用于主站链接（compose 以 `APP_BASE_URL` 注入，回退 `ADMIN_BASE_URL`）。
+- **批次 4（已完成，含宿主机应用）**：`deploy/nginx-sim-art.youc.online.conf` 的主域 404 两段已应用到宿主机 nginx 并 reload，实测 `/admin`、`/admin/models` 返回 404、首页正常；sim-admin 的 `X-Robots-Tag: noindex` 确认在位。
+- **批次 3 的前端部分（已做并验收）**：admin 强制改密闸门在测试环境完成闭环验收（管理员重置 → 登录置位 → 业务 403 `PASSWORD_CHANGE_REQUIRED` → 改密恢复）；`MAIN_SITE_BASE_URL` 已随 compose 注入。
 - **浏览器运行时验收（未做）**：admin 站的全部交互只验到构建与 HTTP 层。需实测：未登录落登录页、F5 硬刷新保持登录、非管理员落说明页且未被登出、按权限隐藏菜单、角色建改删、用户设置角色、强制改密流程、主站用户菜单后台入口在 `ADMIN_BASE_URL` 为空时消失。
 
 ## 上游请求对齐的收尾（已完成，待真环境验证）

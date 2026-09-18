@@ -7,6 +7,25 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+## 测试环境部署与首轮验收结果（2026-09-18）
+
+`sim-art.youc.online` / `sim-admin.youc.online` 已更新到本分支（`295f0ff`），升级前备份在服务器 `/opt/backups/infinite-canvas-test/20260918-141558`（库+媒体+env）。**以下各项已在真环境验收通过**：
+
+- 部署：镜像构建、容器滚动更新、`schema_migrations` 版本行写入，`media_token_version` / `quarantine_bytes` / `used_free_trial` 三个新列就位。
+- 主域 `/admin`、`/admin/models` 真 404（nginx 已应用），首页与业务路径正常；sim-admin 带 noindex。
+- `/terms`、`/privacy` 未登录可访问，占位标注正确；注册页有「我已阅读并同意」勾选框与条款链接。
+- 个人中心「免费体验额度」卡：领取成功（图片 3 次 / 视频 1 次）并显示剩余次数（验收时已把测试环境 `FREE_GRANT_ENABLED` 打开并补齐 campaign/budget/threshold）。
+- 社区跨用户媒体：管理员发布作品，测试账号浏览时缩略图正常加载（#31）。
+- admin 独立站：非管理员账号落说明页且不登出；独立登录页；管理员登录后台完整；用量分析页（KPI/趋势/分布/排行）正常渲染。
+- 维护模式：开启后普通用户写 503 `MAINTENANCE_MODE`、读正常、管理员不受限，关闭后恢复（支付回调豁免由代码路径保证）。
+- 强制改密闭环：管理员重置 → 登录置位 → 业务 403 `PASSWORD_CHANGE_REQUIRED` → 改密 → 业务恢复，旧密码失效。
+- 数据导出：`GET /api/me/export` 返回 200 与 `youc-export.json` 附件，含 profile/credits/orders/generations/canvases。
+- 顺手修复并验收：`/assets` 直开被应用内 nginx 目录重定向打到内部端口 3000 的问题（`nginx.conf` try_files 去掉 `$uri/`）。
+
+**仍待真环境验收**（依赖真实渠道/邮件/sidecar/商户配置）：真实生成扣费链路（自动化测试已覆盖）、视频审核链路（测试环境未开 `MODERATION_ENABLED`）、真实邮件投递（当前 `MAIL_DRIVER=log`）、易支付端到端（未配置商户）。
+
+The Chinese version contains the complete item-by-item acceptance checklist.
+
 ## 差异清单批量修复（本版本新增，待验收）
 
 - **账号与合规**：生产模板下 `REGISTRATION_ENABLED` 未设置时应默认关闭注册；申请注销后 7 天内仍能登录、刷新并从用户菜单撤销注销，撤销后账号恢复；冷静期内调生成接口应 403 `ACCOUNT_PENDING_DELETION`；重置密码邮件 1 小时内有效、验证邮件 24 小时；同一重置链接并发打开只能用一次；改密/重置密码后旧 `ic_media` 媒体 cookie 立即失效（图裂后自动恢复需重新登录）；`/terms` 与 `/privacy` 可未登录访问，注册不勾选同意无法提交；个人中心「数据导出」下载的 JSON 含资料/余额/订单/生成与画布元数据。
