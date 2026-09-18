@@ -96,6 +96,12 @@ services:
       # 点数与支付：ENTITLEMENT_DAYS 缺省 30；限时折扣总开关缺省开启
       ENTITLEMENT_DAYS: "${ENTITLEMENT_DAYS:-30}"
       PRICING_PROMOTION_ENABLED: "${PRICING_PROMOTION_ENABLED:-true}"
+      # 媒体水印（todo 灰度发布：测试环境先开验证，再观察一周）。ENABLED=true 时
+      # WATERMARK_FONT_PATH 必须指向容器内可读的 CJK 字体文件，否则 api 拒绝启动（fail-fast）。
+      # 字体需挂载进容器，例如：/opt/fonts/NotoSansSC-Regular.ttf:/data/fonts/NotoSansSC-Regular.ttf:ro
+      WATERMARK_ENABLED: "${WATERMARK_ENABLED:-false}"
+      WATERMARK_FONT_PATH: "${WATERMARK_FONT_PATH:-}"
+      WATERMARK_TEXT: "${WATERMARK_TEXT:-优刻 AI}"
       # 支付回调地址缺省由 APP_BASE_URL 推导；渠道未配置时自动不上架，配了就必须完整
       PAYMENT_NOTIFY_URL: ${PAYMENT_NOTIFY_URL:-}
       ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}

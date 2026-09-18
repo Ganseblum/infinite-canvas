@@ -12,7 +12,9 @@ FROM alpine:3.20
 
 # 预建媒体目录并交给运行用户：local 驱动（STORAGE_DRIVER=local）需要可写，
 # 命名卷首次挂载时会继承镜像目录的属主。
-RUN apk add --no-cache ca-certificates \
+# ffmpeg 含 libx264：媒体水印烧录（免费档）与视频水印重编码依赖，缺失时
+# WATERMARK_ENABLED=true 的容器无法完成水印任务（fail-closed，不泄漏干净件）。
+RUN apk add --no-cache ca-certificates ffmpeg \
     && adduser -D -H -u 10001 appuser \
     && mkdir -p /data/media \
     && chown appuser:appuser /data/media
