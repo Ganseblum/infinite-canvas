@@ -76,3 +76,9 @@ func schemaStats(gormDB *gorm.DB) (tables, columns int, err error) {
 	}
 	return len(tableList), columns, nil
 }
+
+// CurrentVersion 返回当前代码版本：VERSION 文件优先，其次构建信息里的提交号。
+// 供 /admin/meta 等需要展示产品版本的地方使用。
+func CurrentVersion() string {
+	return buildVersion()
+}

@@ -118,12 +118,29 @@ export default {
         roleNoneHint: "清空表示取消该用户的后台访问权限。",
         roleUpdated: "角色已更新",
     },
+    // 多产品共用后台：产品清单在 admin/src/lib/products.ts 的注册表里，这里只放显示文案，
+    // items 的键与注册表里的产品 key 一一对应。
+    products: {
+        planned: "规划中",
+        integrationRequirement: "接入条件：后端实现同一套 /api/admin/* 契约并加入 CORS 白名单。",
+        items: {
+            "youc-canvas": { name: "优刻画布" },
+            blog: { name: "博客" },
+            office: { name: "办公套件" },
+        },
+        placeholder: {
+            title: "「{{name}}」尚未接入统一后台",
+            description: "该产品还没有接入统一管理后台，此处仅作占位说明，不提供任何管理功能。",
+            requirementLabel: "接入条件",
+            back: "返回当前产品",
+        },
+    },
 };
 
-// ===== translation 命名空间补丁：用量分析页 =====
+// ===== translation 命名空间补丁：用量分析页与模型管理页 =====
 // admin 页面文案按命名空间分层约定走 translation（见 admin/src/i18n/index.ts 的注释），
 // 但那批键一直放在 web 语言包里，web 侧不在本应用的改动范围内；这里沿用 index.ts
-// 补 admin.tabs.system 的同一做法（deep + 不覆盖），把用量分析页缺失的键补进 translation，
+// 补 admin.tabs.system 的同一做法（deep + 不覆盖），把缺失的键补进 translation，
 // 侧边栏 labelKey（admin-layout 用默认命名空间渲染菜单）与页面文案才能解析。
 // web 语言包以后补上同名键时会被保留，两边不会互相覆盖。
 i18n.addResourceBundle(
@@ -141,6 +158,19 @@ i18n.addResourceBundle(
                 byCapability: { title: "能力分布" },
                 bySpec: { title: "规格分布", requests: "请求数" },
                 topUsers: { title: "消费用户排行", user: "用户", requests: "请求数", cost: "消费点数" },
+            },
+            models: {
+                // 能力筛选 Segmented：选项文案 = 标签 + 数量。
+                filters: { all: "全部", labeled: "{{label}} ({{count}})" },
+                // 按能力分组的约束键里 web 语言包没有的键；size/quality/resolution/ratio/duration 沿用已有 constraintKeys。
+                groups: { background: "背景 background", format: "格式 format", voice: "音色 voice", speed: "语速 speed" },
+                // 视频能力的特性选项（web 语言包只有 referenceImage/mask）。
+                features: { watermark: "水印", generateAudio: "生成音频", referenceVideo: "参考视频", referenceAudio: "参考音频" },
+                nMaxImage: "单次张数（n.max）",
+                nMaxText: "单次条数（n.max）",
+                freeInputHint: "可选择建议值，也可输入自定义值",
+                customConstraintsTitle: "自定义约束",
+                customConstraintsHint: "不属于当前能力预置分组的约束键，取值原样保留；清空后保存即删除。",
             },
         },
     },

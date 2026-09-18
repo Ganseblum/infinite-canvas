@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计稿 I · 夜航 NIGHT FLIGHT — 暗黑酸性满屏滚动个人主站</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;500;700;900&family=Chakra+Petch:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#0a0a0b; --panel:#111113; --fg:#f2f2ef; --soft:rgba(242,242,239,.5);
+  --line:rgba(242,242,239,.12); --lime:#c8ff2e; --dim:#5a5a52;
+}
+*{box-sizing:border-box}
+html{scroll-snap-type:y mandatory;scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'Chakra Petch','Noto Sans SC',sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--lime);color:#000}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+.unb{font-family:'Unbounded','Noto Sans SC',sans-serif}
+.mono{font-family:'Chakra Petch',monospace;letter-spacing:.08em}
+
+/* 网格底 + 噪点 */
+.gridbg{position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:72px 72px;opacity:.4;}
+.gridbg::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 85% 8%,rgba(200,255,46,.14),transparent 55%)}
+.noise{position:fixed;inset:0;pointer-events:none;z-index:80;opacity:.06;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+/* HUD */
+.hud{position:fixed;top:0;left:0;right:0;z-index:70;display:flex;justify-content:space-between;align-items:center;padding:16px clamp(18px,3vw,36px);mix-blend-mode:difference}
+.hud .nf{font-family:'Unbounded';font-weight:700;font-size:14px;letter-spacing:.1em}
+.hud .menu{display:flex;gap:22px;font-size:11.5px;letter-spacing:.2em;color:var(--soft)}
+.hud .menu a:hover{color:var(--lime)}
+@media(max-width:720px){.hud .menu{display:none}}
+/* 右侧点导航 */
+.dots{position:fixed;right:18px;top:50%;transform:translateY(-50%);z-index:70;display:flex;flex-direction:column;gap:14px}
+.dots a{width:8px;height:8px;border:1.5px solid var(--soft);border-radius:50%;transition:all .3s;display:block}
+.dots a:hover{background:var(--lime);border-color:var(--lime);transform:scale(1.3)}
+@media(max-width:720px){.dots{display:none}}
+
+/* 满屏分区 */
+section.screen{
+  min-height:100vh;scroll-snap-align:start;position:relative;z-index:2;
+  display:flex;flex-direction:column;justify-content:center;
+  padding:clamp(70px,10vh,110px) clamp(20px,4.5vw,60px);
+}
+.tagline{font-size:11.5px;letter-spacing:.3em;color:var(--lime);margin:0 0 18px}
+.sec-title{font-size:clamp(2.2rem,6vw,4.4rem);line-height:1.04;margin:0 0 14px;font-weight:900;letter-spacing:-.01em}
+.sec-title .ol{color:transparent;-webkit-text-stroke:1.5px var(--fg)}
+.sec-sub{color:var(--soft);font-size:14.5px;max-width:36em;margin:0 0 30px}
+.sec-head-row{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap;margin-bottom:34px}
+.sec-head-row .more{font-size:12px;letter-spacing:.2em;color:var(--soft);border:1px solid var(--line);padding:10px 20px;transition:all .3s}
+.sec-head-row .more:hover{border-color:var(--lime);color:var(--lime)}
+
+/* ========== S1 封面 ========== */
+.s1{align-items:flex-start}
+.s1 h1{font-size:clamp(3rem,10.5vw,8.6rem);line-height:.98;margin:10px 0 26px;font-weight:900;letter-spacing:-.01em}
+.s1 h1 .row{display:block}
+.s1 h1 .stroke{color:transparent;-webkit-text-stroke:2px var(--fg)}
+.s1 h1 .lime{color:var(--lime)}
+.glitch{position:relative;display:inline-block}
+.glitch:hover{animation:gl .35s steps(2) 3}
+@keyframes gl{25%{transform:translate(-3px,2px);text-shadow:3px 0 var(--lime),-3px 0 #ff2ea6}75%{transform:translate(3px,-2px);text-shadow:-3px 0 var(--lime),3px 0 #ff2ea6}}
+.s1 .zh{color:var(--soft);font-size:15.5px;max-width:32em;margin:0 0 34px}
+.s1 .zh b{color:var(--fg)}
+.s1 .cta{display:flex;gap:14px;flex-wrap:wrap}
+.btn-lime{background:var(--lime);color:#000;padding:15px 30px;font-weight:600;font-size:14px;letter-spacing:.12em;transition:all .25s;display:inline-flex;align-items:center;gap:10px}
+.btn-lime:hover{background:var(--fg)}
+.btn-ol{border:1px solid var(--soft);color:var(--fg);padding:15px 30px;font-size:14px;letter-spacing:.12em;transition:all .25s}
+.btn-ol:hover{border-color:var(--lime);color:var(--lime)}
+.flightno{position:absolute;right:clamp(20px,4.5vw,60px);top:50%;transform:translateY(-50%);writing-mode:vertical-rl;font-size:11px;letter-spacing:.4em;color:var(--soft)}
+@media(max-width:720px){.flightno{display:none}}
+/* 封面底部跑马灯 */
+.strip{position:absolute;left:0;right:0;bottom:0;background:var(--lime);color:#000;overflow:hidden}
+.strip .track{display:flex;white-space:nowrap;animation:mq 18s linear infinite;padding:10px 0;font-family:'Unbounded';font-weight:700;font-size:14px}
+.strip span{padding:0 14px}
+@keyframes mq{to{transform:translateX(-50%)}}
+
+/* ========== S2 图片 ========== */
+.covers{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.cover{position:relative;aspect-ratio:1;overflow:hidden;background:var(--panel);cursor:pointer}
+.cover img{width:100%;height:100%;object-fit:cover;filter:grayscale(1) contrast(1.1);transition:all .45s}
+.cover::after{content:"";position:absolute;inset:0;background:var(--lime);mix-blend-mode:multiply;opacity:0;transition:opacity .4s}
+.cover:hover img{filter:grayscale(.1);transform:scale(1.05)}
+.cover:hover::after{opacity:.28}
+.cover .cid{position:absolute;top:10px;left:12px;z-index:2;font-size:11px;letter-spacing:.2em;color:var(--fg)}
+.cover .cid::before{content:"▲ ";color:var(--lime)}
+@media(max-width:720px){.covers{grid-template-columns:repeat(2,1fr)}}
+
+/* ========== S3 视频 ========== */
+.motion{display:grid;grid-template-columns:1.35fr .65fr;gap:26px;align-items:stretch}
+.player{position:relative;aspect-ratio:16/9;overflow:hidden;border:1px solid var(--line)}
+.player img{width:100%;height:100%;object-fit:cover;opacity:.85;transition:transform .5s,opacity .5s}
+.player:hover img{transform:scale(1.03);opacity:1}
+.player .pl{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:66px;height:66px;border:1.5px solid var(--lime);border-radius:50%;
+  display:grid;place-items:center;color:var(--lime);background:rgba(10,10,11,.5);backdrop-filter:blur(4px);
+  transition:all .3s;font-size:18px;
+}
+.player:hover .pl{background:var(--lime);color:#000;transform:translate(-50%,-50%) scale(1.1)}
+.player .tl{position:absolute;left:16px;right:16px;bottom:14px;height:3px;background:rgba(242,242,239,.25)}
+.player .tl i{display:block;width:34%;height:100%;background:var(--lime)}
+.mlist{display:flex;flex-direction:column;gap:12px}
+.mrow{border:1px solid var(--line);padding:16px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:all .3s;cursor:pointer}
+.mrow:hover{border-color:var(--lime);transform:translateX(6px)}
+.mrow b{font-size:15px;font-weight:500;display:block}
+.mrow span{font-size:11.5px;color:var(--soft);letter-spacing:.1em}
+.mrow .dur{font-size:12px;color:var(--lime)}
+@media(max-width:860px){.motion{grid-template-columns:1fr}}
+
+/* ========== S4 模板（终端） ========== */
+.term{border:1px solid var(--line);background:var(--panel);max-width:860px}
+.term .tbar{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);font-size:12px;color:var(--soft)}
+.term .tbar i{width:10px;height:10px;border-radius:50%;background:var(--dim);display:inline-block}
+.term .tbar i:first-child{background:var(--lime)}
+.term .tbody{padding:18px 20px 22px;font-size:14px;line-height:2.05}
+.term .cmd{color:var(--lime)}
+.term .cmd::before{content:"➜ ~ ";color:var(--dim)}
+.term .cmd2::before{content:"➜ ~ ";color:var(--dim)}
+.term .out{color:var(--soft)}
+.term .file{color:var(--fg);display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.term .file .dn{color:var(--lime)}
+.term .getrow{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}
+.chipget{border:1px solid var(--line);padding:9px 18px;font-size:12px;letter-spacing:.14em;color:var(--fg);transition:all .3s;cursor:pointer}
+.chipget:hover{background:var(--lime);border-color:var(--lime);color:#000}
+
+/* ========== S5 博客 ========== */
+.logs{max-width:860px;border-top:1px solid var(--line)}
+.log{display:grid;grid-template-columns:130px 1fr auto;gap:18px;align-items:baseline;padding:20px 6px;border-bottom:1px solid var(--line);cursor:pointer;transition:all .25s}
+.log:hover{background:rgba(200,255,46,.05);padding-left:16px}
+.log time{font-size:11.5px;color:var(--soft);letter-spacing:.12em}
+.log h3{margin:0;font-size:18px;font-weight:500}
+.log p{margin:4px 0 0;font-size:13px;color:var(--soft)}
+.log .st{font-size:10.5px;letter-spacing:.18em;padding:4px 10px;border:1px solid var(--line);color:var(--soft)}
+.log .st.live{border-color:var(--lime);color:var(--lime)}
+@media(max-width:680px){.log{grid-template-columns:1fr auto}.log time{display:none}}
+
+/* ========== S6 联系 ========== */
+.s6{text-align:left}
+.s6 .bigmail{
+  font-family:'Unbounded';font-weight:900;font-size:clamp(1.8rem,5.6vw,4.2rem);
+  color:transparent;-webkit-text-stroke:1.5px var(--fg);transition:all .4s;line-height:1.15;
+}
+.s6 .bigmail:hover{-webkit-text-stroke-color:var(--lime);color:var(--lime)}
+.socials{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px}
+.socials a{border:1px solid var(--line);padding:11px 22px;font-size:12.5px;letter-spacing:.16em;color:var(--soft);transition:all .3s}
+.socials a:hover{border-color:var(--lime);color:var(--lime)}
+.foot-line{position:absolute;left:clamp(20px,4.5vw,60px);right:clamp(20px,4.5vw,60px);bottom:26px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:10.5px;letter-spacing:.18em;color:var(--soft)}
+
+.corner{position:fixed;left:14px;bottom:14px;z-index:90;font-size:10px;letter-spacing:.14em;color:var(--soft);border:1px solid var(--line);padding:4px 10px;background:rgba(10,10,11,.85)}
+</style>
+</head>
+<body>
+
+<div class="gridbg"></div>
+<div class="noise"></div>
+
+<!-- HUD -->
+<div class="hud">
+  <a class="nf" href="#s1">NF—2026</a>
+  <nav class="menu mono">
+    <a href="#s2">图片 STILL</a><a href="#s3">视频 MOTION</a><a href="#s4">模板 FILES</a>
+    <a href="#s5">博客 LOG</a><a href="#s6">联系 CONTACT</a>
+  </nav>
+</div>
+<div class="dots mono">
+  <a href="#s1"></a><a href="#s2"></a><a href="#s3"></a><a href="#s4"></a><a href="#s5"></a><a href="#s6"></a>
+</div>
+
+<!-- ========== S1 封面 ========== -->
+<section class="screen s1" id="s1">
+  <p class="tagline mono">NF-2026 · 个人聚合站 · 图像 / 视频 / 模板 / 手记</p>
+  <h1 class="unb">
+    <span class="row"><span class="glitch">NIGHT</span></span>
+    <span class="row stroke">FLIGHT<span class="lime">.</span></span>
+  </h1>
+  <p class="zh">我是<b>航</b>。这架飞机上装着我做的一切——图像在货舱，视频在驾驶舱，模板在行李架，博客还在塔台排队起飞。</p>
+  <div class="cta">
+    <a class="btn-lime" href="#s2">开始登机 ↓</a>
+    <a class="btn-ol" href="#s4">直奔模板舱</a>
+  </div>
+  <span class="flightno mono">HANGZHOU ✈ EVERYWHERE — 30.27°N 120.16°E</span>
+  <div class="strip" aria-hidden="true">
+    <div class="track">
+      <span>✦ 图片 128 ✦ 视频 4 部 ✦ 模板 46 套 ✦ 博客起飞前 ✦ 图片 128 ✦ 视频 4 部 ✦ 模板 46 套 ✦ 博客起飞前 ✦&nbsp;</span>
+      <span>✦ 图片 128 ✦ 视频 4 部 ✦ 模板 46 套 ✦ 博客起飞前 ✦ 图片 128 ✦ 视频 4 部 ✦ 模板 46 套 ✦ 博客起飞前 ✦&nbsp;</span>
+    </div>
+  </div>
+</section>
+
+<!-- ========== S2 图片 ========== -->
+<section class="screen" id="s2">
+  <div class="sec-head-row">
+    <div>
+      <p class="tagline mono">CARGO 01 — 图像作品</p>
+      <h2 class="sec-title unb">STILL<span class="ol">/128</span></h2>
+    </div>
+    <a class="more mono" href="#">打开全部货舱 →</a>
+  </div>
+  <div class="covers">
+    <div class="cover"><span class="cid">IMG_001</span><img src="https://picsum.photos/seed/nf1/600/600" alt="" /></div>
+    <div class="cover"><span class="cid">IMG_002</span><img src="https://picsum.photos/seed/nf2/600/600" alt="" /></div>
+    <div class="cover"><span class="cid">IMG_003</span><img src="https://picsum.photos/seed/nf3/600/600" alt="" /></div>
+    <div class="cover"><span class="cid">IMG_004</span><img src="https://picsum.photos/seed/nf4/600/600" alt="" /></div>
+    <div class="cover"><span class="cid">IMG_005</span><img src="https://picsum.photos/seed/nf5/600/600" alt="" /></div>
+    <div class="cover"><span class="cid">IMG_006</span><img src="https://picsum.photos/seed/nf6/600/600" alt="" /></div>
+  </div>
+</section>
+
+<!-- ========== S3 视频 ========== -->
+<section class="screen" id="s3">
+  <div class="sec-head-row">
+    <div>
+      <p class="tagline mono">CARGO 02 — 视频短片</p>
+      <h2 class="sec-title unb">MOTION<span class="ol">/04</span></h2>
+    </div>
+    <a class="more mono" href="#">全部影片 →</a>
+  </div>
+  <div class="motion">
+    <div class="player">
+      <img src="https://picsum.photos/seed/nf-film/1100/620" alt="" />
+      <span class="pl">▶</span>
+      <span class="tl"><i></i></span>
+    </div>
+    <div class="mlist">
+      <div class="mrow"><div><b>城市二十四小时</b><span>延时摄影 · 4K</span></div><span class="dur">02:14</span></div>
+      <div class="mrow"><div><b>AI 短片《回声》</b><span>实验影像</span></div><span class="dur">03:18</span></div>
+      <div class="mrow"><div><b>纸的重量</b><span>手作纪录</span></div><span class="dur">06:42</span></div>
+      <div class="mrow"><div><b>产品广告片</b><span>商业短片</span></div><span class="dur">00:30</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== S4 模板 ========== -->
+<section class="screen" id="s4">
+  <div class="sec-head-row">
+    <div>
+      <p class="tagline mono">CARGO 03 — 三件套模板 · 46 套</p>
+      <h2 class="sec-title unb">FILES<span class="ol">.EXE</span></h2>
+    </div>
+    <a class="more mono" href="#">进入模板站 ↗</a>
+  </div>
+  <div class="term">
+    <div class="tbar"><i></i><i></i><i></i>&nbsp; hang@night-flight: ~/office</div>
+    <div class="tbody mono">
+      <div class="cmd">ls -la ~/office/</div>
+      <div class="out">total 46 &nbsp;·&nbsp; 按下载量排序：</div>
+      <div class="file"><span>drwxr-xr-x&nbsp; 年度总结汇报_蓝紫渐变.pptx</span><span class="dn">↓ 1.2w · 32页 · 16:9</span></div>
+      <div class="file"><span>drwxr-xr-x&nbsp; 项目排期_自动甘特图.xlsx</span><span class="dn">↓ 0.8w · 带公式</span></div>
+      <div class="file"><span>drwxr-xr-x&nbsp; 一页纸简历_无衬线.docx</span><span class="dn">↓ 0.6w · A4</span></div>
+      <div class="file"><span>drwxr-xr-x&nbsp; 财务月报_动态看板.xlsx</span><span class="dn">↓ 0.7w · 带公式</span></div>
+      <div class="cmd cmd2">get --all --free</div>
+      <div class="out">✓ 全部免费 · 每月 1 号上新 · 商用也行</div>
+      <div class="getrow">
+        <span class="chipget">GET PPT ×18</span>
+        <span class="chipget">GET WORD ×12</span>
+        <span class="chipget">GET EXCEL ×16</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== S5 博客 ========== -->
+<section class="screen" id="s5">
+  <div class="sec-head-row">
+    <div>
+      <p class="tagline mono">TOWER — 博客筹备中 · 手记先行</p>
+      <h2 class="sec-title unb">FLIGHT<span class="ol">LOG</span></h2>
+    </div>
+    <a class="more mono" href="#">订阅 RSS ↓</a>
+  </div>
+  <div class="logs">
+    <div class="log"><time class="mono">2026.09.02</time><div><h3>为什么我把主站做成一架飞机</h3><p>关于聚合、展示与引流：一个入口，装载所有输出。</p></div><span class="st live mono">可读</span></div>
+    <div class="log"><time class="mono">2026.08.21</time><div><h3>AI 视频工作流复盘：从提示词到成片</h3><p>提示词、分镜、剪辑的完整链路，以及踩过的坑。</p></div><span class="st mono">起飞前</span></div>
+    <div class="log"><time class="mono">2026.07.30</time><div><h3>给三件套模板做一套配色系统</h3><p>颜色即检索：模板站的第一入口为什么是颜色。</p></div><span class="st mono">起飞前</span></div>
+  </div>
+</section>
+
+<!-- ========== S6 联系 ========== -->
+<section class="screen s6" id="s6">
+  <p class="tagline mono">LANDING — 落地之后，保持联络</p>
+  <h2 class="sec-title unb">SAY<span class="ol">HELLO.</span></h2>
+  <a class="bigmail" href="mailto:hi@youc.online">HI@YOUC.ONLINE</a>
+  <p class="sec-sub" style="margin-top:22px">合作 / 定制 / 闲聊都收，一般 48 小时内回复。也可以在下面这些跑道找到我：</p>
+  <div class="socials mono">
+    <a href="#">B 站 · 1.2W 粉</a><a href="#">小红书 · 8K 赞藏</a><a href="#">抖音 · 3W 粉</a><a href="#">GITHUB</a><a href="#">RSS</a>
+  </div>
+  <div class="foot-line mono"><span>© 2026 HANG — YOUC.ONLINE</span><span>DESIGNED ON CANVAS · POWERED BY 航</span></div>
+</section>
+
+<span class="corner mono">DRAFT I — TECHNO SNAP 夜航 · 整屏滚动，右侧圆点可跳转</span>
+</body>
+</html>

@@ -115,13 +115,30 @@ export default {
         roleNoneHint: "Clearing this removes the user's console access.",
         roleUpdated: "Role updated",
     },
+    // Multi-product console: the product list lives in the registry at admin/src/lib/products.ts;
+    // this section only holds display copy, keyed to match the registry's product keys.
+    products: {
+        planned: "Planned",
+        integrationRequirement: "Integration requirement: the backend must implement the same /api/admin/* contract and be added to the CORS allowlist.",
+        items: {
+            "youc-canvas": { name: "YOUC Canvas" },
+            blog: { name: "Blog" },
+            office: { name: "Office suite" },
+        },
+        placeholder: {
+            title: "\"{{name}}\" is not connected to the unified console yet",
+            description: "This product has not been connected to the unified admin console. This page is a placeholder and offers no management features.",
+            requirementLabel: "Integration requirement",
+            back: "Back to the current product",
+        },
+    },
 };
 
-// ===== Translation namespace patch: usage analytics =====
+// ===== Translation namespace patch: usage analytics and the models page =====
 // Admin page copy lives in the translation namespace by convention (see the comment in
 // admin/src/i18n/index.ts), but those keys ship in the web language packs, which are outside
 // this app's change scope. Reuse the same approach index.ts applies to admin.tabs.system
-// (deep merge, never overwrite) to fill the missing usage-analytics keys, so the sidebar
+// (deep merge, never overwrite) to fill the missing keys, so the sidebar
 // labelKey (rendered by admin-layout through the default namespace) and page copy resolve.
 // If the web packs gain the same keys later, those win and this patch stays harmless.
 i18n.addResourceBundle(
@@ -139,6 +156,20 @@ i18n.addResourceBundle(
                 byCapability: { title: "By capability" },
                 bySpec: { title: "By spec", requests: "Requests" },
                 topUsers: { title: "Top consumers", user: "User", requests: "Requests", cost: "Credits spent" },
+            },
+            models: {
+                // Capability filter Segmented: option label = name + count.
+                filters: { all: "All", labeled: "{{label}} ({{count}})" },
+                // Constraint keys used by the capability groups that the web packs lack;
+                // size/quality/resolution/ratio/duration reuse the existing constraintKeys.
+                groups: { background: "Background (background)", format: "Format (format)", voice: "Voice (voice)", speed: "Speed (speed)" },
+                // Video capability feature options (the web packs only ship referenceImage/mask).
+                features: { watermark: "Watermark", generateAudio: "Generate audio", referenceVideo: "Reference video", referenceAudio: "Reference audio" },
+                nMaxImage: "Images per request (n.max)",
+                nMaxText: "Items per request (n.max)",
+                freeInputHint: "Pick a suggested value or type a custom one",
+                customConstraintsTitle: "Custom constraints",
+                customConstraintsHint: "Constraint keys outside this capability's preset groups are kept as-is; clearing the values removes the key on save.",
             },
         },
     },

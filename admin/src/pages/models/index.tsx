@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Alert, App, Button, Descriptions, Divider, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag } from "antd";
+import { Alert, App, Button, Descriptions, Divider, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
@@ -23,8 +23,41 @@ import {
 import type { ModelCapability, ModelConstraints, ModelCreditCost } from "@/services/api/catalog";
 
 const CAPABILITIES: ModelCapability[] = ["image", "video", "text", "audio"];
+// 旧版通用约束键清单。约束表单已改为按能力分组（见 CAPABILITY_GROUPS），这份清单现在只剩
+// ConstraintKey 类型与折扣活动的匹配参数下拉两个用途：服务端 ValidatePromotion /
+// ValidateCreditCost 都只接受这五个键，所以匹配参数与计价维度都不随新分组扩大。
 const CONSTRAINT_KEYS = ["size", "ratio", "resolution", "quality", "duration"] as const;
-const FEATURE_KEYS = ["referenceImage", "mask"] as const;
+
+// 每个能力的约束分组：key 与 constraints 里的键一一对应，数据结构与提交格式完全不变，只是按能力分区展示。
+// tags = 建议值之外允许自由输入；multiple = 固定集合，只能从建议值里选。
+type CapabilityGroup = { key: string; labelKey: string; options?: string[]; tags?: boolean };
+
+const CAPABILITY_GROUPS: Record<ModelCapability, CapabilityGroup[]> = {
+    image: [
+        { key: "size", labelKey: "admin.models.constraintKeys.size", options: ["1024x1024", "1536x1024", "1024x1536", "2048x2048"], tags: true },
+        { key: "quality", labelKey: "admin.models.constraintKeys.quality", options: ["low", "high"] },
+        { key: "background", labelKey: "admin.models.groups.background", options: ["opaque", "transparent"] },
+    ],
+    video: [
+        { key: "resolution", labelKey: "admin.models.constraintKeys.resolution", options: ["480p", "720p", "1080p"] },
+        { key: "ratio", labelKey: "admin.models.constraintKeys.ratio", options: ["1:1", "16:9", "9:16", "3:4", "4:3", "21:9"] },
+        { key: "duration", labelKey: "admin.models.constraintKeys.duration", options: ["4", "6", "8", "12", "16", "24", "30"], tags: true },
+    ],
+    audio: [
+        { key: "format", labelKey: "admin.models.groups.format", options: ["mp3", "wav", "opus"] },
+        { key: "voice", labelKey: "admin.models.groups.voice", tags: true },
+        { key: "speed", labelKey: "admin.models.groups.speed", tags: true },
+    ],
+    text: [],
+};
+
+// 特性（constraints.features）的可选项也按能力区分；空数组表示该能力不展示特性控件。
+const CAPABILITY_FEATURES: Record<ModelCapability, string[]> = {
+    image: ["referenceImage", "mask"],
+    video: ["watermark", "generateAudio", "referenceVideo", "referenceAudio"],
+    audio: [],
+    text: [],
+};
 
 type ConstraintKey = (typeof CONSTRAINT_KEYS)[number];
 
@@ -81,6 +114,21 @@ export default function AdminModelsPage() {
     const featuresWatch = Form.useWatch("features", form) ?? [];
     const capabilityWatch = Form.useWatch("capability", form);
 
+    // 当前能力对应的约束分组与控件开关：能力切换时保留已填值，仅切换可见分组。
+    const activeCapability: ModelCapability = capabilityWatch ?? "image";
+    const activeGroups = CAPABILITY_GROUPS[activeCapability];
+    const featureOptions = CAPABILITY_FEATURES[activeCapability];
+    const showNMax = activeCapability === "image" || activeCapability === "text";
+    const showFeatures = featureOptions.length > 0;
+    // 不属于当前能力预置分组的约束键（旧数据自定义键、换能力后遗留的键）收进「自定义约束」，取值原样保留。
+    const customConstraintKeys = useMemo(() => {
+        const known = new Set(activeGroups.map((group) => group.key));
+        return Object.entries(constraintsWatch)
+            .filter(([key, list]) => Array.isArray(list) && list.length > 0 && !known.has(key))
+            .map(([key]) => key)
+            .sort();
+    }, [activeGroups, constraintsWatch]);
+
     const modelsQuery = useQuery({
         queryKey: ["admin", "models"],
         queryFn: ({ signal }) => listAdminModels(signal),
@@ -89,6 +137,16 @@ export default function AdminModelsPage() {
         queryKey: ["admin", "channels"],
         queryFn: ({ signal }) => listAdminChannels(signal),
     });
+
+    // 表格上方的能力筛选：全部/图片/视频/音频/文本，选项上带各能力的模型数量。
+    const [capabilityFilter, setCapabilityFilter] = useState<"all" | ModelCapability>("all");
+    const allModels = modelsQuery.data?.items ?? [];
+    const capabilityCounts = useMemo(() => {
+        const counts: Record<"all" | ModelCapability, number> = { all: allModels.length, image: 0, video: 0, text: 0, audio: 0 };
+        for (const item of allModels) counts[item.capability] += 1;
+        return counts;
+    }, [allModels]);
+    const filteredModels = capabilityFilter === "all" ? allModels : allModels.filter((item) => item.capability === capabilityFilter);
 
     const invalidate = async () => {
         await Promise.all([
@@ -99,10 +157,12 @@ export default function AdminModelsPage() {
 
     const saveMutation = useMutation({
         mutationFn: (values: ModelFormValues) => {
-            const constraints: ModelConstraints = {};
-            for (const key of CONSTRAINT_KEYS) {
-                const list = values.constraints?.[key] ?? [];
-                if (list.length > 0) constraints[key] = list;
+            // 提交格式不变：constraints 仍是键到字符串数组的映射。按能力分组后表单里可能出现
+            // 预置分组之外的键（旧数据自定义键），只要取值非空就原样提交。
+            const constraints = {} as ModelConstraints;
+            const constraintRecord = constraints as Record<string, string[]>;
+            for (const [key, list] of Object.entries(values.constraints ?? {})) {
+                if (Array.isArray(list) && list.length > 0) constraintRecord[key] = list;
             }
             if (values.nMax) constraints.n = { max: values.nMax };
             if (values.features?.length) constraints.features = values.features;
@@ -177,9 +237,10 @@ export default function AdminModelsPage() {
 
     const openEdit = (item: AdminModel) => {
         const constraints = (item.constraints ?? {}) as ModelConstraints;
+        // 已知键之外的自定义键也一并读进表单（渲染时落入「自定义约束」分组），保证老数据打开编辑器不丢字段。
         const constraintValues: Record<string, string[]> = {};
-        for (const key of CONSTRAINT_KEYS) {
-            const list = constraints[key];
+        for (const [key, list] of Object.entries(constraints)) {
+            if (key === "n" || key === "features") continue;
             if (Array.isArray(list)) {
                 constraintValues[key] = list.map((option) => optionValue(option as never));
             }
@@ -276,14 +337,27 @@ export default function AdminModelsPage() {
             {modelsQuery.isError ? (
                 <QueryError error={modelsQuery.error} message={t("admin.models.loadFailed")} onRetry={() => void modelsQuery.refetch()} />
             ) : (
-                <Table<AdminModel>
-                    rowKey="id"
-                    size="middle"
-                    loading={modelsQuery.isPending}
-                    columns={columns}
-                    dataSource={modelsQuery.data?.items ?? []}
-                    pagination={false}
-                />
+                <>
+                    <Segmented
+                        value={capabilityFilter}
+                        onChange={(value) => setCapabilityFilter(value as "all" | ModelCapability)}
+                        options={[
+                            { value: "all", label: t("admin.models.filters.labeled", { label: t("admin.models.filters.all"), count: capabilityCounts.all }) },
+                            ...CAPABILITIES.map((capability) => ({
+                                value: capability,
+                                label: t("admin.models.filters.labeled", { label: t(`admin.models.capabilities.${capability}`), count: capabilityCounts[capability] }),
+                            })),
+                        ]}
+                    />
+                    <Table<AdminModel>
+                        rowKey="id"
+                        size="middle"
+                        loading={modelsQuery.isPending}
+                        columns={columns}
+                        dataSource={filteredModels}
+                        pagination={false}
+                    />
+                </>
             )}
 
             <Drawer
@@ -352,26 +426,59 @@ export default function AdminModelsPage() {
                     </div>
 
                     <Divider titlePlacement="start">{t("admin.models.constraintsTitle")}</Divider>
-                    {CONSTRAINT_KEYS.map((key) => (
-                        <Form.Item key={key} name={["constraints", key]} label={t(`admin.models.constraintKeys.${key}`)} extra={t("admin.models.constraintHint")}>
-                            <Select mode="tags" tokenSeparators={[",", " "]} open={false} placeholder={t("admin.models.constraintPlaceholder")} />
+                    {/* 约束表单按能力分组渲染：tags 分组可选建议值也可自由输入，multiple 分组只能从建议值里选。 */}
+                    {activeGroups.map((group) => (
+                        <Form.Item
+                            key={group.key}
+                            name={["constraints", group.key]}
+                            label={t(group.labelKey)}
+                            extra={group.tags ? t("admin.models.freeInputHint") : undefined}
+                        >
+                            <Select
+                                mode={group.tags ? "tags" : "multiple"}
+                                tokenSeparators={group.tags ? [","] : undefined}
+                                placeholder={t("admin.models.constraintPlaceholder")}
+                                options={(group.options ?? []).map((value) => ({ value, label: value }))}
+                            />
                         </Form.Item>
                     ))}
-                    <div className="grid grid-cols-2 gap-x-4">
-                        <Form.Item name="nMax" label={t("admin.models.constraintKeys.n")} extra={t("admin.models.nHint")}>
-                            <InputNumber className="w-full" precision={0} min={1} max={15} />
-                        </Form.Item>
-                        <Form.Item name="features" label={t("admin.models.constraintKeys.features")}>
-                            <Select mode="multiple" options={FEATURE_KEYS.map((value) => ({ value, label: t(`admin.models.features.${value}`) }))} />
-                        </Form.Item>
-                    </div>
+                    {/* 预置分组之外的约束键原样保留：清空取值后保存即删除该键。 */}
+                    {customConstraintKeys.length > 0 ? (
+                        <>
+                            <Divider titlePlacement="start">{t("admin.models.customConstraintsTitle")}</Divider>
+                            {customConstraintKeys.map((key) => (
+                                <Form.Item key={key} name={["constraints", key]} label={key} extra={t("admin.models.customConstraintsHint")}>
+                                    <Select mode="tags" tokenSeparators={[","]} open={false} placeholder={t("admin.models.constraintPlaceholder")} />
+                                </Form.Item>
+                            ))}
+                        </>
+                    ) : null}
+                    {showNMax || showFeatures ? (
+                        <div className="grid grid-cols-2 gap-x-4">
+                            {showNMax ? (
+                                <Form.Item
+                                    name="nMax"
+                                    label={t(activeCapability === "text" ? "admin.models.nMaxText" : "admin.models.nMaxImage")}
+                                    extra={t("admin.models.nHint")}
+                                >
+                                    <InputNumber className="w-full" precision={0} min={1} max={15} />
+                                </Form.Item>
+                            ) : null}
+                            {showFeatures ? (
+                                <Form.Item name="features" label={t("admin.models.constraintKeys.features")}>
+                                    <Select mode="multiple" options={featureOptions.map((value) => ({ value, label: t(`admin.models.features.${value}`) }))} />
+                                </Form.Item>
+                            ) : null}
+                        </div>
+                    ) : null}
 
                     <Divider titlePlacement="start">{t("admin.models.pricingTitle")}</Divider>
                     <Form.Item name="dimensions" label={t("admin.models.fields.dimensions")} extra={t("admin.models.dimensionsHint")}>
                         <Select
                             mode="multiple"
+                            // 计价维度服务端只接受 size/ratio/resolution/quality/duration（与折扣匹配参数同口径），这里不随分组扩大。
                             options={
-                                capabilityWatch === "video"
+                                activeCapability === "video"
                                     ? [{ value: "resolution", label: t("admin.models.constraintKeys.resolution") }, { value: "duration", label: t("admin.models.constraintKeys.duration") }]
                                     : [
                                           { value: "size", label: t("admin.models.constraintKeys.size") },

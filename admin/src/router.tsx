@@ -17,6 +17,7 @@ import AdminModelsPage from "@admin/pages/models";
 import AdminModerationPage from "@admin/pages/moderation";
 import NoPermissionPage from "@admin/pages/no-permission";
 import AdminOrdersPage from "@admin/pages/orders";
+import AdminProductPlaceholderPage from "@admin/pages/product";
 import AdminSystemPage from "@admin/pages/system";
 import AdminUsersPage from "@admin/pages/users";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -135,6 +136,8 @@ export const router = createBrowserRouter([
                     },
                     // 无权限说明页本身不能要权限，否则会自我重定向成死循环。
                     { path: "/admin/no-permission", element: <NoPermissionPage /> },
+                    // 规划中产品的占位页同样不挂权限点：页面自己校验 key，未登记或已接入的产品直接回 /admin。
+                    { path: "/admin/product/:key", element: <AdminProductPlaceholderPage /> },
                 ],
             },
             // admin 是独立应用：根路径与未知路径都交给总览页，守卫先处理登录态。

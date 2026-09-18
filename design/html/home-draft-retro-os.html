@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计稿 G · 航OS v1.0 — 复古操作系统个人主站</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --desk:#17766b; --face:#d4d0c8; --face-d:#b8b4ac; --navy:#000080;
+  --ink:#111; --white:#fff; --ppt:#c8441f; --word:#2b579a; --excel:#1e7145;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;font-family:'VT323',ui-monospace,'Noto Sans SC',sans-serif;
+  background:var(--desk);overflow:hidden;font-size:16px;line-height:1.5;
+  color:var(--ink);
+}
+/* 桌面抖动纹理 + CRT */
+.desk-bg{
+  position:fixed;inset:0;
+  background-image:radial-gradient(rgba(255,255,255,.09) 1px,transparent 1.4px);
+  background-size:5px 5px;
+}
+.crt{position:fixed;inset:0;pointer-events:none;z-index:999;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.05) 0 1px,transparent 1px 3px);
+}
+.crt::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 140px rgba(0,0,0,.45)}
+::selection{background:var(--navy);color:#fff}
+
+/* ========== 开机画面 ========== */
+#boot{
+  position:fixed;inset:0;z-index:2000;background:#000;color:#ddd;
+  display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;
+  animation:bootout .4s ease 1.6s forwards;
+}
+#boot .t{font-size:34px;letter-spacing:2px}
+#boot .s{font-size:17px;color:#9be89b;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.2}}
+@keyframes bootout{to{opacity:0;visibility:hidden}}
+
+/* ========== 菜单栏 ========== */
+#menubar{
+  position:fixed;top:0;left:0;right:0;height:30px;background:var(--face);z-index:800;
+  display:flex;align-items:center;gap:2px;padding:0 8px;font-size:15.5px;
+  border-bottom:1px solid var(--face-d);box-shadow:0 1px 0 #fff inset;
+}
+#menubar .m-logo{font-weight:bold;padding:0 12px 0 4px;display:flex;align-items:center;gap:7px}
+#menubar .m-logo i{width:14px;height:14px;background:var(--navy);display:inline-block;box-shadow:2px 2px 0 rgba(255,255,255,.55)}
+#menubar .mi{padding:3px 11px;cursor:default}
+#menubar .mi:hover{background:var(--navy);color:#fff}
+#menubar .right{margin-left:auto;display:flex;align-items:center;gap:10px;padding-right:6px}
+
+/* ========== 桌面图标 ========== */
+#icons{position:fixed;top:44px;left:14px;z-index:5;display:flex;flex-direction:column;gap:16px}
+.dicon{width:86px;text-align:center;cursor:pointer;user-select:none}
+.dicon .art{
+  width:52px;height:44px;margin:0 auto;position:relative;
+  background:#fdfdfd;border:2px solid var(--ink);
+}
+.dicon.folder .art{background:#ffd94d;border-color:#8a6d00}
+.dicon.folder .art::before{content:"";position:absolute;top:-8px;left:0;width:24px;height:10px;background:#ffd94d;border:2px solid #8a6d00;border-bottom:none}
+.dicon .art .fold{
+  position:absolute;inset:6px 8px;background:repeating-linear-gradient(180deg,#c9c9c9 0 2px,transparent 2px 7px);
+}
+.dicon .art .pp{position:absolute;inset:5px 7px;background:repeating-linear-gradient(0deg,#e4e4e4 0 3px,transparent 3px 9px)}
+.dicon .art .film{position:absolute;inset:4px;background:var(--ink)}
+.dicon .art .film::before,.dicon .art .film::after{content:"";position:absolute;left:0;right:0;height:5px;
+  background-image:radial-gradient(circle,#fff 1.4px,transparent 1.8px);background-size:8px 5px}
+.dicon .art .film::before{top:2px}.dicon .art .film::after{bottom:2px}
+.dicon .lab{
+  display:inline-block;margin-top:5px;background:rgba(255,255,255,.85);padding:1px 8px;font-size:14.5px;
+  border:1px solid transparent;
+}
+.dicon.sel .lab{background:var(--navy);color:#fff}
+
+/* ========== 窗口 ========== */
+.win{
+  position:absolute;width:min(600px,92vw);background:var(--face);z-index:10;display:none;
+  border:2px solid;border-color:#fff var(--ink) var(--ink) #fff;
+  box-shadow:3px 3px 0 rgba(0,0,0,.45),inset -1px -1px 0 var(--face-d);
+}
+.win.open{display:block}
+.win .tbar{
+  height:28px;background:linear-gradient(90deg,var(--navy),#1084d0);
+  display:flex;align-items:center;gap:8px;padding:0 6px;color:#fff;cursor:move;user-select:none;
+}
+.win.inactive .tbar{background:linear-gradient(90deg,#7a7a7a,#b5b5b5)}
+.win .tbar .ttl{font-weight:bold;font-size:15.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.win .tbtn{
+  width:20px;height:18px;background:var(--face);border:1.5px solid;border-color:#fff var(--ink) var(--ink) #fff;
+  font-size:11px;line-height:1;display:grid;place-items:center;color:var(--ink);cursor:pointer;font-family:inherit;
+}
+.win .tbtn:active{border-color:var(--ink) #fff #fff var(--ink)}
+.win .body{padding:12px;font-size:15px}
+.win .statusbar{
+  border-top:1px solid var(--face-d);padding:4px 10px;font-size:13.5px;color:#333;
+  box-shadow:0 1px 0 #fff inset;display:flex;justify-content:space-between;
+}
+
+/* 作品窗口 */
+.works-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.works-grid figure{margin:0;border:2px solid var(--ink);background:#fff;padding:4px;cursor:pointer}
+.works-grid img{aspect-ratio:4/3;object-fit:cover;width:100%}
+.works-grid figcaption{font-size:13px;padding:3px 2px 1px}
+/* 模板库窗口 */
+.toolbar{display:flex;gap:4px;margin-bottom:8px}
+.toolbar .tb{
+  border:1.5px solid;border-color:#fff var(--ink) var(--ink) #fff;background:var(--face);
+  padding:3px 12px;font-size:14px;font-family:inherit;cursor:pointer;
+}
+.toolbar .tb:active{border-color:var(--ink) #fff #fff var(--ink)}
+.ftable{width:100%;border-collapse:collapse;background:#fff;border:1.5px solid var(--ink)}
+.ftable th{background:var(--face);border:1px solid var(--face-d);text-align:left;padding:4px 8px;font-size:13.5px;font-weight:normal}
+.ftable td{border-top:1px solid #eee;padding:5px 8px;font-size:14.5px;cursor:pointer}
+.ftable tr:hover td{background:#e8f0fe}
+.fico{display:inline-grid;place-items:center;width:20px;height:20px;color:#fff;font-size:12px;margin-right:7px;vertical-align:-4px}
+.f-p{background:var(--ppt)}.f-w{background:var(--word)}.f-x{background:var(--excel)}
+/* 记事本窗口 */
+.notepad{background:#fff;border:1.5px solid var(--ink);padding:14px 16px;height:250px;overflow:auto;font-size:15.5px;line-height:1.7}
+.notepad h4{margin:0 0 8px;font-size:17px}
+.notepad p{margin:0 0 10px}
+/* 关于窗口 */
+.about{display:flex;gap:14px}
+.about .ava{width:86px;height:86px;border:2px solid var(--ink);object-fit:cover;flex:none;background:#fff;padding:4px}
+/* 联系窗口 */
+.contact-list{display:flex;flex-direction:column;gap:8px}
+.contact-list a{
+  border:1.5px solid;border-color:#fff var(--ink) var(--ink) #fff;background:#fff;
+  padding:8px 14px;display:flex;justify-content:space-between;font-size:15px;
+}
+.contact-list a:hover{background:#e8f0fe}
+
+/* ========== 任务栏 ========== */
+#taskbar{
+  position:fixed;bottom:0;left:0;right:0;height:38px;background:var(--face);z-index:900;
+  display:flex;align-items:center;gap:6px;padding:0 6px;
+  border-top:1.5px solid;border-color:#fff var(--ink) var(--ink) #fff;
+}
+#startbtn{
+  border:1.5px solid;border-color:#fff var(--ink) var(--ink) #fff;background:var(--face);
+  font-family:inherit;font-size:16.5px;font-weight:bold;padding:4px 14px;cursor:pointer;
+  display:flex;align-items:center;gap:7px;
+}
+#startbtn.active{border-color:var(--ink) #fff #fff var(--ink)}
+#startbtn i{width:15px;height:15px;background:var(--navy);display:inline-block}
+#startbtn i::after{content:"";display:block;width:5px;height:5px;background:var(--yellow,#ffd94d);transform:translate(5px,5px)}
+.tk{display:none}
+.tk.show{display:flex}
+.taskbtn{
+  border:1.5px solid;border-color:#fff var(--ink) var(--ink) #fff;background:var(--face);
+  font-family:inherit;font-size:14.5px;padding:4px 14px;cursor:pointer;max-width:150px;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+}
+.taskbtn.active{border-color:var(--ink) #fff #fff var(--ink);background:repeating-conic-gradient(var(--face) 0 25%,#c7c3bb 0 50%) 0 0/4px 4px;font-weight:bold}
+.tray{
+  margin-left:auto;border:1.5px solid;border-color:var(--face-d) #fff #fff var(--face-d);
+  padding:4px 14px;font-size:16px;display:flex;gap:12px;align-items:center;
+}
+/* 开始菜单 */
+#startmenu{
+  position:fixed;left:6px;bottom:42px;z-index:950;width:230px;background:var(--face);display:none;
+  border:2px solid;border-color:#fff var(--ink) var(--ink) #fff;box-shadow:3px 3px 0 rgba(0,0,0,.45);
+}
+#startmenu.open{display:block}
+#startmenu .banner{background:linear-gradient(180deg,var(--navy),#1084d0);color:#fff;padding:8px 12px;font-weight:bold;font-size:16px}
+#startmenu .sitem{padding:9px 14px;font-size:15.5px;cursor:pointer;display:flex;gap:10px;align-items:center}
+#startmenu .sitem:hover{background:var(--navy);color:#fff}
+#startmenu .sep{height:1px;background:var(--face-d);margin:4px 0}
+#startmenu .dim{color:#888}
+
+.corner{position:fixed;right:14px;bottom:46px;z-index:90;font-size:14px;letter-spacing:.08em;color:rgba(255,255,255,.8)}
+
+/* ========== 移动端降级 ========== */
+@media(max-width:760px){
+  #icons,#startmenu{display:none !important}
+  #taskbar{display:none}
+  body{overflow:auto}
+  .win{position:static;width:auto;margin:14px;box-shadow:4px 4px 0 rgba(0,0,0,.4)}
+  .win.open{display:block;margin-bottom:14px}
+  .win{display:block !important}
+  .win .tbar{cursor:default}
+  .win .tbtn{visibility:hidden}
+  #menubar .mi{display:none}
+  .works-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+
+<div class="desk-bg"></div>
+<div class="crt"></div>
+
+<!-- ========== 开机画面 ========== -->
+<div id="boot">
+  <div class="t">航OS <span style="color:#9be89b">v1.0</span></div>
+  <div class="s">正在启动个人聚合系统 …</div>
+</div>
+
+<!-- ========== 菜单栏 ========== -->
+<div id="menubar">
+  <span class="m-logo"><i></i>航OS</span>
+  <span class="mi">文件</span><span class="mi">编辑</span><span class="mi">显示</span><span class="mi">特殊</span><span class="mi">帮助</span>
+  <span class="right"><span>🔊</span><span id="clock">--:--</span></span>
+</div>
+
+<!-- ========== 桌面图标 ========== -->
+<div id="icons">
+  <div class="dicon folder" data-win="win-works" tabindex="0"><div class="art"></div><span class="lab">我的作品</span></div>
+  <div class="dicon folder" data-win="win-templates" tabindex="0"><div class="art"></div><span class="lab">模板库</span></div>
+  <div class="dicon" data-win="win-films" tabindex="0"><div class="art"><div class="film"></div></div><span class="lab">视频胶片</span></div>
+  <div class="dicon" data-win="win-notes" tabindex="0"><div class="art"><div class="fold"></div></div><span class="lab">手记.txt</span></div>
+  <div class="dicon" data-win="win-about" tabindex="0"><div class="art"><div class="pp"></div></div><span class="lab">关于我</span></div>
+  <div class="dicon" data-win="win-contact" tabindex="0"><div class="art"></div><span class="lab">联系方式</span></div>
+</div>
+
+<!-- ========== 窗口：我的作品 ========== -->
+<div class="win" id="win-works" style="top:52px;left:150px">
+  <div class="tbar"><span class="ttl">🖼 我的作品 — C:\hang\works</span><span class="tbtn" data-close="_">_</span><span class="tbtn" data-close="_">□</span><span class="tbtn" data-close="win-works">✕</span></div>
+  <div class="body">
+    <div class="works-grid">
+      <figure><img src="https://picsum.photos/seed/os-w1/320/240" alt="" /><figcaption>黄昏天台的人像</figcaption></figure>
+      <figure><img src="https://picsum.photos/seed/os-w2/320/240" alt="" /><figcaption>赛博城市夜景</figcaption></figure>
+      <figure><img src="https://picsum.photos/seed/os-w3/320/240" alt="" /><figcaption>水彩风格的猫</figcaption></figure>
+      <figure><img src="https://picsum.photos/seed/os-w4/320/240" alt="" /><figcaption>极简产品渲染</figcaption></figure>
+      <figure><img src="https://picsum.photos/seed/os-w5/320/240" alt="" /><figcaption>森林晨雾</figcaption></figure>
+      <figure><img src="https://picsum.photos/seed/os-w6/320/240" alt="" /><figcaption>复古海报字体实验</figcaption></figure>
+    </div>
+  </div>
+  <div class="statusbar"><span>6 个对象</span><span>双击放大查看</span></div>
+</div>
+
+<!-- ========== 窗口：模板库 ========== -->
+<div class="win" id="win-templates" style="top:96px;left:330px">
+  <div class="tbar"><span class="ttl">📁 模板库 — C:\hang\office</span><span class="tbtn" data-close="_">_</span><span class="tbtn" data-close="_">□</span><span class="tbtn" data-close="win-templates">✕</span></div>
+  <div class="body">
+    <div class="toolbar">
+      <button class="tb">← 后退</button><button class="tb">↑ 上级</button><button class="tb">🔍 搜索</button>
+    </div>
+    <table class="ftable">
+      <thead><tr><th>名称</th><th>类型</th><th>规格</th><th>下载</th></tr></thead>
+      <tbody>
+        <tr><td><span class="fico f-p">P</span>年度总结汇报_蓝紫渐变.pptx</td><td>PPT</td><td>32页</td><td>1.2w</td></tr>
+        <tr><td><span class="fico f-p">P</span>毕业答辩_极简白.pptx</td><td>PPT</td><td>40页</td><td>0.5w</td></tr>
+        <tr><td><span class="fico f-w">W</span>一页纸简历_无衬线.docx</td><td>Word</td><td>A4</td><td>0.6w</td></tr>
+        <tr><td><span class="fico f-w">W</span>红头文件_公文体.docx</td><td>Word</td><td>A4</td><td>0.4w</td></tr>
+        <tr><td><span class="fico f-x">X</span>项目排期_自动甘特图.xlsx</td><td>Excel</td><td>带公式</td><td>0.8w</td></tr>
+        <tr><td><span class="fico f-x">X</span>财务月报_动态看板.xlsx</td><td>Excel</td><td>带公式</td><td>0.7w</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="statusbar"><span>46 个文件 · 每月上新</span><span>双击下载</span></div>
+</div>
+
+<!-- ========== 窗口：视频胶片 ========== -->
+<div class="win" id="win-films" style="top:70px;left:210px">
+  <div class="tbar"><span class="ttl">🎬 视频胶片 — C:\hang\films</span><span class="tbtn" data-close="_">_</span><span class="tbtn" data-close="_">□</span><span class="tbtn" data-close="win-films">✕</span></div>
+  <div class="body">
+    <div class="works-grid" style="grid-template-columns:1fr 1fr">
+      <figure><img src="https://picsum.photos/seed/os-f1/360/203" alt="" /><figcaption>▶ 城市二十四小时 · 02:14</figcaption></figure>
+      <figure><img src="https://picsum.photos/seed/os-f2/360/203" alt="" /><figcaption>▶ AI 短片《回声》 · 03:18</figcaption></figure>
+    </div>
+  </div>
+  <div class="statusbar"><span>4 部影片</span><span>Codec: HANG-VHS</span></div>
+</div>
+
+<!-- ========== 窗口：手记.txt ========== -->
+<div class="win" id="win-notes" style="top:60px;left:260px">
+  <div class="tbar"><span class="ttl">📝 手记.txt — 记事本</span><span class="tbtn" data-close="_">_</span><span class="tbtn" data-close="_">□</span><span class="tbtn" data-close="win-notes">✕</span></div>
+  <div class="body">
+    <div class="notepad">
+      <h4>[ 博客筹备中 — 已写好三篇 ]</h4>
+      <p>2026.09.02　为什么我把主站做成一个操作系统 —— 关于聚合、展示与引流。</p>
+      <p>2026.08.21　AI 视频工作流复盘：从提示词到成片。</p>
+      <p>2026.07.30　给三件套模板做一套配色系统。</p>
+      <p>—————————————</p>
+      <p>订阅方式：把邮箱写进 C:\hang\newsletter，每月一封，只报上新。</p>
+    </div>
+  </div>
+  <div class="statusbar"><span>第 1 行，第 1 列</span><span>UTF-8</span></div>
+</div>
+
+<!-- ========== 窗口：关于我 ========== -->
+<div class="win" id="win-about" style="top:80px;left:180px">
+  <div class="tbar"><span class="ttl">📄 关于我 — readme</span><span class="tbtn" data-close="_">_</span><span class="tbtn" data-close="_">□</span><span class="tbtn" data-close="win-about">✕</span></div>
+  <div class="body">
+    <div class="about">
+      <img class="ava" src="https://picsum.photos/seed/os-ava/160/160" alt="" />
+      <div>
+        <p><b>航 Hang</b> — 视觉创作者 / 模板作者</p>
+        <p>坐标杭州，做 AI 图像与视频，也排 PPT、Word、Excel 模板。</p>
+        <p>这台机器里装了我做的一切：<br />· 我的作品：图像 128 张<br />· 视频胶片：短片 4 部<br />· 模板库：三件套 46 套<br />· 手记：博客正在筹备</p>
+      </div>
+    </div>
+  </div>
+  <div class="statusbar"><span>版本 v1.0.0</span><span>© 2026 youc.online</span></div>
+</div>
+
+<!-- ========== 窗口：联系方式 ========== -->
+<div class="win" id="win-contact" style="top:110px;left:240px;width:min(420px,92vw)">
+  <div class="tbar"><span class="ttl">✉ 联系方式</span><span class="tbtn" data-close="_">_</span><span class="tbtn" data-close="_">□</span><span class="tbtn" data-close="win-contact">✕</span></div>
+  <div class="body">
+    <div class="contact-list">
+      <a href="mailto:hi@youc.online"><span>📧 商务 / 定制</span><span>hi@youc.online</span></a>
+      <a href="#"><span>📺 B 站</span><span>1.2w 粉</span></a>
+      <a href="#"><span>📕 小红书</span><span>8k 赞藏</span></a>
+      <a href="#"><span>🎵 抖音</span><span>3w 粉</span></a>
+      <a href="#"><span>🐙 GitHub</span><span>关注下</span></a>
+    </div>
+  </div>
+  <div class="statusbar"><span>一般 48 小时内回复</span><span>在线</span></div>
+</div>
+
+<!-- ========== 开始菜单 ========== -->
+<div id="startmenu">
+  <div class="banner">航OS v1.0 — 每个窗口都是一扇门</div>
+  <div class="sitem" data-win="win-works">🖼 我的作品</div>
+  <div class="sitem" data-win="win-templates">📁 模板库</div>
+  <div class="sitem" data-win="win-films">🎬 视频胶片</div>
+  <div class="sitem" data-win="win-notes">📝 手记.txt</div>
+  <div class="sep"></div>
+  <div class="sitem" data-win="win-about">📄 关于我</div>
+  <div class="sitem" data-win="win-contact">✉ 联系方式</div>
+  <div class="sep"></div>
+  <div class="sitem dim">⏻ 关机（摊位不打烊）</div>
+</div>
+
+<!-- ========== 任务栏 ========== -->
+<div id="taskbar">
+  <button id="startbtn"><i></i>开始</button>
+  <span class="tk" data-task="win-works"><button class="taskbtn">🖼 我的作品</button></span>
+  <span class="tk" data-task="win-templates"><button class="taskbtn">📁 模板库</button></span>
+  <span class="tk" data-task="win-films"><button class="taskbtn">🎬 视频胶片</button></span>
+  <span class="tk" data-task="win-notes"><button class="taskbtn">📝 手记.txt</button></span>
+  <span class="tk" data-task="win-about"><button class="taskbtn">📄 关于我</button></span>
+  <span class="tk" data-task="win-contact"><button class="taskbtn">✉ 联系方式</button></span>
+  <span class="tray"><span>🔔</span><span id="clock2">--:--</span></span>
+</div>
+
+<span class="corner">DRAFT G — RETRO OS · 双击图标打开窗口，标题栏可拖动</span>
+
+<script>
+(function(){
+  var z = 10;
+  function $(s,c){return (c||document).querySelector(s)}
+  function $$(s,c){return Array.prototype.slice.call((c||document).querySelectorAll(s))}
+
+  /* 时钟 */
+  function tick(){
+    var d = new Date();
+    var s = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+    $('#clock').textContent = s; $('#clock2').textContent = s;
+  }
+  tick(); setInterval(tick, 10000);
+
+  function markActive(id){
+    $$('.win').forEach(function(w){ w.classList.toggle('inactive', w.id !== id); });
+    $$('.taskbtn').forEach(function(b){ b.classList.toggle('active', b.closest('.tk').getAttribute('data-task') === id); });
+  }
+
+  /* 打开窗口 */
+  function openWin(id){
+    var w = document.getElementById(id); if(!w) return;
+    w.classList.add('open'); w.style.zIndex = ++z; markActive(id);
+    var tk = document.querySelector('.tk[data-task="'+id+'"]'); if(tk) tk.classList.add('show');
+  }
+  function closeWin(id){
+    var w = document.getElementById(id); if(!w) return;
+    w.classList.remove('open');
+    var tk = document.querySelector('.tk[data-task="'+id+'"]'); if(tk) tk.classList.remove('show');
+  }
+
+  /* 图标 / 开始菜单 → 双击或单击打开 */
+  $$('[data-win]').forEach(function(el){
+    var opened = false;
+    el.addEventListener('dblclick', function(){ openWin(el.getAttribute('data-win')); opened = true; });
+    el.addEventListener('click', function(){
+      if(el.classList.contains('dicon')){
+        $$('.dicon').forEach(function(d){ d.classList.remove('sel'); });
+        el.classList.add('sel');
+        openWin(el.getAttribute('data-win'));
+      } else {
+        closeMenu(); openWin(el.getAttribute('data-win'));
+      }
+    });
+  });
+
+  /* 关闭按钮 */
+  $$('.tbtn[data-close]').forEach(function(b){
+    var id = b.getAttribute('data-close');
+    if(id && id !== '_') b.addEventListener('click', function(){ closeWin(id); });
+  });
+
+  /* 任务栏按钮：切换显示 */
+  $$('.taskbtn').forEach(function(b){
+    b.addEventListener('click', function(){
+      var id = b.closest('.tk').getAttribute('data-task');
+      var w = document.getElementById(id);
+      if(w.classList.contains('open') && !w.classList.contains('inactive')){ closeWin(id); }
+      else { openWin(id); }
+    });
+  });
+
+  /* 开始菜单 */
+  var menu = $('#startmenu'), sbtn = $('#startbtn');
+  function closeMenu(){ menu.classList.remove('open'); sbtn.classList.remove('active'); }
+  sbtn.addEventListener('click', function(e){
+    e.stopPropagation();
+    menu.classList.toggle('open'); sbtn.classList.toggle('active');
+  });
+  document.addEventListener('click', function(e){
+    if(!menu.contains(e.target) && e.target !== sbtn) closeMenu();
+  });
+
+  /* 拖动窗口 */
+  $$('.win').forEach(function(w){
+    var bar = $('.tbar', w);
+    bar.addEventListener('pointerdown', function(e){
+      if(e.target.classList.contains('tbtn')) return;
+      w.style.zIndex = ++z; markActive(w.id);
+      var rect = w.getBoundingClientRect();
+      var ox = e.clientX - rect.left, oy = e.clientY - rect.top;
+      function move(ev){
+        var x = Math.min(Math.max(ev.clientX - ox, -rect.width + 80), innerWidth - 80);
+        var y = Math.min(Math.max(ev.clientY - oy, 32), innerHeight - 80);
+        w.style.left = x + 'px'; w.style.top = y + 'px';
+      }
+      function up(){ removeEventListener('pointermove', move); removeEventListener('pointerup', up); }
+      addEventListener('pointermove', move); addEventListener('pointerup', up);
+    });
+    w.addEventListener('pointerdown', function(){ w.style.zIndex = ++z; markActive(w.id); });
+  });
+
+  /* 开机默认打开两个窗口 */
+  openWin('win-works'); openWin('win-templates');
+})();
+</script>
+</body>
+</html>

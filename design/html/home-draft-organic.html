@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计稿 H · 工作室花园 — 有机自然风个人主站</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Noto+Serif+SC:wght@500;700;900&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --cream:#f6f1e6; --ink:#2f2c26; --soft:#7a7466;
+  --moss:#52614b; --deep:#3a4534; --sage:#aab598; --terra:#c96f4a; --sand:#e7dcc8;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--cream);color:var(--ink);
+  font-family:'Noto Sans SC',sans-serif;line-height:1.8;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+::selection{background:var(--terra);color:#fff}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+.serif{font-family:'Cormorant Garamond','Noto Serif SC',serif}
+.caps{font-size:11.5px;letter-spacing:.32em;text-transform:uppercase;color:var(--soft)}
+.wrap{max-width:1140px;margin:0 auto;padding:0 clamp(20px,4vw,44px)}
+
+/* 环境光斑 */
+.blob{position:fixed;border-radius:50%;filter:blur(70px);pointer-events:none;z-index:0;opacity:.55;animation:drift 16s ease-in-out infinite alternate}
+.blob.b1{width:480px;height:480px;background:var(--sage);top:-160px;right:-140px}
+.blob.b2{width:380px;height:380px;background:#e8c9a8;bottom:-140px;left:-120px;animation-delay:-6s}
+@keyframes drift{to{transform:translate(-30px,26px) scale(1.06)}}
+/* 颗粒 */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+/* 载入 */
+.rv{opacity:0;transform:translateY(20px);animation:grow .9s cubic-bezier(.2,.65,.25,1) both}
+@keyframes grow{to{opacity:1;transform:none}}
+.d1{animation-delay:.08s}.d2{animation-delay:.2s}.d3{animation-delay:.34s}.d4{animation-delay:.48s}.d5{animation-delay:.6s}.d6{animation-delay:.72s}
+
+/* ========== 导航 ========== */
+header{position:relative;z-index:5;padding:26px 0}
+.nav{display:flex;align-items:center;justify-content:space-between}
+.nav .brand{font-size:21px}
+.nav .brand i{font-style:italic;color:var(--terra)}
+.nav nav{display:flex;gap:28px}
+.nav nav a{position:relative;padding-bottom:4px}
+.nav nav a::after{content:"";position:absolute;left:0;bottom:0;height:1.5px;width:100%;background:var(--terra);transform:scaleX(0);transform-origin:right;transition:transform .35s}
+.nav nav a:hover::after{transform:scaleX(1);transform-origin:left}
+@media(max-width:720px){.nav nav{display:none}}
+
+/* ========== Hero ========== */
+.hero{position:relative;z-index:2;display:grid;grid-template-columns:1.1fr .9fr;gap:clamp(30px,5vw,70px);align-items:center;padding:clamp(30px,6vh,64px) 0 clamp(50px,9vh,90px)}
+.hero .caps{margin-bottom:20px;display:block}
+.hero h1{font-size:clamp(2.5rem,5.4vw,4.3rem);line-height:1.24;margin:0 0 22px;font-weight:500}
+.hero h1 .it{font-style:italic;color:var(--terra)}
+.hero h1 .leaf{position:relative;white-space:nowrap}
+.hero h1 .leaf svg{position:absolute;left:0;bottom:-8px;width:100%;height:14px}
+.hero p{color:var(--soft);max-width:30em;margin:0 0 30px}
+.hero .cta{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.btn-terra{display:inline-flex;align-items:center;gap:9px;background:var(--terra);color:#fff;padding:13px 28px;border-radius:999px;font-size:14.5px;transition:all .3s}
+.btn-terra:hover{background:var(--deep);transform:translateY(-2px)}
+.link-moss{border-bottom:1.5px solid var(--sage);padding-bottom:3px;font-size:14px;transition:color .3s}
+.link-moss:hover{color:var(--terra);border-color:var(--terra)}
+/* 拱门图 */
+.arch-wrap{position:relative;justify-self:center}
+.arch{width:min(360px,74vw);aspect-ratio:3/4;object-fit:cover;border-radius:999px 999px 18px 18px;box-shadow:0 30px 60px rgba(58,69,52,.22)}
+.arch-sm{position:absolute;right:-44px;bottom:-34px;width:44%;aspect-ratio:1;object-fit:cover;border-radius:999px 999px 12px 12px;border:7px solid var(--cream);box-shadow:0 18px 40px rgba(58,69,52,.2)}
+/* 旋转徽章 */
+.orbit{position:absolute;top:-42px;left:-42px;width:112px;height:112px;animation:spin 14s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:860px){.hero{grid-template-columns:1fr}.arch-wrap{margin-top:30px}.orbit{left:auto;right:-16px}}
+
+/* ========== 宣言 ========== */
+.manifesto{position:relative;z-index:2;background:var(--deep);color:#f2efe4;padding:clamp(48px,8vh,76px) 0;text-align:center}
+.manifesto .serif{font-size:clamp(1.5rem,3.4vw,2.3rem);line-height:1.6;max-width:26em;margin:0 auto;font-style:italic;font-weight:500}
+.manifesto .caps{color:rgba(242,239,228,.55);display:block;margin-top:18px}
+
+/* ========== 分区头 ========== */
+.sec{position:relative;z-index:2;padding-top:clamp(64px,10vh,104px)}
+.sec-head{display:flex;align-items:baseline;gap:18px;margin-bottom:36px;flex-wrap:wrap}
+.sec-head h2{font-size:clamp(1.7rem,3.4vw,2.4rem);margin:0;font-weight:700}
+.sec-head .caps{margin-left:auto}
+
+/* ========== 苗圃（图片） ========== */
+.nursery{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(18px,3vw,30px)}
+.sprout{margin:0;cursor:pointer}
+.sprout .frame{border-radius:999px 999px 14px 14px;overflow:hidden;background:var(--sand)}
+.sprout:nth-child(even) .frame{border-radius:14px 14px 999px 999px}
+.sprout img{aspect-ratio:3/3.6;object-fit:cover;width:100%;filter:saturate(.9);transition:filter .5s,transform .5s}
+.sprout:hover img{filter:saturate(1.15);transform:scale(1.04)}
+.sprout figcaption{display:flex;justify-content:space-between;margin-top:10px;font-size:13.5px;color:var(--soft)}
+.sprout figcaption b{color:var(--ink);font-weight:500}
+@media(max-width:760px){.nursery{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){.nursery{grid-template-columns:1fr}}
+
+/* ========== 温室（视频） ========== */
+.greenhouse{background:var(--moss);border-radius:26px;padding:clamp(24px,4vw,40px);display:grid;grid-template-columns:1.25fr .75fr;gap:26px}
+.gh-main{border-radius:18px 18px 999px 999px / 18px 18px 60px 60px;overflow:hidden;position:relative;aspect-ratio:16/9}
+.gh-main img{width:100%;height:100%;object-fit:cover}
+.gh-main .play{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:64px;height:64px;border-radius:50%;background:rgba(246,241,230,.9);color:var(--deep);
+  display:grid;place-items:center;font-size:20px;transition:all .3s;
+}
+.gh-main:hover .play{background:var(--terra);color:#fff;transform:translate(-50%,-50%) scale(1.08)}
+.gh-list{display:flex;flex-direction:column;gap:12px;justify-content:center}
+.gh-item{background:rgba(246,241,230,.1);border:1px solid rgba(246,241,230,.2);border-radius:14px;padding:14px 18px;color:#f2efe4;transition:all .3s;cursor:pointer}
+.gh-item:hover{background:rgba(246,241,230,.2);transform:translateX(6px)}
+.gh-item b{display:block;font-size:15px;font-weight:500}
+.gh-item span{font-size:12px;opacity:.65}
+@media(max-width:820px){.greenhouse{grid-template-columns:1fr}}
+
+/* ========== 种子库（模板） ========== */
+.seeds{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.packet{background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 14px 34px rgba(58,69,52,.14);transition:transform .35s,box-shadow .35s;display:flex;flex-direction:column}
+.packet:hover{transform:translateY(-6px);box-shadow:0 24px 48px rgba(58,69,52,.2)}
+.packet .p-head{padding:16px 20px;color:#fff;display:flex;justify-content:space-between;align-items:center}
+.packet .p-head .app{font-size:13px;letter-spacing:.2em}
+.packet .p-head .cnt{font-size:12px;background:rgba(255,255,255,.22);padding:3px 12px;border-radius:999px}
+.packet .p-body{padding:18px 20px 6px}
+.packet .p-body h3{margin:0;font-size:19px;font-weight:700;line-height:1.5}
+.packet .p-body p{margin:6px 0 0;font-size:13px;color:var(--soft)}
+.packet .perf{height:2px;margin:16px 20px 0;background-image:radial-gradient(circle,var(--sand) 2.5px,transparent 3px);background-size:12px 2px}
+.packet .p-foot{display:flex;justify-content:space-between;align-items:center;padding:12px 20px 18px;font-size:13px;color:var(--soft)}
+.packet .pick{color:var(--terra);font-weight:700;transition:all .25s}
+.packet:hover .pick{transform:translateX(4px)}
+.pk-p{--pc:#b5502e}.pk-w{--pc:#4a6da7}.pk-x{--pc:#3f7d54}
+.packet .p-head{background:var(--pc)}
+@media(max-width:760px){.seeds{grid-template-columns:1fr}}
+
+/* ========== 生长记录（时间线） ========== */
+.timeline{position:relative;max-width:640px;margin:0 auto;padding-left:34px}
+.timeline::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:linear-gradient(var(--sage),var(--terra))}
+.tl-item{position:relative;padding:0 0 34px}
+.tl-item::before{content:"";position:absolute;left:-32px;top:9px;width:14px;height:14px;border-radius:50%;background:var(--cream);border:3px solid var(--moss)}
+.tl-item:nth-last-child(2)::before{border-color:var(--terra)}
+.tl-item time{font-size:12px;letter-spacing:.2em;color:var(--terra)}
+.tl-item h3{margin:4px 0 6px;font-size:18.5px}
+.tl-item p{margin:0;font-size:14px;color:var(--soft)}
+
+/* ========== 浇水提醒 ========== */
+.water{margin-top:clamp(64px,10vh,100px);background:var(--sand);border-radius:24px;padding:clamp(28px,5vw,48px);display:grid;grid-template-columns:1.1fr .9fr;gap:26px;align-items:center;position:relative;z-index:2}
+.water h3{margin:0 0 8px;font-size:clamp(1.4rem,2.8vw,1.9rem)}
+.water p{margin:0;color:var(--soft);font-size:14px}
+.water form{display:flex;background:#fff;border-radius:999px;padding:6px;box-shadow:0 10px 26px rgba(58,69,52,.12)}
+.water input{flex:1;border:0;background:none;padding:10px 18px;font:inherit;font-size:14px;outline:none}
+.water button{border:0;background:var(--terra);color:#fff;border-radius:999px;padding:12px 24px;font:inherit;font-size:14px;cursor:pointer;transition:background .3s}
+.water button:hover{background:var(--deep)}
+@media(max-width:720px){.water{grid-template-columns:1fr}}
+
+/* ========== 页脚 ========== */
+footer{position:relative;z-index:2;margin-top:clamp(56px,9vh,90px);padding:0 0 40px;text-align:center}
+footer .wave{display:block;margin:0 auto 18px;width:120px}
+footer .soc{display:flex;justify-content:center;gap:26px;font-size:14px;margin-bottom:14px}
+footer .soc a{color:var(--soft);transition:color .3s}
+footer .soc a:hover{color:var(--terra)}
+footer .fin{font-size:12.5px;color:var(--soft)}
+
+.corner{position:fixed;left:14px;bottom:14px;z-index:90;font-size:10px;letter-spacing:.14em;color:var(--soft);border:1px solid rgba(122,116,102,.3);padding:4px 10px;background:rgba(246,241,230,.9);border-radius:999px}
+</style>
+</head>
+<body>
+
+<div class="blob b1"></div><div class="blob b2"></div>
+
+<!-- ========== 导航 ========== -->
+<header class="wrap">
+  <div class="nav rv d1">
+    <a class="brand serif" href="#">航<i>·</i>工作室花园</a>
+    <nav>
+      <a href="#nursery">苗圃</a><a href="#greenhouse">温室</a><a href="#seeds">种子库</a>
+      <a href="#growth">生长记录</a><a href="#water">浇水提醒</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ========== Hero ========== -->
+<div class="wrap hero">
+  <div class="rv d2">
+    <span class="caps">A GARDEN OF WORKS — 图片 / 视频 / 模板 / 手记</span>
+    <h1 class="serif">在花园里，<br /><span class="it">慢慢长出</span><br />
+      <span class="leaf">好作品<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M2 8 Q 50 2 100 7 T 198 5" fill="none" stroke="#c96f4a" stroke-width="2.5" stroke-linecap="round"/></svg></span>。
+    </h1>
+    <p>我是航。这里种着我的图像、短片、Office 模板和正在发芽的博客——不追热点，只做经得起翻土的东西。随便逛，摘走喜欢的。</p>
+    <div class="cta">
+      <a class="btn-terra" href="#nursery">进园看看</a>
+      <a class="link-moss" href="#seeds">去种子库领模板 →</a>
+    </div>
+  </div>
+  <div class="arch-wrap rv d3">
+    <svg class="orbit" viewBox="0 0 100 100">
+      <defs><path id="cir" d="M50,50 m-38,0 a38,38 0 1,1 76,0 a38,38 0 1,1 -76,0"/></defs>
+      <circle cx="50" cy="50" r="49" fill="#3a4534"/>
+      <text fill="#f6f1e6" font-size="10.5" letter-spacing="2.5"><textPath href="#cir">手种 · 心栽 · 慢慢生长 · 慢慢生长 ·</textPath></text>
+      <circle cx="50" cy="50" r="4" fill="#c96f4a"/>
+    </svg>
+    <img class="arch" src="https://picsum.photos/seed/garden-hero/720/960" alt="" />
+    <img class="arch-sm" src="https://picsum.photos/seed/garden-sm/400/400" alt="" />
+  </div>
+</div>
+
+<!-- ========== 宣言 ========== -->
+<div class="manifesto rv d3">
+  <div class="wrap">
+    <p class="serif">「作品像植物：催不快，但每天都长一点。<br />我把它们种在同一座花园里，你来，就开花。」</p>
+    <span class="caps">Manifesto — 座右铭</span>
+  </div>
+</div>
+
+<!-- ========== 苗圃（图片） ========== -->
+<section class="sec wrap" id="nursery">
+  <div class="sec-head rv d4"><h2>苗圃 · 图片作品</h2><span class="caps">128 株 · 每周浇灌</span></div>
+  <div class="nursery rv d4">
+    <figure class="sprout"><div class="frame"><img src="https://picsum.photos/seed/grd1/600/720" alt="" /></div><figcaption><b>黄昏天台的人像</b><span>人像</span></figcaption></figure>
+    <figure class="sprout"><div class="frame"><img src="https://picsum.photos/seed/grd2/600/720" alt="" /></div><figcaption><b>赛博城市夜景</b><span>城市</span></figcaption></figure>
+    <figure class="sprout"><div class="frame"><img src="https://picsum.photos/seed/grd3/600/720" alt="" /></div><figcaption><b>水彩风格的猫</b><span>插画</span></figcaption></figure>
+    <figure class="sprout"><div class="frame"><img src="https://picsum.photos/seed/grd4/600/720" alt="" /></div><figcaption><b>极简产品渲染</b><span>商业</span></figcaption></figure>
+    <figure class="sprout"><div class="frame"><img src="https://picsum.photos/seed/grd5/600/720" alt="" /></div><figcaption><b>森林晨雾</b><span>风景</span></figcaption></figure>
+    <figure class="sprout"><div class="frame"><img src="https://picsum.photos/seed/grd6/600/720" alt="" /></div><figcaption><b>复古海报字体实验</b><span>字体</span></figcaption></figure>
+  </div>
+</section>
+
+<!-- ========== 温室（视频） ========== -->
+<section class="sec wrap" id="greenhouse-sec">
+  <div class="sec-head rv d5"><h2>温室 · 视频短片</h2><span class="caps">4 部 · 恒温放映</span></div>
+  <div class="greenhouse rv d5">
+    <div class="gh-main">
+      <img src="https://picsum.photos/seed/grd-film/1100/620" alt="" />
+      <span class="play">▶</span>
+    </div>
+    <div class="gh-list">
+      <div class="gh-item"><b>城市二十四小时</b><span>延时摄影 · 02:14 · 4K</span></div>
+      <div class="gh-item"><b>产品广告片</b><span>商业短片 · 00:30</span></div>
+      <div class="gh-item"><b>纸的重量</b><span>手作纪录 · 06:42</span></div>
+      <div class="gh-item"><b>AI 短片《回声》</b><span>实验影像 · 03:18</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 种子库（模板） ========== -->
+<section class="sec wrap" id="seeds">
+  <div class="sec-head rv d5"><h2>种子库 · 三件套模板</h2><span class="caps">46 包 · 每月播种</span></div>
+  <div class="seeds rv d6">
+    <div class="packet pk-p">
+      <div class="p-head"><span class="app">POWERPOINT</span><span class="cnt">18 包</span></div>
+      <div class="p-body">
+        <h3>蓝紫渐变 · 年度总结汇报</h3>
+        <p>32 页 · 16:9 · 含图表页与时间轴，答辩汇报两相宜。</p>
+      </div>
+      <div class="perf"></div>
+      <div class="p-foot"><span>已发芽 1.2w 次</span><span class="pick">取一包 →</span></div>
+    </div>
+    <div class="packet pk-w">
+      <div class="p-head"><span class="app">WORD</span><span class="cnt">12 包</span></div>
+      <div class="p-body">
+        <h3>无衬线 · 一页纸个人简历</h3>
+        <p>单页 A4 · 附求职信页，投递命中率最高的那颗种子。</p>
+      </div>
+      <div class="perf"></div>
+      <div class="p-foot"><span>已发芽 0.6w 次</span><span class="pick">取一包 →</span></div>
+    </div>
+    <div class="packet pk-x">
+      <div class="p-head"><span class="app">EXCEL</span><span class="cnt">16 包</span></div>
+      <div class="p-body">
+        <h3>自动甘特图 · 项目排期表</h3>
+        <p>带公式 · 自动填色，改两格整个表跟着长。</p>
+      </div>
+      <div class="perf"></div>
+      <div class="p-foot"><span>已发芽 0.8w 次</span><span class="pick">取一包 →</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 生长记录（时间线） ========== -->
+<section class="sec wrap" id="growth">
+  <div class="sec-head rv d6"><h2>生长记录</h2><span class="caps">TIMELINE</span></div>
+  <div class="timeline rv d6">
+    <div class="tl-item"><time>2024 · 春</time><h3>翻土 — 开始做图</h3><p>第一张 AI 图像出土，从此一发不可收拾。</p></div>
+    <div class="tl-item"><time>2025 · 夏</time><h3>播种 — 模板上架</h3><p>第一批 PPT / Word / Excel 模板放进种子库，累计发芽 3.2w 次。</p></div>
+    <div class="tl-item"><time>2026 · 秋</time><h3>建园 — 主站落成</h3><p>图片、视频、模板搬进同一座花园，就是你现在逛的这里。</p></div>
+    <div class="tl-item"><time>接下来</time><h3>抽芽 — 博客开张</h3><p>手记已经在写了，浇水提醒订阅起来，开张第一时间通知你。</p></div>
+  </div>
+
+  <!-- ========== 浇水提醒 ========== -->
+  <div class="water rv d6" id="water">
+    <div>
+      <h3>给花园装个水表</h3>
+      <p>上新和文章更新时发一封邮件，一月一封，绝不涝着。</p>
+    </div>
+    <form onsubmit="return false">
+      <input type="email" placeholder="you@example.com" required />
+      <button type="submit">订阅提醒</button>
+    </form>
+  </div>
+</section>
+
+<!-- ========== 页脚 ========== -->
+<footer>
+  <svg class="wave" viewBox="0 0 120 14"><path d="M2 8 Q 20 2 40 7 T 78 6 T 118 7" fill="none" stroke="#aab598" stroke-width="2" stroke-linecap="round"/></svg>
+  <div class="soc"><a href="#">B 站</a><a href="#">小红书</a><a href="#">抖音</a><a href="#">hi@youc.online</a></div>
+  <div class="fin">© 2026 航 · 工作室花园 · youc.online — 花园全年开放</div>
+</footer>
+
+<span class="corner">DRAFT H — ORGANIC 工作室花园</span>
+</body>
+</html>

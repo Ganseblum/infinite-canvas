@@ -7,6 +7,14 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+## 多产品后台与模型能力分区（本版本新增）
+
+- admin 侧边栏顶部出现产品切换器：当前「优刻画布」显示版本号；选「博客」「办公套件」应落到「未接入」占位页（说明接入条件），不渲染任何管理菜单，点「返回当前产品」回后台。
+- 模型页顶部能力筛选（全部/图片/视频/音频/文本）计数正确，切换过滤正常。
+- 编辑一个既有图片模型：尺寸/质量/背景/张数/特性分组出现且带原值；编辑视频模型：分辨率/比例/时长/特性分组正确；编辑老模型若有预置分组之外的约束键，应出现在「自定义约束」里且保存后不丢。
+- 新建一个视频模型（分辨率+比例+时长）能保存，价格矩阵按所选维度组合生成。
+- 受限角色（如只授 `users.read`）登录后台：产品切换器仍可见，但 `GET /admin/meta` 返回的模块清单只含用户模块（后端已按权限过滤，自动化测试覆盖）。
+
 ## 测试环境部署与首轮验收结果（2026-09-18）
 
 `sim-art.youc.online` / `sim-admin.youc.online` 已更新到本分支（`295f0ff`），升级前备份在服务器 `/opt/backups/infinite-canvas-test/20260918-141558`（库+媒体+env）。**以下各项已在真环境验收通过**：

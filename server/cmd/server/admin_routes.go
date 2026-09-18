@@ -10,9 +10,9 @@ import (
 	"github.com/infinite-canvas/server/internal/middleware"
 )
 
-// openAdminRoutes 是唯一允许不带权限点注册的管理路由：GET /admin/me 只要求有后台角色，
-// 前端需要它渲染菜单，因此不能要求某个具体权限点。
-var openAdminRoutes = map[string]bool{"GET /me": true}
+// openAdminRoutes 是唯一允许不带权限点注册的管理路由：GET /me 与 GET /meta 只要求有
+// 后台角色（/me 渲染菜单与改密闸门，/meta 是多产品后台的引导数据），不能要求某个具体权限点。
+var openAdminRoutes = map[string]bool{"GET /me": true, "GET /meta": true}
 
 // adminRouteSpec 记录一条已注册的管理路由及其权限点，供路由表测试断言。
 type adminRouteSpec struct {
@@ -68,6 +68,7 @@ func registerAdminRoutes(g *gin.RouterGroup, h *handler.AdminHandler) []adminRou
 	r := &adminRoutes{group: g}
 
 	r.GET("/me", "", h.Me)
+	r.GET("/meta", "", h.AdminMeta)
 	r.GET("/stats", authz.PermStatsRead, h.Stats)
 	r.GET("/stats/revenue", authz.PermStatsRevenue, h.RevenueStats)
 	r.GET("/analytics/usage", authz.PermStatsUsage, h.UsageAnalytics)

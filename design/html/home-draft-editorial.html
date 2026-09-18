@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计稿 A · 航志 — 编辑部排印风个人主站</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Noto+Serif+SC:wght@500;700;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --paper:#f6f1e7; --ink:#1c1812; --soft:rgba(28,24,18,.62);
+  --line:rgba(28,24,18,.16); --red:#bf3a1a;
+  --ppt:#c43e1c; --word:#2b579a; --excel:#217346;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:'Noto Sans SC',sans-serif;-webkit-font-smoothing:antialiased;
+  font-size:16px;line-height:1.7;
+}
+/* 纸张噪点 */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:80;opacity:.045;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+::selection{background:var(--red);color:#fff}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+.serif{font-family:'Fraunces','Noto Serif SC',serif}
+.mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:.04em}
+.wrap{max-width:1180px;margin:0 auto;padding:0 clamp(20px,4vw,48px)}
+
+/* 载入编排 */
+.reveal{opacity:0;transform:translateY(18px);animation:rise .9s cubic-bezier(.16,.68,.3,1) both}
+@keyframes rise{to{opacity:1;transform:none}}
+.d1{animation-delay:.05s}.d2{animation-delay:.15s}.d3{animation-delay:.28s}.d4{animation-delay:.4s}.d5{animation-delay:.52s}.d6{animation-delay:.64s}
+
+/* ========== 刊头 ========== */
+header{border-bottom:1px solid var(--line)}
+.mast{display:flex;align-items:center;justify-content:space-between;gap:24px;height:76px}
+.brand{display:flex;align-items:center;gap:14px}
+.seal-mini{
+  width:38px;height:38px;background:var(--red);color:#f6f1e7;border-radius:6px;
+  display:grid;place-items:center;font-weight:900;font-size:20px;transform:rotate(-4deg);
+  font-family:'Noto Serif SC',serif;
+}
+.brand b{font-size:22px;font-weight:900;display:block;line-height:1.1}
+.brand small{font-size:11px;color:var(--soft);display:block}
+.mast nav{display:flex;gap:30px;font-size:14.5px}
+.mast nav a{position:relative;padding:4px 0;color:var(--soft);transition:color .25s}
+.mast nav a:hover{color:var(--ink)}
+.mast nav a::after{content:"";position:absolute;left:0;bottom:0;height:1.5px;width:100%;background:var(--ink);transform:scaleX(0);transform-origin:right;transition:transform .3s}
+.mast nav a:hover::after{transform:scaleX(1);transform-origin:left}
+.mast .issue{font-size:12px;color:var(--soft)}
+@media(max-width:860px){.mast nav,.mast .issue{display:none}}
+
+/* ========== Hero ========== */
+.hero{display:grid;grid-template-columns:7fr 5fr;gap:clamp(32px,5vw,72px);padding:clamp(48px,7vh,90px) 0 clamp(56px,8vh,96px);align-items:center}
+.kicker{font-size:12px;color:var(--red);margin:0 0 22px}
+.hero h1{
+  font-family:'Noto Serif SC',serif;font-weight:900;
+  font-size:clamp(2.5rem,5.4vw,4.4rem);line-height:1.18;margin:0 0 26px;letter-spacing:.01em;
+}
+.hero h1 em{font-style:normal;color:var(--red);position:relative;white-space:nowrap}
+.hero h1 em::after{content:"";position:absolute;left:2px;right:2px;bottom:6px;height:.14em;background:rgba(191,58,26,.22);z-index:-1}
+.lede{color:var(--soft);max-width:34em;margin:0 0 34px}
+.cta{display:flex;flex-wrap:wrap;align-items:center;gap:16px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 26px;font-size:15px;border:1px solid var(--ink);transition:all .25s}
+.btn.solid{background:var(--ink);color:var(--paper)}
+.btn.solid:hover{background:var(--red);border-color:var(--red)}
+.btn.ghost:hover{background:var(--ink);color:var(--paper)}
+.linkline{font-size:14.5px;border-bottom:1px solid var(--line);padding-bottom:3px;transition:border-color .25s,color .25s}
+.linkline:hover{color:var(--red);border-color:var(--red)}
+.stats{display:flex;gap:clamp(24px,3.5vw,48px);margin:44px 0 0;padding:0;border-top:1px solid var(--line);padding-top:22px}
+.stats div{font-size:12.5px;color:var(--soft)}
+.stats b{display:block;font-family:'Fraunces','Noto Serif SC',serif;font-weight:700;font-size:30px;color:var(--ink);line-height:1.2}
+/* Hero 右侧拼贴 */
+.hero-visual{position:relative;padding:0 0 56px 52px}
+.hero-visual .main{margin:0}
+.hero-visual .main img{aspect-ratio:4/5;object-fit:cover;width:100%}
+.hero-visual figcaption{font-size:11px;color:var(--soft);margin-top:10px}
+.float-img{
+  position:absolute;left:0;bottom:0;width:52%;border:8px solid var(--paper);
+  box-shadow:0 24px 48px rgba(28,24,18,.22);transform:rotate(-3deg);
+}
+.stamp{
+  position:absolute;top:-20px;right:8px;width:76px;height:76px;background:var(--red);
+  color:#f6f1e7;display:grid;place-items:center;font-size:38px;font-weight:900;
+  transform:rotate(7deg);border-radius:8px;font-family:'Noto Serif SC',serif;
+  box-shadow:0 10px 24px rgba(191,58,26,.3);
+}
+.stamp::after{content:"";position:absolute;inset:5px;border:1.5px solid rgba(246,241,231,.65);border-radius:5px}
+@media(max-width:900px){.hero{grid-template-columns:1fr}.hero-visual{max-width:440px}}
+
+/* ========== 章节头 ========== */
+section.block{margin-top:clamp(64px,9vh,110px)}
+.sec-head{
+  display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;
+  border-top:2px solid var(--ink);padding-top:16px;margin-bottom:34px;
+}
+.sec-head .no{font-family:'Fraunces','Noto Serif SC',serif;font-style:italic;font-weight:300;font-size:44px;line-height:1;color:var(--red)}
+.sec-head h2{font-family:'Noto Serif SC',serif;font-weight:900;font-size:30px;margin:0}
+.sec-head .en{font-size:11.5px;color:var(--soft);letter-spacing:.14em}
+.sec-head .more{margin-left:auto;font-size:13px;border-bottom:1px solid var(--line);padding-bottom:2px;transition:all .25s}
+.sec-head .more:hover{color:var(--red);border-color:var(--red)}
+
+/* ========== 01 图像 · 版画墙 ========== */
+.plates{display:grid;grid-template-columns:repeat(12,1fr);gap:clamp(18px,2.5vw,30px)}
+.plate{margin:0;cursor:pointer}
+.plate .frame{overflow:hidden;background:#e8e1d2}
+.plate img{width:100%;height:100%;object-fit:cover;filter:grayscale(1) contrast(1.04);transition:filter .55s,transform .55s}
+.plate:hover img{filter:grayscale(0);transform:scale(1.025)}
+.plate figcaption{display:flex;align-items:baseline;gap:10px;margin-top:10px;font-size:13.5px}
+.plate .fig{font-size:11px;color:var(--red)}
+.plate .tag{margin-left:auto;font-size:11px;color:var(--soft)}
+.plate.a{grid-column:span 7}.plate.a .frame{aspect-ratio:4/3}
+.plate.b{grid-column:span 5}.plate.b .frame{aspect-ratio:4/3}
+.plate.c{grid-column:span 5}.plate.c .frame{aspect-ratio:4/3}
+.plate.d{grid-column:span 7}.plate.d .frame{aspect-ratio:4/3}
+@media(max-width:720px){.plate.a,.plate.b,.plate.c,.plate.d{grid-column:span 12}}
+
+/* ========== 02 放映室（暗色内嵌） ========== */
+.screen{background:var(--ink);color:var(--paper);padding:clamp(40px,6vh,64px) 0;margin-top:clamp(64px,9vh,110px)}
+.screen .sec-head{border-top-color:rgba(246,241,231,.9)}
+.screen .sec-head .more{color:rgba(246,241,231,.7);border-color:rgba(246,241,231,.25)}
+.screen .sec-head .more:hover{color:#fff;border-color:#fff}
+.now{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.14em;color:rgba(246,241,231,.7)}
+.now i{width:8px;height:8px;border-radius:50%;background:var(--red);animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.reel{
+  display:grid;grid-auto-flow:column;grid-auto-columns:min(72vw,430px);gap:22px;
+  overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:12px;scrollbar-width:thin;scrollbar-color:rgba(246,241,231,.3) transparent;
+}
+.reel::-webkit-scrollbar{height:6px}
+.reel::-webkit-scrollbar-thumb{background:rgba(246,241,231,.25);border-radius:3px}
+.film{scroll-snap-align:start;position:relative;aspect-ratio:16/9;overflow:hidden;flex:none}
+.film img{width:100%;height:100%;object-fit:cover;transition:transform .6s}
+.film:hover img{transform:scale(1.05)}
+.film .dur{position:absolute;top:12px;right:12px;font-size:11px;background:rgba(0,0,0,.55);padding:3px 9px;border:1px solid rgba(246,241,231,.25)}
+.film .meta{position:absolute;inset-inline:0;bottom:0;padding:40px 16px 14px;background:linear-gradient(transparent,rgba(0,0,0,.78))}
+.film .meta b{font-size:16px;font-weight:700;display:block}
+.film .meta span{font-size:11.5px;color:rgba(246,241,231,.65)}
+.screen .hint{margin-top:14px;font-size:11.5px;color:rgba(246,241,231,.45)}
+
+/* ========== 03 资料室（Office 模板） ========== */
+.filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.chip{border:1px solid var(--line);padding:6px 16px;border-radius:999px;font-size:13px;color:var(--soft);cursor:pointer;transition:all .25s;background:transparent}
+.chip:hover{border-color:var(--ink);color:var(--ink)}
+.chip.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.hotline{font-size:12px;color:var(--soft);margin:0 0 22px}
+.hotline b{color:var(--red);font-weight:500;margin-right:6px}
+.rows{border-bottom:1px solid var(--line)}
+.row{
+  display:grid;grid-template-columns:76px 96px 1fr 92px 100px 34px;gap:14px;align-items:center;
+  padding:19px 6px;border-top:1px solid var(--line);transition:background .25s;cursor:pointer;
+}
+.row:hover{background:rgba(28,24,18,.035)}
+.row .type{font-size:11px;letter-spacing:.1em;border-left:3px solid;padding-left:9px;line-height:1.4}
+.row .type i{display:block;font-style:normal;opacity:.75}
+.row.ppt .type{color:var(--ppt);border-color:var(--ppt)}
+.row.word .type{color:var(--word);border-color:var(--word)}
+.row.excel .type{color:var(--excel);border-color:var(--excel)}
+.row .no2{font-size:11px;color:var(--soft)}
+.row .title{font-family:'Noto Serif SC',serif;font-weight:700;font-size:16.5px}
+.row:hover .title{color:var(--red)}
+.row .scene{font-size:11.5px;color:var(--soft);text-align:center}
+.row .dl{font-size:12.5px;text-align:right;color:var(--soft)}
+.row .dl b{color:var(--ink)}
+.row .arrow{font-size:17px;color:var(--soft);transition:transform .3s,color .3s;text-align:center}
+.row:hover .arrow{transform:translateX(5px);color:var(--red)}
+@media(max-width:760px){
+  .row{grid-template-columns:64px 1fr 74px 26px}
+  .row .no2,.row .scene{display:none}
+}
+
+/* ========== 04 手记（Blog） ========== */
+.blog-flag{
+  display:inline-block;border:1.5px dashed var(--red);color:var(--red);
+  font-size:12px;padding:3px 12px;border-radius:4px;transform:rotate(-2deg);margin-left:8px;vertical-align:middle;
+}
+.notes{display:grid;grid-template-columns:1fr 1fr;gap:0 clamp(28px,4vw,56px)}
+.note{display:grid;grid-template-columns:110px 1fr;gap:20px;padding:26px 0;border-top:1px solid var(--line);cursor:pointer}
+.note time{font-size:12px;color:var(--soft);line-height:2}
+.note h3{font-family:'Noto Serif SC',serif;font-size:21px;margin:0 0 8px;font-weight:700;transition:color .25s}
+.note:hover h3{color:var(--red)}
+.note p{margin:0;font-size:13.5px;color:var(--soft)}
+.note .go{grid-column:2;font-size:12.5px;color:var(--soft)}
+.note:hover .go{color:var(--red)}
+@media(max-width:820px){.notes{grid-template-columns:1fr}}
+
+/* ========== 版权页 ========== */
+footer{border-top:2px solid var(--ink);margin-top:clamp(70px,10vh,120px);padding:44px 0 0}
+.colo{display:grid;grid-template-columns:1.2fr 1fr 1.2fr;gap:clamp(28px,4vw,64px);padding-bottom:40px}
+.colo h4{font-family:'Noto Serif SC',serif;font-size:16px;margin:0 0 14px}
+.colo p,.colo a{font-size:13.5px;color:var(--soft)}
+.colo nav{display:flex;flex-direction:column;gap:9px}
+.colo a:hover{color:var(--red)}
+.sub input{
+  width:100%;border:0;border-bottom:1px solid var(--ink);background:transparent;
+  padding:10px 0;font-size:14px;font-family:inherit;outline:none;color:var(--ink);
+}
+.sub button{margin-top:14px}
+.base{border-top:1px solid var(--line);padding:18px 0 26px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--soft)}
+@media(max-width:820px){.colo{grid-template-columns:1fr}}
+
+/* 角标 */
+.corner{position:fixed;left:14px;bottom:14px;z-index:90;font-size:10px;letter-spacing:.12em;color:var(--soft);border:1px solid var(--line);padding:4px 10px;background:rgba(246,241,231,.85);backdrop-filter:blur(4px)}
+</style>
+</head>
+<body>
+
+<!-- ========== 刊头 ========== -->
+<header class="reveal d1">
+  <div class="wrap mast">
+    <a class="brand" href="#">
+      <span class="seal-mini">航</span>
+      <span><b>航志</b><small class="mono">HANG JOURNAL · 个人主站</small></span>
+    </a>
+    <nav>
+      <a href="#stills">作品</a>
+      <a href="#screen">放映室</a>
+      <a href="#archive">资料室</a>
+      <a href="#notes">手记</a>
+      <a href="#colo">关于</a>
+    </nav>
+    <span class="issue mono">VOL.01 — 2026 · 09</span>
+  </div>
+</header>
+
+<!-- ========== Hero ========== -->
+<div class="wrap hero">
+  <div class="hero-copy reveal d2">
+    <p class="kicker mono">个人聚合主站 — 图片 / 视频 / OFFICE 模板 / 手记</p>
+    <h1>把作品、模板和文字，<br />放进<em>同一间屋子</em>。</h1>
+    <p class="lede">我是航。这间屋子里放着我做的一切：AI 图像与视频作品、办公三件套模板，以及正在筹备的博客。所有入口都从这里出发——看东西，拿东西，或者读点东西。</p>
+    <div class="cta">
+      <a class="btn solid" href="#stills">看作品</a>
+      <a class="btn ghost" href="#archive">逛模板库</a>
+      <a class="linkline" href="#notes">读手记 →</a>
+    </div>
+    <div class="stats">
+      <div><b>128+</b>图片与视频作品</div>
+      <div><b>46 套</b>三件套模板</div>
+      <div><b>3.2w</b>累计下载</div>
+      <div><b>每月</b>固定上新</div>
+    </div>
+  </div>
+  <div class="hero-visual reveal d3">
+    <figure class="main">
+      <img src="https://picsum.photos/seed/hang-hero/860/1075" alt="工作台" />
+      <figcaption class="mono">FIG.00 — 主理人的工作台，2026</figcaption>
+    </figure>
+    <img class="float-img" src="https://picsum.photos/seed/hang-float/520/400" alt="" />
+    <span class="stamp">航</span>
+  </div>
+</div>
+
+<!-- ========== 01 图像 · 版画墙 ========== -->
+<section class="block wrap reveal d4" id="stills">
+  <div class="sec-head">
+    <span class="no">01</span>
+    <h2>图像 · 静帧</h2>
+    <span class="en mono">STILLS</span>
+    <a class="more" href="#">全部 128 张 →</a>
+  </div>
+  <div class="plates">
+    <figure class="plate a">
+      <div class="frame"><img src="https://picsum.photos/seed/hang-p1/980/735" alt="" /></div>
+      <figcaption><span class="fig mono">FIG.01</span>黄昏天台的电影感人像<span class="tag mono">摄影 / AI</span></figcaption>
+    </figure>
+    <figure class="plate b">
+      <div class="frame"><img src="https://picsum.photos/seed/hang-p2/760/570" alt="" /></div>
+      <figcaption><span class="fig mono">FIG.02</span>赛博城市夜景<span class="tag mono">AI 生成</span></figcaption>
+    </figure>
+    <figure class="plate c">
+      <div class="frame"><img src="https://picsum.photos/seed/hang-p3/760/570" alt="" /></div>
+      <figcaption><span class="fig mono">FIG.03</span>水彩风格的猫<span class="tag mono">AI 生成</span></figcaption>
+    </figure>
+    <figure class="plate d">
+      <div class="frame"><img src="https://picsum.photos/seed/hang-p4/980/735" alt="" /></div>
+      <figcaption><span class="fig mono">FIG.04</span>极简产品渲染<span class="tag mono">商业 / 3D</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ========== 02 放映室 ========== -->
+<section class="screen reveal d5" id="screen">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="no">02</span>
+      <h2>放映室</h2>
+      <span class="en mono">SCREENING ROOM</span>
+      <a class="more" href="#">全部短片 →</a>
+    </div>
+    <p class="now mono"><i></i>NOW SHOWING — 横向滑动观看</p>
+    <div class="reel">
+      <div class="film">
+        <img src="https://picsum.photos/seed/hang-v1/860/484" alt="" />
+        <span class="dur mono">02:14</span>
+        <div class="meta"><b>城市二十四小时</b><span>延时摄影 · 4K · 2026</span></div>
+      </div>
+      <div class="film">
+        <img src="https://picsum.photos/seed/hang-v2/860/484" alt="" />
+        <span class="dur mono">00:30</span>
+        <div class="meta"><b>产品广告片</b><span>商业短片 · 2026</span></div>
+      </div>
+      <div class="film">
+        <img src="https://picsum.photos/seed/hang-v3/860/484" alt="" />
+        <span class="dur mono">06:42</span>
+        <div class="meta"><b>纸的重量</b><span>手作纪录 · 2025</span></div>
+      </div>
+      <div class="film">
+        <img src="https://picsum.photos/seed/hang-v4/860/484" alt="" />
+        <span class="dur mono">03:18</span>
+        <div class="meta"><b>AI 短片《回声》</b><span>实验影像 · 2026</span></div>
+      </div>
+    </div>
+    <p class="hint mono">DRAG / SWIPE — 松手即停</p>
+  </div>
+</section>
+
+<!-- ========== 03 资料室 ========== -->
+<section class="block wrap reveal d6" id="archive">
+  <div class="sec-head">
+    <span class="no">03</span>
+    <h2>资料室 · 三件套模板</h2>
+    <span class="en mono">THE ARCHIVE</span>
+    <a class="more" href="#">模板站全部 46 套 ↗</a>
+  </div>
+  <div class="filters">
+    <button class="chip on">全部</button>
+    <button class="chip">PPT 模板</button>
+    <button class="chip">Word 模板</button>
+    <button class="chip">Excel 模板</button>
+  </div>
+  <p class="hotline"><b>热搜</b>年终总结 · 毕业答辩 · 个人简历 · 甘特图 · 中国风</p>
+  <div class="rows">
+    <div class="row ppt">
+      <span class="type">PPT<i>演示</i></span>
+      <span class="no2 mono">NO.P-018</span>
+      <span class="title">蓝紫渐变 · 年度总结汇报模板</span>
+      <span class="scene">年终总结</span>
+      <span class="dl">下载 <b>1.2w</b></span>
+      <span class="arrow">→</span>
+    </div>
+    <div class="row ppt">
+      <span class="type">PPT<i>演示</i></span>
+      <span class="no2 mono">NO.P-007</span>
+      <span class="title">红色大气 · 党政风工作计划</span>
+      <span class="scene">工作汇报</span>
+      <span class="dl">下载 <b>0.9w</b></span>
+      <span class="arrow">→</span>
+    </div>
+    <div class="row word">
+      <span class="type">WORD<i>文档</i></span>
+      <span class="no2 mono">NO.W-011</span>
+      <span class="title">无衬线 · 一页纸个人简历</span>
+      <span class="scene">求职</span>
+      <span class="dl">下载 <b>0.6w</b></span>
+      <span class="arrow">→</span>
+    </div>
+    <div class="row word">
+      <span class="type">WORD<i>文档</i></span>
+      <span class="no2 mono">NO.W-004</span>
+      <span class="title">公文体 · 标准红头文件</span>
+      <span class="scene">行政</span>
+      <span class="dl">下载 <b>0.4w</b></span>
+      <span class="arrow">→</span>
+    </div>
+    <div class="row excel">
+      <span class="type">EXCEL<i>表格</i></span>
+      <span class="no2 mono">NO.E-021</span>
+      <span class="title">自动甘特图 · 项目排期表</span>
+      <span class="scene">项目管理</span>
+      <span class="dl">下载 <b>0.8w</b></span>
+      <span class="arrow">→</span>
+    </div>
+    <div class="row excel">
+      <span class="type">EXCEL<i>表格</i></span>
+      <span class="no2 mono">NO.E-009</span>
+      <span class="title">动态图表 · 财务月报看板</span>
+      <span class="scene">财务</span>
+      <span class="dl">下载 <b>0.7w</b></span>
+      <span class="arrow">→</span>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 04 手记 ========== -->
+<section class="block wrap reveal d6" id="notes">
+  <div class="sec-head">
+    <span class="no">04</span>
+    <h2>手记<span class="blog-flag">BLOG 筹备中</span></h2>
+    <span class="en mono">NOTES</span>
+    <a class="more" href="#">订阅更新 ↓</a>
+  </div>
+  <div class="notes">
+    <div class="note">
+      <time class="mono">2026.09.02</time>
+      <div>
+        <h3>为什么我把主站做成一间屋子</h3>
+        <p>关于聚合、展示与引流：把散落在各处的东西搬回自己的地盘。</p>
+      </div>
+      <span class="go">阅读全文 →</span>
+    </div>
+    <div class="note">
+      <time class="mono">2026.08.21</time>
+      <div>
+        <h3>AI 视频工作流复盘：从提示词到成片</h3>
+        <p>提示词、分镜、剪辑的完整链路，以及踩过的坑。</p>
+      </div>
+      <span class="go">阅读全文 →</span>
+    </div>
+    <div class="note">
+      <time class="mono">2026.07.30</time>
+      <div>
+        <h3>给三件套模板做一套配色系统</h3>
+        <p>颜色即检索：模板站的第一入口为什么是颜色，而不是行业。</p>
+      </div>
+      <span class="go">阅读全文 →</span>
+    </div>
+    <div class="note">
+      <time class="mono">2026.07.08</time>
+      <div>
+        <h3>一个人维护 46 套模板的节奏</h3>
+        <p>每月上新的排期方法，以及哪些模板该放弃更新。</p>
+      </div>
+      <span class="go">阅读全文 →</span>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 版权页 ========== -->
+<footer id="colo">
+  <div class="wrap">
+    <div class="colo">
+      <div>
+        <h4>关于这间屋子</h4>
+        <p>航，视觉创作者。白天做图与视频，晚上排模板、写字。这里是我所有东西的正门——不定时开门，但每扇门都通。</p>
+      </div>
+      <div>
+        <h4>索引</h4>
+        <nav>
+          <a href="#">图片作品 ↗</a>
+          <a href="#">视频短片 ↗</a>
+          <a href="#">模板资料室 ↗</a>
+          <a href="#">B 站 / 小红书 / 抖音 ↗</a>
+        </nav>
+      </div>
+      <div class="sub">
+        <h4>开门提醒</h4>
+        <p>留下邮箱，上新和文章更新时提醒一次，绝不多发。</p>
+        <input type="email" placeholder="you@example.com" />
+        <button class="btn solid">订阅</button>
+      </div>
+    </div>
+    <div class="base mono">
+      <span>© 2026 航 · YOUC.ONLINE</span>
+      <span>排印于杭州 · 本页使用 Fraunces 与思源宋体</span>
+    </div>
+  </div>
+</footer>
+
+<span class="corner mono">DRAFT A — EDITORIAL 杂志编辑部风</span>
+</body>
+</html>

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计稿 B · 一个入口 — Bento 聚合台个人主站</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+:root{
+  --bg:#f1ede5; --tile:#ffffff; --ink:#191610; --soft:rgba(25,22,16,.58);
+  --line:rgba(25,22,16,.09);
+  --ppt:#c8441f; --word:#2b579a; --excel:#217346; --amber:#e8a13a;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Noto Sans SC',sans-serif;-webkit-font-smoothing:antialiased;line-height:1.65}
+::selection{background:var(--amber);color:var(--ink)}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+.latin{font-family:'Syne','Noto Sans SC',sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:0 clamp(18px,3.5vw,40px)}
+
+/* 载入编排 */
+.rv{opacity:0;transform:translateY(22px) scale(.99);animation:pop .8s cubic-bezier(.16,.68,.3,1) both}
+@keyframes pop{to{opacity:1;transform:none}}
+.d1{animation-delay:.04s}.d2{animation-delay:.1s}.d3{animation-delay:.16s}.d4{animation-delay:.22s}.d5{animation-delay:.28s}.d6{animation-delay:.34s}.d7{animation-delay:.4s}.d8{animation-delay:.46s}.d9{animation-delay:.52s}.d10{animation-delay:.58s}
+
+/* ========== 顶栏 ========== */
+.top{display:flex;align-items:center;justify-content:space-between;height:72px}
+.top .logo{font-family:'Syne',sans-serif;font-weight:800;font-size:21px;letter-spacing:-.02em}
+.top .logo i{font-style:normal;color:var(--amber)}
+.top nav{display:flex;gap:26px;font-size:14px;color:var(--soft)}
+.top nav a:hover{color:var(--ink)}
+.top .go{border:1.5px solid var(--ink);border-radius:999px;padding:8px 20px;font-size:13.5px;font-weight:700;transition:all .25s}
+.top .go:hover{background:var(--ink);color:#fff}
+@media(max-width:760px){.top nav{display:none}}
+
+/* ========== Hero（短） ========== */
+.hero{padding:clamp(34px,6vh,60px) 0 clamp(26px,4vh,40px)}
+.hero h1{font-size:clamp(2.1rem,4.8vw,3.6rem);font-weight:900;line-height:1.2;margin:0 0 12px;letter-spacing:-.01em}
+.hero h1 .hl{background:linear-gradient(transparent 62%,rgba(232,161,58,.55) 62%);padding:0 4px}
+.hero p{color:var(--soft);margin:0;font-size:15.5px}
+.hero p b{color:var(--ink)}
+
+/* ========== Bento 网格 ========== */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:116px;gap:14px;padding-bottom:70px}
+.tile{
+  background:var(--tile);border-radius:20px;padding:20px;position:relative;overflow:hidden;
+  box-shadow:0 1px 2px rgba(25,22,16,.05);
+  transition:transform .35s cubic-bezier(.2,.7,.3,1),box-shadow .35s;
+  display:flex;flex-direction:column;
+}
+.tile:hover{transform:translateY(-4px);box-shadow:0 20px 44px rgba(25,22,16,.13)}
+.tile .head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.tile .head h3{margin:0;font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:8px}
+.tile .head .cnt{font-size:12px;color:var(--soft)}
+.tile .foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:var(--soft)}
+.tile .foot b{color:var(--ink);display:inline-flex;align-items:center;gap:4px;transition:gap .25s}
+.tile:hover .foot b{gap:8px}
+
+/* 身份牌 */
+.t-id{grid-column:span 5;grid-row:span 3;background:var(--ink);color:#f4f1ea;border-radius:24px;padding:26px}
+.t-id .who{display:flex;align-items:center;gap:14px}
+.t-id .ava{width:62px;height:62px;border-radius:50%;object-fit:cover;border:2px solid rgba(244,241,234,.35)}
+.t-id .who b{font-size:19px;display:block;line-height:1.3}
+.t-id .who span{font-size:12.5px;color:rgba(244,241,234,.6)}
+.t-id .bio{font-size:13.5px;color:rgba(244,241,234,.78);margin:16px 0 0}
+.t-id .mail{
+  margin-top:auto;padding-top:16px;border-top:1px solid rgba(244,241,234,.14);
+  display:flex;align-items:center;justify-content:space-between;font-size:13px;
+}
+.t-id .mail b{color:var(--amber);font-family:'Syne',sans-serif}
+.socials{display:flex;gap:10px;margin-top:auto;padding-top:18px}
+.socials a{
+  width:38px;height:38px;border-radius:50%;border:1px solid rgba(244,241,234,.22);
+  display:grid;place-items:center;color:rgba(244,241,234,.8);transition:all .25s;
+}
+.socials a:hover{background:var(--amber);border-color:var(--amber);color:var(--ink);transform:translateY(-2px)}
+.socials i{width:17px;height:17px}
+
+/* 图片墙 */
+.t-photos{grid-column:span 4;grid-row:span 3}
+.mini{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;flex:1;min-height:0}
+.mini img{width:100%;height:100%;object-fit:cover;border-radius:12px;filter:saturate(.92);transition:filter .3s,transform .3s}
+.t-photos:hover .mini img{filter:saturate(1.05)}
+.mini .one{grid-row:span 2}
+
+/* 视频块（满铺） */
+.t-video{grid-column:span 3;grid-row:span 2;padding:0}
+.t-video img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:transform .5s}
+.t-video:hover img{transform:scale(1.05)}
+.t-video .veil{position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,.05),rgba(0,0,0,.62));display:flex;flex-direction:column;justify-content:flex-end;padding:16px;color:#fff}
+.t-video .play{
+  position:absolute;top:calc(50% - 24px);left:calc(50% - 24px);width:48px;height:48px;border-radius:50%;
+  background:rgba(255,255,255,.24);backdrop-filter:blur(6px);display:grid;place-items:center;
+  border:1px solid rgba(255,255,255,.5);transition:all .3s;
+}
+.t-video:hover .play{background:var(--amber);border-color:var(--amber);color:var(--ink);transform:scale(1.08)}
+.t-video .play i{width:18px;height:18px}
+.t-video .veil b{font-size:14.5px}
+.t-video .veil span{font-size:11.5px;opacity:.75}
+
+/* 数据块 */
+.t-stats{grid-column:span 3;flex-direction:row;align-items:center;justify-content:space-around;gap:6px;padding:14px}
+.stat{text-align:center;flex:1;position:relative}
+.stat+.stat::before{content:"";position:absolute;left:0;top:18%;bottom:18%;width:1px;background:var(--line)}
+.stat b{font-family:'Syne',sans-serif;font-size:26px;font-weight:800;display:block;line-height:1.25}
+.stat span{font-size:11px;color:var(--soft)}
+
+/* Office 三块 */
+.t-app{grid-column:span 3;grid-row:span 2}
+.t-app::before{content:"";position:absolute;top:0;left:0;right:0;height:5px;background:var(--acc)}
+.t-app .badge{width:42px;height:42px;border-radius:12px;background:var(--acc);color:#fff;display:grid;place-items:center;font-family:'Syne',sans-serif;font-weight:800;font-size:19px;margin-bottom:12px}
+.t-app .big{font-family:'Syne',sans-serif;font-weight:800;font-size:30px;line-height:1.1}
+.t-app .big small{font-size:13px;font-family:'Noto Sans SC',sans-serif;font-weight:500;color:var(--soft);margin-left:6px}
+.t-app .hots{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0}
+.t-app .hots span{font-size:11px;color:var(--acc);border:1px solid currentColor;border-radius:999px;padding:2px 10px;opacity:.85}
+.thumbs{display:flex;gap:8px;margin-top:auto;padding-top:12px}
+.thumbs img{width:52px;height:34px;object-fit:cover;border-radius:7px;filter:grayscale(.4);transition:filter .3s}
+.t-app:hover .thumbs img{filter:grayscale(0)}
+.t-ppt{--acc:var(--ppt)}.t-word{--acc:var(--word)}.t-excel{--acc:var(--excel)}
+
+/* 博客块 */
+.t-blog{grid-column:span 3;grid-row:span 1;border-left:4px solid var(--amber)}
+.t-blog .head h3 i{width:15px;height:15px;color:var(--amber)}
+.t-blog .post{font-size:14px;font-weight:700;margin:8px 0 2px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.t-blog time{font-size:11.5px;color:var(--soft)}
+
+/* 渠道块 */
+.t-links{grid-column:span 4;flex-direction:row;align-items:center;gap:10px;flex-wrap:wrap}
+.chan{
+  display:inline-flex;align-items:center;gap:7px;font-size:12.5px;border:1px solid var(--line);
+  border-radius:999px;padding:7px 14px;transition:all .25s;
+}
+.chan i{width:14px;height:14px}
+.chan:hover{border-color:var(--ink);background:var(--ink);color:#fff;transform:translateY(-2px)}
+.chan em{font-style:normal;color:var(--soft);font-size:11px}
+.chan:hover em{color:rgba(255,255,255,.7)}
+
+/* CTA 块 */
+.t-cta{grid-column:span 8;background:var(--ink);color:#f4f1ea;border-radius:20px;padding:22px 26px;flex-direction:row;align-items:center;justify-content:space-between;gap:18px;overflow:hidden}
+.t-cta::after{content:"";position:absolute;right:-60px;top:-80px;width:240px;height:240px;border-radius:50%;background:radial-gradient(closest-side,rgba(232,161,58,.5),transparent)}
+.t-cta b{font-size:clamp(16px,2vw,21px);display:block}
+.t-cta span{font-size:12.5px;color:rgba(244,241,234,.65);display:block;margin-top:3px}
+.t-cta a{
+  position:relative;z-index:1;background:var(--amber);color:var(--ink);border-radius:999px;
+  padding:11px 24px;font-weight:700;font-size:14px;display:inline-flex;align-items:center;gap:6px;flex:none;transition:transform .25s;
+}
+.t-cta a:hover{transform:scale(1.05)}
+.t-cta a i{width:15px;height:15px}
+
+@media(max-width:1020px){
+  .bento{grid-template-columns:repeat(6,1fr);grid-auto-rows:minmax(112px,auto)}
+  .t-id{grid-column:span 6;grid-row:span 2}
+  .t-photos{grid-column:span 6;grid-row:span 2;min-height:320px}
+  .t-video{grid-column:span 3;grid-row:span 2;min-height:200px}
+  .t-stats{grid-column:span 3}
+  .t-blog{grid-column:span 3}
+  .t-app{grid-column:span 3;grid-row:span 2}
+  .t-links{grid-column:span 6}
+  .t-cta{grid-column:span 6;flex-wrap:wrap}
+}
+@media(max-width:600px){
+  .bento{grid-template-columns:1fr}
+  .bento>*{grid-column:span 1 !important;grid-row:auto !important;min-height:120px}
+  .t-photos{min-height:300px}
+  .t-video{min-height:190px}
+}
+</style>
+</head>
+<body>
+
+<!-- ========== 顶栏 ========== -->
+<div class="wrap">
+  <div class="top rv d1">
+    <a class="logo" href="#">HANG<i>·</i>航</a>
+    <nav>
+      <a href="#photos">作品</a>
+      <a href="#apps">模板</a>
+      <a href="#blog">博客</a>
+      <a href="#cta">关于与合作</a>
+    </nav>
+    <a class="go" href="#cta">联系我</a>
+  </div>
+
+  <!-- ========== Hero ========== -->
+  <div class="hero rv d2">
+    <h1>所有东西，<span class="hl">一个入口</span>。</h1>
+    <p><b>图片作品 · 视频短片 · Office 三件套模板 · 博客</b> —— 航的个人主站，从这里去往每一处。</p>
+  </div>
+
+  <!-- ========== Bento ========== -->
+  <div class="bento">
+
+    <!-- 身份牌 -->
+    <div class="tile t-id rv d3">
+      <div class="who">
+        <img class="ava" src="https://picsum.photos/seed/hang-face/160/160" alt="" />
+        <div><b>航 · Hang</b><span>视觉创作者 / 模板作者 — 杭州</span></div>
+      </div>
+      <p class="bio">做 AI 图像与视频，也排 PPT、Word、Excel 模板。博客在路上了——先关注，别走丢。</p>
+      <div class="mail"><span>合作 / 定制</span><b>hi@youc.online</b></div>
+      <div class="socials">
+        <a href="#" title="B 站"><i data-lucide="tv"></i></a>
+        <a href="#" title="小红书"><i data-lucide="book-open"></i></a>
+        <a href="#" title="抖音"><i data-lucide="clapperboard"></i></a>
+        <a href="#" title="GitHub"><i data-lucide="github"></i></a>
+        <a href="#" title="邮件"><i data-lucide="mail"></i></a>
+      </div>
+    </div>
+
+    <!-- 图片墙 -->
+    <a class="tile t-photos rv d4" href="#" id="photos">
+      <div class="head">
+        <h3><i data-lucide="image" style="width:16px;height:16px"></i>图片作品</h3>
+        <span class="cnt">128 张 · 每月更新</span>
+      </div>
+      <div class="mini">
+        <img class="one" src="https://picsum.photos/seed/hang-m1/520/620" alt="" />
+        <img src="https://picsum.photos/seed/hang-m2/300/300" alt="" />
+        <img src="https://picsum.photos/seed/hang-m3/300/300" alt="" />
+        <img src="https://picsum.photos/seed/hang-m4/300/300" alt="" />
+        <img src="https://picsum.photos/seed/hang-m5/300/300" alt="" />
+      </div>
+      <div class="foot"><span>人像 / 城市 / 产品 / 实验</span><b>全部图片 →</b></div>
+    </a>
+
+    <!-- 视频块 -->
+    <a class="tile t-video rv d5" href="#">
+      <img src="https://picsum.photos/seed/hang-mv/560/560" alt="" />
+      <span class="play"><i data-lucide="play"></i></span>
+      <div class="veil">
+        <b>城市二十四小时</b>
+        <span>延时摄影 · 02:14 · 4K</span>
+      </div>
+    </a>
+
+    <!-- 数据块 -->
+    <div class="tile t-stats rv d6">
+      <div class="stat"><b>128+</b><span>作品</span></div>
+      <div class="stat"><b>46</b><span>模板</span></div>
+      <div class="stat"><b>3.2w</b><span>下载</span></div>
+    </div>
+
+    <!-- 博客块 -->
+    <a class="tile t-blog rv d7" href="#" id="blog">
+      <div class="head">
+        <h3><i data-lucide="pen-line"></i>手记 · 博客</h3>
+        <span class="cnt">筹备中</span>
+      </div>
+      <div class="post">为什么我把主站做成一间屋子</div>
+      <time>2026.09.02 · 第一篇在写了，订阅别走丢</time>
+      <div class="foot"><span>工作流 / 排版 / 碎念</span><b>去订阅 →</b></div>
+    </a>
+
+    <!-- PPT -->
+    <a class="tile t-app t-ppt rv d7" href="#" id="apps">
+      <div class="badge">P</div>
+      <div class="big">18 <small>套 PPT 模板</small></div>
+      <div class="hots"><span>年终总结</span><span>毕业答辩</span><span>中国风</span></div>
+      <div class="thumbs">
+        <img src="https://picsum.photos/seed/hang-ppt1/120/80" alt="" />
+        <img src="https://picsum.photos/seed/hang-ppt2/120/80" alt="" />
+        <img src="https://picsum.photos/seed/hang-ppt3/120/80" alt="" />
+      </div>
+      <div class="foot"><span>含阿里云盘 / 百度盘</span><b>去下载 →</b></div>
+    </a>
+
+    <!-- Word -->
+    <a class="tile t-app t-word rv d8" href="#">
+      <div class="badge">W</div>
+      <div class="big">12 <small>套 Word 模板</small></div>
+      <div class="hots"><span>简历</span><span>公文</span><span>合同</span></div>
+      <div class="thumbs">
+        <img src="https://picsum.photos/seed/hang-w1/120/80" alt="" />
+        <img src="https://picsum.photos/seed/hang-w2/120/80" alt="" />
+        <img src="https://picsum.photos/seed/hang-w3/120/80" alt="" />
+      </div>
+      <div class="foot"><span>简历最常下</span><b>去下载 →</b></div>
+    </a>
+
+    <!-- Excel -->
+    <a class="tile t-app t-excel rv d9" href="#">
+      <div class="badge">X</div>
+      <div class="big">16 <small>套 Excel 模板</small></div>
+      <div class="hots"><span>甘特图</span><span>财务月报</span><span>考勤</span></div>
+      <div class="thumbs">
+        <img src="https://picsum.photos/seed/hang-x1/120/80" alt="" />
+        <img src="https://picsum.photos/seed/hang-x2/120/80" alt="" />
+        <img src="https://picsum.photos/seed/hang-x3/120/80" alt="" />
+      </div>
+      <div class="foot"><span>带公式自动算</span><b>去下载 →</b></div>
+    </a>
+
+    <!-- 渠道块 -->
+    <div class="tile t-links rv d9">
+      <a class="chan" href="#"><i data-lucide="tv"></i>B 站<em>1.2w 粉</em></a>
+      <a class="chan" href="#"><i data-lucide="book-open"></i>小红书<em>8k 赞藏</em></a>
+      <a class="chan" href="#"><i data-lucide="clapperboard"></i>抖音<em>3w 粉</em></a>
+      <a class="chan" href="#"><i data-lucide="github"></i>GitHub<em>关注下</em></a>
+      <a class="chan" href="#"><i data-lucide="rss"></i>RSS<em>订阅</em></a>
+    </div>
+
+    <!-- CTA -->
+    <div class="tile t-cta rv d10" id="cta">
+      <div>
+        <b>有项目想聊聊？商业约稿、模板定制、专栏合作都在接。</b>
+        <span>一般 48 小时内回复 · 长期接受远程</span>
+      </div>
+      <a href="mailto:hi@youc.online">写邮件给我<i data-lucide="arrow-up-right"></i></a>
+    </div>
+  </div>
+</div>
+
+<script>lucide.createIcons();</script>
+<span class="corner rv" style="position:fixed;left:14px;bottom:14px;z-index:90;font-size:10px;letter-spacing:.12em;color:var(--soft);border:1px solid var(--line);padding:4px 10px;background:rgba(241,237,229,.85);backdrop-filter:blur(4px);font-family:ui-monospace,monospace">DRAFT B — BENTO HUB 聚合台</span>
+</body>
+</html>

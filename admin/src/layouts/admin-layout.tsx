@@ -1,10 +1,14 @@
-import { Button, Layout, Menu } from "antd";
+import { Button, Dropdown, Layout, Menu } from "antd";
+import type { MenuProps } from "antd";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { EnvBadge } from "@admin/components/env-badge";
 import { useConsoleAccess } from "@admin/hooks/use-console-access";
 import { visibleNavItems } from "@admin/lib/admin-nav";
+import { ADMIN_PRODUCTS, CURRENT_PRODUCT_KEY, getAdminProduct } from "@admin/lib/products";
+import { fetchAdminMeta } from "@admin/services/api/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 
 // 侧边栏的菜单项与权限映射统一放在 lib/admin-nav.ts（路由守卫用同一份），这里只负责渲染。
@@ -17,6 +21,27 @@ export default function AdminLayout() {
     const logout = useAuthStore((state) => state.logout);
     const access = useConsoleAccess();
 
+    // 产品切换器的版本号来自 /admin/meta：免权限点，失败（比如旧版后端还没上线）只是不显示版本，不影响切换。
+    const metaQuery = useQuery({ queryKey: ["admin", "meta"], queryFn: ({ signal }) => fetchAdminMeta(signal) });
+    const currentProduct = getAdminProduct(CURRENT_PRODUCT_KEY)!;
+    const version = metaQuery.data?.product.version;
+    // 停在规划中产品的占位页时，点回当前产品要离开占位路由，回到后台首页。
+    const onProductPlaceholder = location.pathname.startsWith("/admin/product/");
+
+    const productMenuItems: MenuProps["items"] = ADMIN_PRODUCTS.map((product) => ({
+        key: product.key,
+        label: (
+            <span className="flex items-center justify-between gap-3">
+                <span className="truncate">{t(product.nameKey, { ns: "admin" })}</span>
+                {product.status === "connected" ? (
+                    version ? <span className="shrink-0 text-xs font-normal text-stone-400 dark:text-stone-500">v{version}</span> : null
+                ) : (
+                    <span className="shrink-0 text-[11px] font-normal text-stone-400 dark:text-stone-500">{t("products.planned", { ns: "admin" })}</span>
+                )}
+            </span>
+        ),
+    }));
+
     const menuItems = access.phase === "admin" ? visibleNavItems(access.permissions) : [];
     const active = menuItems.map((item) => item.path).find((path) => location.pathname === path || (path !== "/admin" && location.pathname.startsWith(path))) ?? "/admin";
 
@@ -26,7 +51,33 @@ export default function AdminLayout() {
                 <div className="flex h-dvh flex-col">
                     {/* 环境标识放在侧边栏头部而不是内容区标题旁：内容区会随滚动移出视口，环境角标必须常驻。 */}
                     <div className="flex items-center gap-2 px-5 py-5 text-sm font-semibold">
-                        <span className="truncate">{t("admin.title")}</span>
+                        <Dropdown
+                            trigger={["click"]}
+                            placement="bottomLeft"
+                            menu={{
+                                items: productMenuItems,
+                                // 当前产品在菜单里高亮；规划中产品只跳占位页，不给任何管理菜单。
+                                selectedKeys: [CURRENT_PRODUCT_KEY],
+                                onClick: ({ key }) => {
+                                    if (key === CURRENT_PRODUCT_KEY) {
+                                        if (onProductPlaceholder) navigate("/admin");
+                                        return;
+                                    }
+                                    navigate(`/admin/product/${key}`);
+                                },
+                            }}
+                        >
+                            {/* 扁平样式：透明背景、仅 hover 轻微反馈，靠名称 + 箭头表达可切换。 */}
+                            <button
+                                type="button"
+                                className="flex min-w-0 items-center gap-1 rounded-md py-0.5 pr-1 hover:bg-black/5 dark:hover:bg-white/10"
+                            >
+                                <span className="truncate">{t(currentProduct.nameKey, { ns: "admin" })}</span>
+                                <span aria-hidden className="shrink-0 text-[10px] font-normal text-stone-400 dark:text-stone-500">
+                                    ▾
+                                </span>
+                            </button>
+                        </Dropdown>
                         <EnvBadge />
                     </div>
                     <Menu

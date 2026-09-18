@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计稿 D · 航的桌面 — 文具手账风个人主站</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/style.css" rel="stylesheet" />
+<style>
+:root{
+  --paper:#fbfaf5; --ink:#2b2a26; --soft:rgba(43,42,38,.6); --line:rgba(43,42,38,.28);
+  --grid:rgba(96,140,190,.16); --red:#d64541; --blue:#3a6ea5;
+  --ppt:#d24726; --word:#2b579a; --excel:#1e7145;
+  --tape:rgba(255,222,130,.72); --n-yellow:#ffe9a3; --n-pink:#ffd9d9; --n-blue:#cfe3ff;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;color:var(--ink);background:var(--paper);
+  font-family:'LXGW WenKai Screen','LXGW WenKai','Noto Sans SC',serif;
+  line-height:1.75;-webkit-font-smoothing:antialiased;
+}
+/* 方格纸 + 红边线 */
+body{
+  background-image:
+    linear-gradient(var(--grid) 1px,transparent 1px),
+    linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:26px 26px;
+}
+.margin-line{position:fixed;top:0;bottom:0;left:62px;width:1.5px;background:rgba(214,69,65,.5);z-index:1}
+@media(max-width:860px){.margin-line{display:none}}
+::selection{background:var(--n-yellow)}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;letter-spacing:.05em}
+.wrap{max-width:1120px;margin:0 auto;padding:0 clamp(18px,4vw,44px);position:relative;z-index:2}
+
+/* 载入编排 */
+.rv{opacity:0;transform:translateY(16px) rotate(var(--r,0deg));animation:land .7s cubic-bezier(.2,.7,.3,1.1) both}
+@keyframes land{to{opacity:1;transform:translateY(0) rotate(var(--r,0deg))}}
+.d1{animation-delay:.05s}.d2{animation-delay:.14s}.d3{animation-delay:.24s}.d4{animation-delay:.34s}.d5{animation-delay:.44s}.d6{animation-delay:.54s}
+
+/* ========== 台头 ========== */
+.masthead{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:26px 0 10px;flex-wrap:wrap}
+.masthead .name{font-size:30px;font-weight:700;letter-spacing:.06em}
+.masthead .name small{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--soft);letter-spacing:.14em;margin-left:12px}
+.masthead .datebox{border:1.5px dashed var(--line);padding:8px 16px;border-radius:8px;transform:rotate(1deg);font-size:13px;background:rgba(255,255,255,.65)}
+nav.desk-nav{display:flex;gap:22px;padding:10px 0 30px;font-size:15px;flex-wrap:wrap}
+nav.desk-nav a{border-bottom:2px solid transparent;padding-bottom:2px;transition:all .2s}
+nav.desk-nav a:hover{border-color:var(--red);color:var(--red)}
+nav.desk-nav a b{font-weight:400;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--soft);margin-left:4px;vertical-align:2px}
+@media(max-width:640px){nav.desk-nav{display:none}}
+
+/* ========== 桌面 Hero ========== */
+.hero{display:grid;grid-template-columns:1.15fr .85fr;gap:clamp(28px,5vw,60px);align-items:center;padding:16px 0 60px}
+.hero h1{font-size:clamp(1.9rem,4.4vw,3rem);line-height:1.45;margin:0 0 18px;font-weight:700}
+.hero h1 .red{color:var(--red)}
+.hero .sub{color:var(--soft);font-size:16px;margin:0 0 26px}
+.sticker-row{display:flex;gap:14px;flex-wrap:wrap}
+.sticker{
+  display:inline-block;background:#fff;border:1.5px dashed var(--ink);border-radius:9px;
+  padding:11px 20px;font-size:15px;box-shadow:3px 4px 0 rgba(43,42,38,.85);
+  transform:rotate(var(--r,-1deg));transition:all .22s;
+}
+.sticker:hover{transform:rotate(0) translateY(-2px);box-shadow:2px 3px 0 rgba(43,42,38,.9)}
+.sticker.hot{background:var(--red);color:#fff;border-style:solid}
+/* 拍立得 + 便签 */
+.polaroid{position:relative;justify-self:center;transform:rotate(2deg)}
+.polaroid .frame{background:#fff;padding:12px 12px 46px;box-shadow:0 14px 30px rgba(43,42,38,.18)}
+.polaroid img{width:min(340px,72vw);aspect-ratio:1/1.08;object-fit:cover}
+.polaroid .cap{position:absolute;bottom:12px;left:0;right:0;text-align:center;font-size:14px;color:var(--soft)}
+.tape{position:absolute;width:92px;height:26px;background:var(--tape);opacity:.92;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.tape.tl{top:-12px;left:-26px;transform:rotate(-38deg)}
+.tape.tr{top:-12px;right:-26px;transform:rotate(38deg)}
+.memo{
+  position:absolute;right:-34px;bottom:-40px;width:190px;background:var(--n-yellow);
+  padding:14px 16px;font-size:13.5px;line-height:1.6;transform:rotate(-4deg);
+  box-shadow:3px 5px 12px rgba(43,42,38,.18);
+}
+.memo::before{content:"";position:absolute;top:-8px;left:50%;margin-left:-5px;width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 2px 3px rgba(0,0,0,.25)}
+@media(max-width:820px){.hero{grid-template-columns:1fr}.polaroid{margin-top:24px}}
+
+/* ========== 桌面分区标题 ========== */
+.zone{margin-top:clamp(52px,8vh,84px)}
+.zone-head{display:flex;align-items:center;gap:14px;margin-bottom:26px;flex-wrap:wrap}
+.zone-head .tag{
+  background:var(--ink);color:var(--paper);padding:5px 14px;border-radius:7px;font-size:15px;
+  transform:rotate(-1deg);box-shadow:2px 3px 0 rgba(43,42,38,.3);
+}
+.zone-head h2{font-size:22px;margin:0;font-weight:700}
+.zone-head .mono{color:var(--soft)}
+.zone-head .more{margin-left:auto;font-size:14px;border-bottom:1.5px dashed var(--line);padding-bottom:2px;transition:all .2s}
+.zone-head .more:hover{color:var(--red);border-color:var(--red)}
+
+/* ========== 档案架（图片） ========== */
+.shelf{display:grid;grid-template-columns:repeat(4,1fr);gap:26px}
+.photo{background:#fff;padding:10px 10px 14px;box-shadow:0 8px 18px rgba(43,42,38,.12);transform:rotate(var(--r,0deg));transition:all .3s;position:relative}
+.photo:nth-child(odd){--r:-1.3deg}.photo:nth-child(even){--r:1.4deg}
+.photo:hover{transform:rotate(0) scale(1.03);box-shadow:0 16px 30px rgba(43,42,38,.2)}
+.photo img{aspect-ratio:4/3.4;object-fit:cover;width:100%}
+.photo figcaption{font-size:13.5px;text-align:center;padding-top:8px;color:var(--soft)}
+.photo .pt{position:absolute;top:-10px;left:50%;margin-left:-40px;width:80px;height:22px;background:var(--tape);opacity:.9}
+@media(max-width:900px){.shelf{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:540px){.shelf{grid-template-columns:1fr}}
+
+/* ========== 放映室（胶片条） ========== */
+.filmstrip{background:var(--ink);border-radius:14px;padding:14px;overflow-x:auto;scrollbar-width:thin}
+.sprocket{height:16px;background-image:radial-gradient(circle,rgba(255,255,255,.8) 2.4px,transparent 2.9px);background-size:20px 16px;background-position:center}
+.strip-row{display:flex;gap:14px;padding:14px 2px}
+.frame-card{flex:none;width:min(72vw,330px);background:#fff;padding:9px 9px 12px;box-shadow:0 6px 14px rgba(0,0,0,.3);transform:rotate(var(--r,0deg));transition:transform .3s}
+.frame-card:nth-child(odd){--r:-.8deg}.frame-card:nth-child(even){--r:.9deg}
+.frame-card:hover{transform:rotate(0) scale(1.02)}
+.frame-card .thumb{position:relative;overflow:hidden}
+.frame-card img{aspect-ratio:16/9;object-fit:cover;width:100%}
+.frame-card .play{
+  position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:14px;
+}
+.frame-card .play span{
+  border:1.5px dashed #fff;border-radius:50%;width:46px;height:46px;display:grid;place-items:center;
+  background:rgba(0,0,0,.25);transition:all .25s;
+}
+.frame-card:hover .play span{background:var(--red);border-style:solid;transform:scale(1.1)}
+.frame-card .fmeta{display:flex;justify-content:space-between;padding-top:8px;font-size:13.5px}
+.frame-card .fmeta .mono{color:var(--soft)}
+
+/* ========== 文件柜（Office 模板） ========== */
+.tabs{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.tab{
+  border:1.5px solid var(--ink);border-bottom:none;border-radius:11px 11px 0 0;
+  padding:9px 22px;background:rgba(255,255,255,.75);font-size:15.5px;font-weight:700;cursor:pointer;
+  transform:translateY(1.5px);transition:all .2s;
+}
+.tab .mono{margin-left:6px}
+.tab.on{background:var(--tc);color:#fff;border-color:var(--ink)}
+.tab:hover{transform:translateY(0)}
+.t-ppt{--tc:var(--ppt)}.t-word{--tc:var(--word)}.t-excel{--tc:var(--excel)}
+.cabinet{border:1.5px solid var(--ink);border-radius:0 14px 14px 14px;background:#fff;padding:clamp(16px,3vw,26px);box-shadow:4px 6px 0 rgba(43,42,38,.12)}
+.hotwords{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.hotwords .hw{background:var(--tape);padding:3px 14px;font-size:13.5px;transform:rotate(var(--r,0deg));border-radius:2px}
+.hotwords .hw:nth-child(odd){--r:-1deg}.hotwords .hw:nth-child(even){--r:.8deg}
+.hotwords .lab{font-size:14px;color:var(--soft)}
+.cabinet-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.filecard{
+  border:1.5px solid var(--ink);border-radius:11px;background:var(--paper);padding:16px;position:relative;
+  transition:all .25s;display:flex;flex-direction:column;gap:8px;
+}
+.filecard:hover{transform:translateY(-3px);box-shadow:3px 5px 0 rgba(43,42,38,.5)}
+.filecard .fr{display:flex;align-items:center;gap:9px}
+.filecard .badge{
+  width:32px;height:32px;border-radius:8px;background:var(--tc);color:#fff;display:grid;place-items:center;
+  font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:15px;flex:none;
+}
+.filecard .no{color:var(--soft)}
+.filecard .stamp{
+  margin-left:auto;border:2px solid var(--red);color:var(--red);border-radius:6px;
+  font-size:12.5px;padding:1px 8px;transform:rotate(7deg);font-weight:700;
+}
+.filecard .stamp.blue{border-color:var(--blue);color:var(--blue);transform:rotate(-6deg)}
+.filecard h3{font-size:16.5px;margin:2px 0 0;font-weight:700;line-height:1.5}
+.filecard .meta{font-size:13px;color:var(--soft)}
+.filecard .dl-sticker{
+  margin-top:auto;align-self:flex-start;background:#fff;border:1.5px dashed var(--ink);border-radius:8px;
+  padding:6px 16px;font-size:13.5px;transition:all .2s;
+}
+.filecard:hover .dl-sticker{background:var(--tc);color:#fff;border-style:solid}
+.f-p{--tc:var(--ppt)}.f-w{--tc:var(--word)}.f-x{--tc:var(--excel)}
+@media(max-width:900px){.cabinet-grid{grid-template-columns:1fr}}
+
+/* ========== 便签墙（博客） ========== */
+.notes{display:grid;grid-template-columns:repeat(4,1fr);gap:22px}
+.pnote{padding:20px 18px 18px;position:relative;min-height:190px;box-shadow:4px 6px 0 rgba(43,42,38,.12);transform:rotate(var(--r,0deg));transition:all .3s;display:flex;flex-direction:column}
+.pnote::before{content:"";position:absolute;top:-9px;left:50%;margin-left:-5px;width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 2px 3px rgba(0,0,0,.25)}
+.pnote:hover{transform:rotate(0) translateY(-4px)}
+.pnote time{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--soft)}
+.pnote h3{font-size:16.5px;margin:6px 0 6px;font-weight:700;line-height:1.5}
+.pnote p{font-size:13px;color:var(--soft);margin:0}
+.pnote .go{margin-top:auto;font-size:13.5px;transition:color .2s}
+.pnote:hover .go{color:var(--red)}
+.pnote.y{background:var(--n-yellow);--r:-1.4deg}
+.pnote.p{background:var(--n-pink);--r:1.2deg}
+.pnote.b{background:var(--n-blue);--r:-.8deg}
+.pnote.ghost{background:transparent;border:1.5px dashed var(--line);align-items:center;justify-content:center;text-align:center;color:var(--soft);box-shadow:none}
+.pnote.ghost::before{display:none}
+@media(max-width:900px){.notes{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:540px){.notes{grid-template-columns:1fr}}
+
+/* ========== 桌脚 ========== */
+footer{margin-top:clamp(60px,9vh,100px);border-top:1.5px dashed var(--line);padding:26px 0 34px}
+.foot{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--soft)}
+.foot a{border-bottom:1.5px dashed var(--line);transition:all .2s}
+.foot a:hover{color:var(--red);border-color:var(--red)}
+
+.corner{position:fixed;left:14px;bottom:14px;z-index:90;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;color:var(--soft);border:1.5px dashed var(--line);padding:4px 10px;background:rgba(251,250,245,.9)}
+</style>
+</head>
+<body>
+
+<div class="margin-line"></div>
+
+<!-- ========== 台头 ========== -->
+<div class="wrap">
+  <div class="masthead rv d1">
+    <div class="name">航的桌面<small>HANG'S DESK — 图 / 视频 / 模板 / 手记</small></div>
+    <div class="datebox mono">2026.09.18 · 星期五 · 晴</div>
+  </div>
+  <nav class="desk-nav rv d1">
+    <a href="#shelf">档案架<b>PHOTOS</b></a>
+    <a href="#room">放映室<b>FILMS</b></a>
+    <a href="#cabinet">文件柜<b>OFFICE</b></a>
+    <a href="#wall">便签墙<b>BLOG</b></a>
+  </nav>
+
+  <!-- ========== Hero ========== -->
+  <div class="hero">
+    <div class="rv d2">
+      <h1>图、视频、模板和字，<br />都摊在<span class="red">这张桌子</span>上。</h1>
+      <p class="sub">我是航。左边抽屉放作品，右边柜子放三件套模板，墙上贴着正在写的博客——东西有点多，慢慢看。</p>
+      <div class="sticker-row">
+        <a class="sticker hot" href="#shelf" style="--r:-1.5deg">先看作品</a>
+        <a class="sticker" href="#cabinet" style="--r:1deg">拿模板去</a>
+        <a class="sticker" href="#wall" style="--r:-.5deg">读两篇手记</a>
+      </div>
+    </div>
+    <div class="polaroid rv d3">
+      <span class="tape tl"></span><span class="tape tr"></span>
+      <div class="frame">
+        <img src="https://picsum.photos/seed/hang-desk/680/740" alt="" />
+        <div class="cap">工作台 · 2026 摄于杭州</div>
+      </div>
+      <div class="memo">本周上新：<br />年终总结 PPT ×6<br />甘特图 Excel ×2</div>
+    </div>
+  </div>
+
+  <!-- ========== 档案架（图片） ========== -->
+  <section class="zone" id="shelf">
+    <div class="zone-head rv d3">
+      <span class="tag">档案架</span>
+      <h2>图片作品</h2>
+      <span class="mono">PHOTO SHELF · 共 128 张</span>
+      <a class="more" href="#">整架搬走 →</a>
+    </div>
+    <div class="shelf rv d4">
+      <figure class="photo"><span class="pt"></span><img src="https://picsum.photos/seed/hang-sh1/480/410" alt="" /><figcaption>黄昏天台的人像</figcaption></figure>
+      <figure class="photo"><span class="pt"></span><img src="https://picsum.photos/seed/hang-sh2/480/410" alt="" /><figcaption>赛博城市夜景</figcaption></figure>
+      <figure class="photo"><span class="pt"></span><img src="https://picsum.photos/seed/hang-sh3/480/410" alt="" /><figcaption>水彩风格的猫</figcaption></figure>
+      <figure class="photo"><span class="pt"></span><img src="https://picsum.photos/seed/hang-sh4/480/410" alt="" /><figcaption>极简产品渲染</figcaption></figure>
+    </div>
+  </section>
+
+  <!-- ========== 放映室（视频） ========== -->
+  <section class="zone" id="room">
+    <div class="zone-head rv d4">
+      <span class="tag">放映室</span>
+      <h2>视频作品</h2>
+      <span class="mono">FILM ROOM · 胶片滚动</span>
+      <a class="more" href="#">全部短片 →</a>
+    </div>
+    <div class="filmstrip rv d5">
+      <div class="sprocket"></div>
+      <div class="strip-row">
+        <div class="frame-card">
+          <div class="thumb"><img src="https://picsum.photos/seed/hang-r1/660/371" alt="" /><span class="play"><span>▶</span></span></div>
+          <div class="fmeta">城市二十四小时<span class="mono">02:14 · 4K</span></div>
+        </div>
+        <div class="frame-card">
+          <div class="thumb"><img src="https://picsum.photos/seed/hang-r2/660/371" alt="" /><span class="play"><span>▶</span></span></div>
+          <div class="fmeta">产品广告片<span class="mono">00:30</span></div>
+        </div>
+        <div class="frame-card">
+          <div class="thumb"><img src="https://picsum.photos/seed/hang-r3/660/371" alt="" /><span class="play"><span>▶</span></span></div>
+          <div class="fmeta">纸的重量<span class="mono">06:42</span></div>
+        </div>
+        <div class="frame-card">
+          <div class="thumb"><img src="https://picsum.photos/seed/hang-r4/660/371" alt="" /><span class="play"><span>▶</span></span></div>
+          <div class="fmeta">AI 短片《回声》<span class="mono">03:18</span></div>
+        </div>
+      </div>
+      <div class="sprocket"></div>
+    </div>
+  </section>
+
+  <!-- ========== 文件柜（Office 模板） ========== -->
+  <section class="zone" id="cabinet">
+    <div class="zone-head rv d5">
+      <span class="tag">文件柜</span>
+      <h2>三件套模板</h2>
+      <span class="mono">OFFICE CABINET · 共 46 套</span>
+      <a class="more" href="#">去模板站 ↗</a>
+    </div>
+    <div class="rv d5">
+      <div class="tabs">
+        <span class="tab t-ppt on">PPT 模板<span class="mono">18</span></span>
+        <span class="tab t-word">Word 模板<span class="mono">12</span></span>
+        <span class="tab t-excel">Excel 模板<span class="mono">16</span></span>
+      </div>
+      <div class="cabinet">
+        <div class="hotwords">
+          <span class="lab">热搜词：</span>
+          <span class="hw">年终总结</span><span class="hw">毕业答辩</span><span class="hw">个人简历</span><span class="hw">甘特图</span><span class="hw">中国风</span>
+        </div>
+        <div class="cabinet-grid">
+          <div class="filecard f-p">
+            <div class="fr"><span class="badge">P</span><span class="no mono">NO.P-018</span><span class="stamp">荐</span></div>
+            <h3>蓝紫渐变 · 年度总结汇报模板</h3>
+            <div class="meta">32 页 · 16:9 · 含图表与时间轴<br />已被下载 1.2w 次</div>
+            <span class="dl-sticker">下载模板</span>
+          </div>
+          <div class="filecard f-p">
+            <div class="fr"><span class="badge">P</span><span class="no mono">NO.P-007</span></div>
+            <h3>红色大气 · 党政风工作计划</h3>
+            <div class="meta">24 页 · 16:9 · 可改标题配色<br />已被下载 0.9w 次</div>
+            <span class="dl-sticker">下载模板</span>
+          </div>
+          <div class="filecard f-p">
+            <div class="fr"><span class="badge">P</span><span class="no mono">NO.P-022</span><span class="stamp blue">新</span></div>
+            <h3>极简白 · 毕业答辩套件</h3>
+            <div class="meta">40 页 · 16:9 · 含致谢页<br />本周新上传</div>
+            <span class="dl-sticker">下载模板</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 便签墙（博客） ========== -->
+  <section class="zone" id="wall">
+    <div class="zone-head rv d6">
+      <span class="tag">便签墙</span>
+      <h2>手记 · 博客</h2>
+      <span class="mono">BLOG · 筹备中</span>
+      <a class="more" href="#">订阅提醒 ↓</a>
+    </div>
+    <div class="notes rv d6">
+      <div class="pnote y">
+        <time>2026.09.02</time>
+        <h3>为什么我把主站做成一间屋子</h3>
+        <p>关于聚合、展示与引流：把散落各处的东西搬回自己的地盘。</p>
+        <span class="go">去读 →</span>
+      </div>
+      <div class="pnote p">
+        <time>2026.08.21</time>
+        <h3>AI 视频工作流复盘</h3>
+        <p>从提示词到成片的完整链路，以及踩过的坑。</p>
+        <span class="go">去读 →</span>
+      </div>
+      <div class="pnote b">
+        <time>2026.07.30</time>
+        <h3>给三件套模板做配色系统</h3>
+        <p>颜色即检索：模板站的第一入口为什么是颜色。</p>
+        <span class="go">去读 →</span>
+      </div>
+      <div class="pnote ghost">这张便签留给你<br />博客开张后，来留个言？</div>
+    </div>
+  </section>
+</div>
+
+<!-- ========== 桌脚 ========== -->
+<footer>
+  <div class="wrap foot">
+    <span>© 2026 航 · 桌面整理于杭州</span>
+    <span>
+      <a href="#">B 站</a> · <a href="#">小红书</a> · <a href="#">抖音</a> · <a href="#">hi@youc.online</a>
+    </span>
+  </div>
+</footer>
+
+<span class="corner">DRAFT D — STATIONERY 文具桌面风</span>
+</body>
+</html>

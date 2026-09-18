@@ -565,6 +565,36 @@ export function getAdminMe(signal?: AbortSignal) {
     return apiRequest<AdminMe>("/admin/me", { signal });
 }
 
+// ===== 产品级元信息（多产品共用后台）=====
+
+export type AdminMetaPermission = {
+    key: string;
+    name: string;
+    description: string;
+};
+
+// 服务端已按调用者权限过滤过 modules，前端只渲染、不再自行过滤。
+export type AdminMetaModule = {
+    key: string;
+    label: string;
+    permissions: AdminMetaPermission[];
+};
+
+export type AdminMeta = {
+    product: {
+        id: string;
+        name: string;
+        version: string;
+    };
+    modules: AdminMetaModule[];
+};
+
+// 与 /admin/me 一样不要求具体权限点：任何后台角色都可调用。
+// 产品切换器用 product.version 展示当前产品版本；modules 留给后续按模块渲染的功能页。
+export function fetchAdminMeta(signal?: AbortSignal) {
+    return apiRequest<AdminMeta>("/admin/meta", { signal });
+}
+
 // 当前账号改密（/me/password）：must_change_password 置位期间服务端只放行登出/刷新/改密，
 // 改密同时清掉强制改密标记并撤销全部 refresh token、下发新会话，前端不需要重新登录。
 // web 的 services/api/account.ts 不在 admin 复用白名单里，这里按同一契约自己封装。
