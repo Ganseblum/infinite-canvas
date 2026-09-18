@@ -12,23 +12,31 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/model"
-	"github.com/infinite-canvas/server/internal/platform/billing"
-	"github.com/infinite-canvas/server/internal/platform/membership"
 )
 
 // ensurePlatformAccounts 按「注册事务」同口径为账号补齐平台权益账户：
-// 点数账户（credit_accounts）与按当前档位的存储配额（storage_accounts）。
+// 点数账户（credit_accounts）与按 free 档位的存储配额（storage_accounts）。
 // 全部建号路径（注册 / 管理员建号 / EnsureAdmin / 测试 seed）都必须保证这两行存在，
-// 否则 /api/me 等读取配额的接口会因行缺失 500。
+// 否则 /api/me 等读取配额的接口会因行缺失 500。db 包是建表与 seed 的归属地，
+// 这里直接写引导行，避免 platform 各域反向依赖 bootstrap（会成环）。
 func ensurePlatformAccounts(gormDB *gorm.DB, userID uuid.UUID) error {
-	if err := billing.NewService(gormDB, model.ProductCanvas).EnsureAccount(gormDB, userID); err != nil {
+	if err := gormDB.Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&model.CreditAccount{UserID: userID}).Error; err != nil {
 		return fmt.Errorf("建立点数账户失败: %w", err)
 	}
-	if err := membership.NewService(gormDB).SyncQuotaWithin(gormDB, userID, time.Now()); err != nil {
+	var plan model.MembershipPlan
+	if err := gormDB.First(&plan, "id = ?", "free").Error; err != nil {
+		return fmt.Errorf("读取 free 档位失败（启动顺序必须先跑 SeedMembershipPlans）: %w", err)
+	}
+	if err := gormDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}},
+		DoUpdates: clause.Assignments(map[string]any{"quota_bytes": plan.StorageBytes}),
+	}).Create(&model.StorageAccount{UserID: userID, QuotaBytes: plan.StorageBytes}).Error; err != nil {
 		return fmt.Errorf("建立存储配额失败: %w", err)
 	}
 	return nil

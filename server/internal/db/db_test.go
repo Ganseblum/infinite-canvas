@@ -28,6 +28,10 @@ func newDBTestDB(t *testing.T) *gorm.DB {
 	if err := Migrate(g); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
+	// 与生产启动顺序一致：档位 seed 先于 EnsureAdmin（账户引导要读 free 档配额）。
+	if err := SeedMembershipPlans(g); err != nil {
+		t.Fatalf("写入会员档位失败: %v", err)
+	}
 	if err := authz.Sync(g); err != nil {
 		t.Fatalf("同步角色与权限目录失败: %v", err)
 	}
