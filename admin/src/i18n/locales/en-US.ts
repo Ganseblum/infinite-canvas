@@ -21,6 +21,14 @@ export default {
         loginNote: "The session is shared with the main site: signing in here also signs you in there.",
         logoutNote: "The session is shared with the main site: signing out here also signs you out there.",
     },
+    // Environment badge: production always shows a prominent red badge; test/dev reuse the amber style.
+    envBadge: {
+        production: "PRODUCTION",
+        productionTitle: "This is the production environment. Proceed carefully.",
+        test: "TEST",
+        dev: "DEV",
+        nonProductionTitle: "This is not the production environment",
+    },
     forbidden: {
         title: "This account has no console access",
         description: "The current account {{email}} can use the main site as usual, but it has no access to the admin console. Ask an administrator to grant access, or sign in with an administrator account.",

@@ -271,7 +271,13 @@ export default function ImagePage() {
     };
 
     const deleteSelectedLogs = () => {
-        void Promise.all(selectedLogIds.map((id) => deleteGeneration(id))).then(() => logsQuery.refetch());
+        const ids = selectedLogIds;
+        // 删除失败不静默：记录失败条数并提示，最后统一刷新列表对齐服务端真实状态。
+        void Promise.all(ids.map((id) => deleteGeneration(id).catch(() => null))).then((deleted) => {
+            const failedCount = deleted.filter((item) => item === null).length;
+            if (failedCount) message.error(t("imageWorkbench.deleteFailed", { count: failedCount }));
+            return logsQuery.refetch();
+        });
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);

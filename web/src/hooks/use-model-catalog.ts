@@ -8,13 +8,14 @@ export function useModelCatalog() {
     const isAuthenticated = useAuthStore((state) => state.status === "authenticated");
     const items = useModelCatalogStore((state) => state.items);
     const status = useModelCatalogStore((state) => state.status);
+    const error = useModelCatalogStore((state) => state.error);
     const load = useModelCatalogStore((state) => state.load);
 
     useEffect(() => {
         if (isAuthenticated && status === "idle") void load();
     }, [isAuthenticated, load, status]);
 
-    return { items, status, isLoaded: status === "ready", reload: load };
+    return { items, status, error, isLoaded: status === "ready", reload: load };
 }
 
 export function useModelOptions(capability?: ModelCapability): CatalogModel[] {

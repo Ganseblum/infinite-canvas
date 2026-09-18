@@ -8,6 +8,8 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { AccountCard } from "./components/account-card";
 import { CreditsSection } from "./components/credits-section";
 import { DangerZone } from "./components/danger-zone";
+import { DataExportSection } from "./components/data-export-section";
+import { FreeGrantSection } from "./components/free-grant-section";
 import { ProfileSection } from "./components/profile-section";
 import { SecuritySection } from "./components/security-section";
 import { StatusAlerts } from "./components/status-alerts";
@@ -19,6 +21,7 @@ const SECTIONS = [
     { id: "profile-credits", key: "credits" },
     { id: "profile-usage", key: "usage" },
     { id: "profile-security", key: "security" },
+    { id: "profile-export", key: "export" },
     { id: "profile-danger", key: "danger" },
 ] as const;
 
@@ -85,7 +88,9 @@ export default function ProfilePage() {
                                 <ProfileSection user={me.user} />
                                 <CreditsSection />
                                 {me.plan ? <UsageSection plan={me.plan} usage={me.usage} /> : null}
+                                <FreeGrantSection />
                                 <SecuritySection />
+                                <DataExportSection />
                                 <DangerZone deletion={me.deletion} />
                             </div>
                         </div>

@@ -43,7 +43,8 @@ func SeedTestData(gormDB *gorm.DB, email, password string) error {
 		if err := gormDB.Create(&user).Error; err != nil {
 			return fmt.Errorf("创建测试账号失败: %w", err)
 		}
-		slog.Info("已创建测试账号", "email", email)
+		// 日志不带明文密码：测试账号与密码以 deploy 部署文档为准（差异清单 #120）。
+		slog.Info("已创建测试账号，账号与密码见 deploy 部署文档", "email", email)
 	} else if err != nil {
 		return fmt.Errorf("查询测试账号失败: %w", err)
 	}

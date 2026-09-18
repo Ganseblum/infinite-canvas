@@ -5,7 +5,8 @@ set -e
 #
 # 刻意不复用 web/docker-entrypoint.sh：那个脚本会写 ANALYTICS_GA4_ID / ANALYTICS_BAIDU_ID，
 # 运维只要在 admin 服务上多设一个统计变量，第三方统计脚本就会在管理后台控制台里跑起来，
-# 把管理员的操作暴露给第三方。admin 只注入它自己要的键（API_BASE_URL / ADMIN_BASE_URL / SITE_ENV）。
+# 把管理员的操作暴露给第三方。admin 只注入它自己要的键（API_BASE_URL / ADMIN_BASE_URL /
+# MAIN_SITE_BASE_URL / SITE_ENV）。
 
 CONFIG_PATH=/usr/share/nginx/html/config.js
 
@@ -15,8 +16,13 @@ sanitize_text() {
 }
 
 API_BASE_URL=$(sanitize_text "${API_BASE_URL:-}")
-# 后台自己的对外地址，页面里指向主站的绝对链接用它拼（留空时页面降级为纯文本，不拼半截链接）。
+# 后台自己的对外地址，主站用户菜单跳后台用它（属 app 服务的变量，注入进来只作 MAIN_SITE_BASE_URL
+# 的回退，见下）。
 ADMIN_BASE_URL=$(sanitize_text "${ADMIN_BASE_URL:-}")
+# 主站基址：后台页面里指向主站路由的绝对链接（如 /community/users/:id）用它拼。
+# ADMIN_BASE_URL 是后台自己的域名，拿它拼主站路径只会落回后台域 404，所以两者必须分开注入。
+# 留空时前端回退 ADMIN_BASE_URL / 当前 origin（同域部署与本地开发天然正确），允许为空。
+MAIN_SITE_BASE_URL=$(sanitize_text "${MAIN_SITE_BASE_URL:-}")
 SITE_ENV=$(sanitize_text "${SITE_ENV:-production}")
 
 # fail-fast：空的 API_BASE_URL 对 admin 永远是错的。admin 域上没有 /api，
@@ -31,6 +37,7 @@ cat > "$CONFIG_PATH" <<EOF
 window.__RUNTIME_CONFIG__ = {
   API_BASE_URL: "${API_BASE_URL}",
   ADMIN_BASE_URL: "${ADMIN_BASE_URL}",
+  MAIN_SITE_BASE_URL: "${MAIN_SITE_BASE_URL}",
   SITE_ENV: "${SITE_ENV}"
 };
 EOF

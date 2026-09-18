@@ -2,6 +2,7 @@ import { Button, Layout, Menu } from "antd";
 import { useTranslation } from "react-i18next";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import { EnvBadge } from "@admin/components/env-badge";
 import { useConsoleAccess } from "@admin/hooks/use-console-access";
 import { visibleNavItems } from "@admin/lib/admin-nav";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -23,7 +24,11 @@ export default function AdminLayout() {
         <Layout className="h-dvh">
             <Layout.Sider theme="light" width={224}>
                 <div className="flex h-dvh flex-col">
-                    <div className="px-5 py-5 text-sm font-semibold">{t("admin.title")}</div>
+                    {/* 环境标识放在侧边栏头部而不是内容区标题旁：内容区会随滚动移出视口，环境角标必须常驻。 */}
+                    <div className="flex items-center gap-2 px-5 py-5 text-sm font-semibold">
+                        <span className="truncate">{t("admin.title")}</span>
+                        <EnvBadge />
+                    </div>
                     <Menu
                         className="flex-1 overflow-y-auto"
                         mode="inline"

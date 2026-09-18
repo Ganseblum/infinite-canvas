@@ -1,12 +1,24 @@
-import { Alert, App, Button, Card, Skeleton, Tag, Typography } from "antd";
+import { useState } from "react";
+import { Alert, App, Button, Card, Input, Skeleton, Tag, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarCheck, Gift, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { getApiErrorMessage } from "@/lib/api-error";
+import { getApiErrorMessage, ApiError } from "@/lib/api-error";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatPoints } from "@/lib/credits-format";
-import { checkin, getCheckinStatus, getInviteInfo } from "@/services/api/activity";
+import { bindInviteCode, checkin, getCheckinStatus, getInviteInfo } from "@/services/api/activity";
+
+// 绑定邀请码的服务端校验原因在 error.fields 里（如「邀请码不存在」），
+// 409 冲突的业务原因直接放在 message；两种都要优先于通用 i18n 文案展示。
+function bindErrorMessage(error: unknown) {
+    if (error instanceof ApiError) {
+        const fieldReason = error.fields ? Object.values(error.fields).find(Boolean) : undefined;
+        if (fieldReason) return fieldReason;
+        if (error.status === 409 && error.message) return error.message;
+    }
+    return getApiErrorMessage(error);
+}
 
 export default function ActivityPage() {
     const { message } = App.useApp();
@@ -16,6 +28,7 @@ export default function ActivityPage() {
 
     const checkinQuery = useQuery({ queryKey: ["activity", "checkin"], queryFn: ({ signal }) => getCheckinStatus(signal) });
     const inviteQuery = useQuery({ queryKey: ["activity", "invite"], queryFn: ({ signal }) => getInviteInfo(signal) });
+    const [inviteCode, setInviteCode] = useState("");
 
     const checkinMutation = useMutation({
         mutationFn: () => checkin(),
@@ -28,6 +41,22 @@ export default function ActivityPage() {
             ]);
         },
         onError: (error) => message.error(getApiErrorMessage(error)),
+    });
+
+    const bindInviteMutation = useMutation({
+        mutationFn: () => bindInviteCode(inviteCode.trim()),
+        onSuccess: async (result) => {
+            message.success(
+                result.inviteeRewardMicros > 0 ? `绑定成功，你获得 ${formatPoints(result.inviteeRewardMicros)} 点数` : "邀请码绑定成功",
+            );
+            setInviteCode("");
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ["activity"] }),
+                queryClient.invalidateQueries({ queryKey: ["me"] }),
+                queryClient.invalidateQueries({ queryKey: ["credits"] }),
+            ]);
+        },
+        onError: (error) => message.error(bindErrorMessage(error)),
     });
 
     return (
@@ -116,6 +145,29 @@ export default function ActivityPage() {
                                 <p className="text-xs text-stone-500 dark:text-stone-400">
                                     {t("activity.inviteTotal", { points: formatPoints(inviteQuery.data.rewardMicros) })}
                                 </p>
+                                <div className="rounded-lg border border-dashed border-stone-200 px-3 py-2.5 dark:border-stone-700">
+                                    <div className="text-xs text-stone-500 dark:text-stone-400">收到好友邀请？输入对方的邀请码完成绑定</div>
+                                    <div className="mt-2 flex items-center gap-2">
+                                        <Input
+                                            size="small"
+                                            value={inviteCode}
+                                            maxLength={32}
+                                            allowClear
+                                            placeholder="填写好友的邀请码"
+                                            onChange={(event) => setInviteCode(event.target.value)}
+                                            onPressEnter={() => inviteCode.trim() && bindInviteMutation.mutate()}
+                                        />
+                                        <Button
+                                            size="small"
+                                            loading={bindInviteMutation.isPending}
+                                            disabled={!inviteCode.trim()}
+                                            onClick={() => bindInviteMutation.mutate()}
+                                        >
+                                            绑定邀请码
+                                        </Button>
+                                    </div>
+                                    <p className="mt-1.5 text-xs text-stone-400 dark:text-stone-500">需已完成邮箱验证且注册满 1 小时，每个账号只能绑定一次。</p>
+                                </div>
                             </div>
                         )}
                     </Card>

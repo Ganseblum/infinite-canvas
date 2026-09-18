@@ -219,6 +219,10 @@ func generationPayload(item model.Generation) gin.H {
 		"config":     item.Config,
 		"result":     item.Result,
 		"durationMs": item.DurationMs,
-		"createdAt":  formatTime(item.CreatedAt),
+		// 生成产物恒为 AIGC 内容，供前端打「AI生成」标识（差异清单 #116）。
+		"isAIGC": true,
+		// 审核结论随记录透出，用户能看到自己的生成内容是否通过审核（差异清单 #119）。
+		"moderationStatus": item.ModerationStatus,
+		"createdAt":        formatTime(item.CreatedAt),
 	}
 }

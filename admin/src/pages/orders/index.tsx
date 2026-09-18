@@ -100,6 +100,7 @@ export default function AdminOrdersPage() {
                     options={[
                         { value: "alipay", label: t("billing.providers.alipay") },
                         { value: "wechat", label: t("billing.providers.wechat") },
+                        { value: "easypay", label: t("billing.providers.easypay") },
                     ]}
                 />
                 <Input.Search

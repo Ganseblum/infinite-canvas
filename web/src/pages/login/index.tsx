@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, App, Button, Form, Input } from "antd";
+import { Alert, App, Button, Checkbox, Form, Input } from "antd";
 import type { FormInstance } from "antd";
 import { Check, MailCheck } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -15,7 +15,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 
 type TabKey = "login" | "register";
 type LoginValues = { account: string; password: string };
-type RegisterValues = { email: string; username: string; password: string; confirmPassword: string };
+type RegisterValues = { email: string; username: string; password: string; confirmPassword: string; agree: boolean };
 
 function applyFieldErrors(form: FormInstance, fields?: Record<string, string>) {
     if (!fields) return;
@@ -283,6 +283,23 @@ export default function LoginPage() {
                                         ]}
                                     >
                                         <Input.Password size="large" placeholder={t("auth.register.confirmPlaceholder")} autoComplete="new-password" />
+                                    </Form.Item>
+                                    {/* 条款与隐私同意勾选：未勾选无法提交注册（差异清单 #113），链接新窗口打开公开页。 */}
+                                    <Form.Item
+                                        name="agree"
+                                        valuePropName="checked"
+                                        rules={[{ validator: (_, value: boolean) => (value ? Promise.resolve() : Promise.reject(new Error(t("auth.register.agreeRequired")))) }]}
+                                    >
+                                        <Checkbox className="text-sm text-stone-500 dark:text-stone-400">
+                                            {t("auth.register.agreePrefix")}
+                                            <a href="/terms" target="_blank" rel="noreferrer" className="mx-1">
+                                                {t("auth.register.terms")}
+                                            </a>
+                                            {t("auth.register.agreeAnd")}
+                                            <a href="/privacy" target="_blank" rel="noreferrer" className="mx-1">
+                                                {t("auth.register.privacy")}
+                                            </a>
+                                        </Checkbox>
                                     </Form.Item>
                                     <Button className="mt-2" type="primary" size="large" block htmlType="submit" loading={submitting}>
                                         {t("auth.register.submit")}

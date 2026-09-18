@@ -3,6 +3,7 @@ import { Spin } from "antd";
 import { createBrowserRouter, Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
+import { RouteErrorBoundary } from "@/components/error-boundary";
 import UserLayout from "@/layouts/user-layout";
 import ActivityPage from "@/pages/activity";
 import AssetsPage from "@/pages/assets";
@@ -15,6 +16,8 @@ import ConfigPage from "@/pages/config";
 import HomePage from "@/pages/home";
 import ImagePage from "@/pages/image";
 import LoginPage from "@/pages/login";
+import PrivacyPage from "@/pages/legal/privacy";
+import TermsPage from "@/pages/legal/terms";
 import ModelsPage from "@/pages/models";
 import NotFound from "@/pages/not-found";
 import PricingPage from "@/pages/pricing";
@@ -59,10 +62,15 @@ function RequireAuth({ children }: { children: ReactNode }) {
 export const router = createBrowserRouter([
     {
         element: <RootBootstrap />,
+        // 任一路由渲染抛错时兜底展示，避免落到 React Router 默认英文错误页。
+        errorElement: <RouteErrorBoundary />,
         children: [
             { path: "/login", element: <LoginPage /> },
             { path: "/verify-email", element: <VerifyEmailPage /> },
             { path: "/reset-password", element: <ResetPasswordPage /> },
+            // 条款与隐私页公开可访问，不进登录守卫（差异清单 #113）。
+            { path: "/terms", element: <TermsPage /> },
+            { path: "/privacy", element: <PrivacyPage /> },
             {
                 element: (
                     <RequireAuth>

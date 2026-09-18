@@ -1,9 +1,10 @@
 import { useEffect, useId, useState } from "react";
-import { Cpu } from "lucide-react";
+import { Cpu, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { estimateModelPoints, useModelOptions } from "@/hooks/use-model-catalog";
+import { useModelCatalogStore } from "@/stores/use-model-catalog-store";
 import { cn } from "@/lib/utils";
 import type { CatalogModel, ModelCapability } from "@/services/api/catalog";
 
@@ -21,6 +22,8 @@ export function ModelPicker({ value, onChange, capability, className, fullWidth 
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const options = useModelOptions(capability);
+    const status = useModelCatalogStore((state) => state.status);
+    const reloadModels = useModelCatalogStore((state) => state.load);
     const current = value || "";
     const currentModel = options.find((model) => model.id === current);
     const pickerPlaceholder = placeholder || t("settingsPanels.model.select");
@@ -56,6 +59,7 @@ export function ModelPicker({ value, onChange, capability, className, fullWidth 
             >
                 <ModelIcon model={currentModel} />
                 <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{currentModel ? modelLabel(currentModel) : pickerPlaceholder}</span>
+                <ModelPoints model={currentModel} />
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
@@ -77,6 +81,22 @@ export function ModelPicker({ value, onChange, capability, className, fullWidth 
                             </span>
                         </SelectItem>
                     ))
+                ) : status === "error" ? (
+                    <div className="flex flex-col items-center gap-2 px-3 py-3 text-center">
+                        <span className="text-sm text-muted-foreground">{t("settingsPanels.model.loadFailed")}</span>
+                        <button
+                            type="button"
+                            className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                void reloadModels();
+                            }}
+                        >
+                            <RotateCcw className="size-3.5" />
+                            {t("common.retry")}
+                        </button>
+                    </div>
                 ) : (
                     <SelectItem value="__empty__" disabled>
                         {t("settingsPanels.model.empty")}
@@ -91,9 +111,9 @@ function modelLabel(model: CatalogModel) {
     return model.displayName || model.id;
 }
 
-function ModelPoints({ model }: { model: CatalogModel }) {
+function ModelPoints({ model }: { model?: CatalogModel }) {
     const { t } = useTranslation();
-    const points = estimateModelPoints(model);
+    const points = model ? estimateModelPoints(model) : undefined;
     if (typeof points !== "number" || !Number.isFinite(points)) return null;
     return <span className="shrink-0 text-xs text-muted-foreground">{t("settingsPanels.model.points", { points: Math.round(points).toLocaleString() })}</span>;
 }

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import { App } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import { ApiError, getApiErrorMessage } from "@/lib/api-error";
@@ -74,6 +74,22 @@ export function useAiGenerationError() {
             }
             if (error instanceof ApiError && (error.code === "UPSTREAM_ERROR" || error.code === "UPSTREAM_TIMEOUT")) {
                 message.error(t("workbench.refunded"));
+                return;
+            }
+            if (error instanceof ApiError && error.code === "EMAIL_NOT_VERIFIED") {
+                // 不只弹提示：附「去验证」链接跳到验证页（页内可重发验证邮件），与用户菜单的重发入口一致。
+                // 本文件是 .ts 写不了 JSX，用 createElement 挂链接。
+                message.error({
+                    key: "email-not-verified",
+                    duration: 8,
+                    content: createElement(
+                        "span",
+                        null,
+                        getApiErrorMessage(error),
+                        " ",
+                        createElement(Link, { className: "underline underline-offset-2", to: "/verify-email" }, "去验证"),
+                    ),
+                });
                 return;
             }
             if (error instanceof ApiError) {

@@ -6,6 +6,7 @@ import { listModels, type CatalogModel, type ModelCapability, type ModelConstrai
 type ModelCatalogState = {
     items: CatalogModel[];
     status: "idle" | "loading" | "ready" | "error";
+    error?: unknown;
     load: () => Promise<void>;
 };
 
@@ -14,12 +15,12 @@ export const useModelCatalogStore = create<ModelCatalogState>()((set, get) => ({
     status: "idle",
     load: async () => {
         if (get().status === "loading") return;
-        set({ status: "loading" });
+        set({ status: "loading", error: undefined });
         try {
             const { items } = await listModels();
-            set({ items, status: "ready" });
-        } catch {
-            set({ status: "error" });
+            set({ items, status: "ready", error: undefined });
+        } catch (error) {
+            set({ status: "error", error });
         }
     },
 }));

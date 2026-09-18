@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
@@ -59,14 +59,18 @@ export function CanvasNodePromptPanel({
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const isEditingExistingContent = hasTextContent || hasImageContent;
-    const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
+    const externalPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
+    const [prompt, setPrompt] = useState(externalPrompt);
     const [expanded, setExpanded] = useState(false);
+    // 本组件最近一次同步过的外部值：Agent 写回或撤销让外部值偏离它时，把输入框刷成最新值；
+    // 仅生成产物更新节点内容而不改提示词时外部值不变，输入框保留当前编辑内容。
+    const lastSyncedPromptRef = useRef(externalPrompt);
 
-    // Restore prompts only when switching nodes; preserve the current input after generation on the same node.
     useEffect(() => {
-        setPrompt(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [node.id]);
+        if (externalPrompt === lastSyncedPromptRef.current) return;
+        lastSyncedPromptRef.current = externalPrompt;
+        setPrompt(externalPrompt);
+    }, [externalPrompt]);
 
     const updatePrompt = (value: string) => {
         setPrompt(value);

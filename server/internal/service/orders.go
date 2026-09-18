@@ -193,8 +193,9 @@ func (s *OrderService) HandleCallback(ctx context.Context, providerName string, 
 
 	switch result.Status {
 	case "paid":
-		// 金额只与本地快照比较，绝不能覆盖本地记录。
-		if result.PriceMicros != 0 && result.PriceMicros != order.PriceMicros {
+		// 金额只与本地快照比较，绝不能覆盖本地记录；无条件比对——
+		// 「解析结果为 0」不再短路校验，防止新渠道把解析失败静默成 0 到账（差异清单 #7）。
+		if result.PriceMicros != order.PriceMicros {
 			slog.Error("支付回调金额与本地订单不一致，拒绝到账",
 				"order", order.ID, "provider", providerName,
 				"callbackMicros", result.PriceMicros, "localMicros", order.PriceMicros)
@@ -266,7 +267,8 @@ func (s *OrderService) ExpirePendingOrders(ctx context.Context, now time.Time, t
 		}
 		switch result.Status {
 		case "paid":
-			if result.PriceMicros != 0 && result.PriceMicros != order.PriceMicros {
+			// 与回调同口径：无条件比对金额，0 或解析失败不再短路（差异清单 #7）。
+			if result.PriceMicros != order.PriceMicros {
 				slog.Error("主动查询金额与本地订单不一致，拒绝到账", "order", order.ID)
 				continue
 			}

@@ -1,6 +1,6 @@
 import { apiRequest } from "@/services/api/client";
 
-export type PaymentProvider = "alipay" | "wechat";
+export type PaymentProvider = "alipay" | "wechat" | "easypay";
 export type PaymentType = "qrcode" | "redirect" | "clientSecret";
 export type OrderStatus = "pending" | "paid" | "failed" | "refunded";
 

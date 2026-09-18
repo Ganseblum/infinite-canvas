@@ -24,6 +24,14 @@ export default {
         loginNote: "登录态与主站共用：在这里登录后，主站也会同时进入登录状态。",
         logoutNote: "登录态与主站共用：退出后台会同时退出主站。",
     },
+    // 顶栏环境标识：正式环境恒显红色角标（后台操作大多不可逆），测试/开发沿用主站的黄色小标签。
+    envBadge: {
+        production: "正式环境",
+        productionTitle: "当前是正式环境，请谨慎操作",
+        test: "测试环境",
+        dev: "本地开发",
+        nonProductionTitle: "当前访问的不是正式环境",
+    },
     forbidden: {
         title: "当前账号没有后台访问权限",
         description: "当前账号 {{email}} 可以正常使用主站，但没有管理后台的访问权限。需要后台权限请联系管理员开通，或换一个管理员账号登录。",

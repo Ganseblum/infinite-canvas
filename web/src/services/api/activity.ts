@@ -27,3 +27,10 @@ export function checkin() {
 export function getInviteInfo(signal?: AbortSignal) {
     return apiRequest<InviteInfo>("/activity/invite", { signal });
 }
+
+export function bindInviteCode(code: string) {
+    return apiRequest<{ inviterRewardMicros: number; inviteeRewardMicros: number }>("/activity/invite/bind", {
+        method: "POST",
+        body: { code },
+    });
+}

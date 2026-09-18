@@ -193,17 +193,18 @@ export default function VideoPage() {
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
-        setResults([{ id: nanoid(), status: "pending" }]);
+        const logId = nanoid();
+        setResults((current) => upsertResult(current, { id: logId, status: "pending" }));
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
         try {
             const task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references);
-            const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: 0, status: "pending", task });
+            const log = buildLog({ id: logId, prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: 0, status: "pending", task });
             await saveLog(log);
             void pollGenerationLog(log, snapshot.config, agentTaskId);
         } catch (error) {
             const errorMessage = getApiErrorMessage(error);
-            setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
+            setResults((current) => upsertResult(current, { id: logId, status: "failed", error: errorMessage }));
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: performance.now() - batchStartedAt, status: "failed", error: errorMessage }));
             void queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -316,7 +317,7 @@ export default function VideoPage() {
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
         setStartedAt((value) => value || performance.now());
-        setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
+        setResults((value) => upsertResult(value, { id: log.id, status: "pending" }));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
             const stored = await waitForVideoGenerationTask(configOverride || taskConfig, log.task);
@@ -330,7 +331,7 @@ export default function VideoPage() {
                 bytes: stored.bytes,
                 mimeType: stored.mimeType,
             };
-            setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
+            setResults((value) => upsertResult(value, { id: log.id, status: "success", video: nextVideo }));
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
             await saveLog({ ...log, status: "success", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
             void queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -338,7 +339,7 @@ export default function VideoPage() {
             message.success(t("videoWorkbench.generated"));
         } catch (error) {
             const errorMessage = getApiErrorMessage(error);
-            setResults([{ id: log.id, status: "failed", error: errorMessage }]);
+            setResults((value) => upsertResult(value, { id: log.id, status: "failed", error: errorMessage }));
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "failed", durationMs: Date.now() - log.createdAt, error: errorMessage });
             void queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -759,6 +760,7 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
 }
 
 function buildLog({
+    id,
     prompt,
     model,
     config,
@@ -769,6 +771,7 @@ function buildLog({
     video,
     error,
 }: {
+    id?: string;
     prompt: string;
     model: string;
     config: AiConfig;
@@ -790,7 +793,7 @@ function buildLog({
         videoMode: config.videoMode === "reference" ? "reference" : "frames",
     };
     return {
-        id: nanoid(),
+        id: id || nanoid(),
         createdAt: Date.now(),
         title: prompt.slice(0, 12) || i18n.t("workbench.untitled"),
         prompt,
@@ -807,6 +810,13 @@ function buildLog({
         video,
         error,
     };
+}
+
+// 结果区按任务 id 合并：同 id 就地更新（pending → 成功/失败），新 id 追加，多个并行任务互不覆盖。
+function upsertResult(results: GenerationResult[], next: GenerationResult) {
+    const index = results.findIndex((item) => item.id === next.id);
+    if (index < 0) return [...results, next];
+    return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {

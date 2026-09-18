@@ -1360,14 +1360,14 @@ function InfiniteCanvasPage() {
                 }
 
                 const movedIds = new Set(initialPositions.map((item) => item.id));
-                const previewNodes = nodesRef.current.map((node) => {
-                    const initial = initialPositions.find((item) => item.id === node.id);
-                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                });
-                setDropTargetGroupId(findGroupDropTarget(movedIds, previewNodes)?.id || null);
-
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
                 rafRef.current = requestAnimationFrame(() => {
+                    // 拖放目标组与节点位置在同一个 rAF 里统一计算和提交，避免每个 mousemove 都触发重渲染。
+                    const previewNodes = nodesRef.current.map((node) => {
+                        const initial = initialPositions.find((item) => item.id === node.id);
+                        return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
+                    });
+                    setDropTargetGroupId(findGroupDropTarget(movedIds, previewNodes)?.id || null);
                     setNodes((prev) =>
                         prev.map((node) => {
                             const initial = initialPositions.find((item) => item.id === node.id);

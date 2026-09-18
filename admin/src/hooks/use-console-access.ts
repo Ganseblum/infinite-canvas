@@ -24,9 +24,16 @@ export type ConsoleAccess =
     | { phase: "no-console-access"; user: AuthUser }
     | { phase: "admin"; user: AuthUser; role: { key: string; name: string; isSystem: boolean }; permissions: string[] };
 
+// web 的 AuthUser 类型没声明 mustChangePassword，但登录/刷新响应的 user 对象里实际带着它
+//（server 的 userPayload 一直下发），admin 在本地补上这个可选字段读会话状态，不改白名单里的 web 文件。
+export type AuthUserWithGate = AuthUser & { mustChangePassword?: boolean };
+
 export function useConsoleAccess(): ConsoleAccess {
     const status = useAuthStore((state) => state.status);
     const user = useAuthStore((state) => state.user);
+    // 强制改密闸门先看会话状态：置位时服务端只放行登出/刷新/改密，/admin/me 注定 403，
+    // 守卫直接送改密页，一个多余的请求都不发。
+    const mustChangePassword = (user as AuthUserWithGate | null)?.mustChangePassword === true;
     const signedIn = status === "authenticated" && !!user;
 
     const meQuery = useQuery({
@@ -41,7 +48,9 @@ export function useConsoleAccess(): ConsoleAccess {
                 throw error;
             }
         },
-        enabled: signedIn,
+        // 闸门放下时 /admin/me 必然 403，不发这个注定失败的请求；改密成功清除标记后 enabled 翻回
+        // true，这里会自动重新拉取。
+        enabled: signedIn && !mustChangePassword,
         // 权限每请求由服务端现算，前端不长期缓存结论：重新聚焦窗口时重新确认一次，
         // 权限被调整后菜单不会一直停在旧状态。
         staleTime: 0,
@@ -59,7 +68,10 @@ export function useConsoleAccess(): ConsoleAccess {
     // 已登录却没有 user 属于异常快照，按未登录处理，避免后面把 user 当非空用。
     if (status === "unauthenticated" || !user) return { phase: "signed-out", user: null };
     if (meQuery.error instanceof ApiError && meQuery.error.status === 401) return { phase: "signed-out", user: null };
-    // 403 PASSWORD_CHANGE_REQUIRED 是「闸门放下」不是「无权限」：改密是唯一出路。
+    // 会话状态里的强制改密标记：守卫据此直接送改密页。
+    if (mustChangePassword) return { phase: "must-change-password", user };
+    // 兜底：会话标记缺席但服务端闸门已放下（比如管理员在会话进行中才给这个账号置位），403 PASSWORD_CHANGE_REQUIRED
+    // 同样是「闸门放下」不是「无权限」，改密是唯一出路。
     if (meQuery.error instanceof ApiError && meQuery.error.code === "PASSWORD_CHANGE_REQUIRED") return { phase: "must-change-password", user };
     if (meQuery.isError) return { phase: "no-console-access", user };
     if (!meQuery.data) return { phase: "booting", user: null };

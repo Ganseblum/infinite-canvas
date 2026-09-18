@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, App, Avatar, Button, Empty, Input, Modal, Segmented, Skeleton, Tag } from "antd";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, App, Avatar, Button, Empty, Input, Modal, Popconfirm, Segmented, Skeleton, Tag } from "antd";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { Heart, MessageSquareWarning, Repeat2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
+import { useCopyText } from "@/hooks/use-copy-text";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { mediaUrl } from "@/services/api/media";
 import { useAuthStore } from "@/stores/use-auth-store";
 import {
+    deleteCommunityWork,
     likeCommunityWork,
     listCommunityWorks,
+    listMyCommunityWorks,
     reportCommunityWork,
     unlikeCommunityWork,
     type CommunityWork,
@@ -20,6 +23,8 @@ import {
 export default function CommunityPage() {
     const { message, modal } = App.useApp();
     const { t } = useTranslation();
+    const navigate = useNavigate();
+    const copyText = useCopyText();
     const queryClient = useQueryClient();
     const userId = useAuthStore((state) => state.user?.id ?? null);
     const [sort, setSort] = useState<"latest" | "hot">("latest");
@@ -27,6 +32,7 @@ export default function CommunityPage() {
     const [query, setQuery] = useState("");
     const [activeTag, setActiveTag] = useState<string | undefined>();
     const [preview, setPreview] = useState<CommunityWork | null>(null);
+    const [showMine, setShowMine] = useState(false);
 
     useEffect(() => {
         const timer = setTimeout(() => setQuery(keyword.trim()), 300);
@@ -45,6 +51,13 @@ export default function CommunityPage() {
         queryFn: ({ signal }) => listCommunityWorks({ size: 24, sort: "hot", q: query || undefined, tag: activeTag }, signal),
         enabled: sort === "hot",
     });
+
+    const mineQuery = useQuery({
+        queryKey: ["community", "mine"],
+        queryFn: ({ signal }) => listMyCommunityWorks(signal),
+        enabled: showMine && !!userId,
+    });
+    const mineWorks = mineQuery.data?.items ?? [];
 
     const works = useMemo(() => {
         if (sort === "hot") return hotQuery.data?.items ?? [];
@@ -69,6 +82,23 @@ export default function CommunityPage() {
     }, [works]);
 
     const invalidate = () => queryClient.invalidateQueries({ queryKey: ["community"] });
+
+    const unpublishMutation = useMutation({
+        mutationFn: (id: string) => deleteCommunityWork(id),
+        onSuccess: async () => {
+            message.success("作品已下架");
+            await invalidate();
+        },
+        onError: (error) => message.error(getApiErrorMessage(error)),
+    });
+
+    // 复刻的最小闭环：复制原作素材链接并跳到对应工作台当参考图；
+    // sourceWorkId 随发布落库还需要素材发布弹窗透传（见差异清单说明）。
+    const remix = (work: CommunityWork) => {
+        const media = mediaUrl(work.storageKey);
+        if (media) copyText(new URL(media, window.location.origin).toString(), work.kind === "video" ? "已复制原作视频链接，可在视频工作台作为参考视频使用" : "已复制原作图片链接，可在图片工作台作为参考图使用");
+        navigate(work.kind === "video" ? "/video" : "/image");
+    };
 
     const toggleLike = async (work: CommunityWork) => {
         try {
@@ -131,10 +161,15 @@ export default function CommunityPage() {
                                 { value: "hot", label: t("community.sortHot") },
                             ]}
                         />
+                        {userId ? (
+                            <Button type={showMine ? "primary" : "default"} onClick={() => setShowMine((value) => !value)}>
+                                我的作品
+                            </Button>
+                        ) : null}
                     </div>
                 </div>
 
-                {tags.length > 0 ? (
+                {!showMine && tags.length > 0 ? (
                     <div className="mt-4 flex flex-wrap gap-2">
                         <Tag.CheckableTag checked={!activeTag} onChange={() => setActiveTag(undefined)}>
                             {t("community.allTags")}
@@ -147,7 +182,65 @@ export default function CommunityPage() {
                     </div>
                 ) : null}
 
-                {failed ? (
+                {showMine ? (
+                    mineQuery.isError ? (
+                        <Alert
+                            className="mt-6"
+                            type="error"
+                            showIcon
+                            message={t("community.loadFailed")}
+                            description={getApiErrorMessage(mineQuery.error)}
+                            action={
+                                <Button size="small" onClick={() => void mineQuery.refetch()}>
+                                    {t("community.retry")}
+                                </Button>
+                            }
+                        />
+                    ) : mineQuery.isPending ? (
+                        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            {Array.from({ length: 4 }).map((_, index) => (
+                                <Skeleton.Image key={index} active className="!h-56 !w-full rounded-xl" />
+                            ))}
+                        </div>
+                    ) : mineWorks.length === 0 ? (
+                        <Empty className="mt-16" image={Empty.PRESENTED_IMAGE_SIMPLE} description="你还没有发布过作品，可在「我的素材」页把图片或视频发布到社区。" />
+                    ) : (
+                        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            {mineWorks.map((work) => (
+                                <article key={work.id} className="group flex flex-col overflow-hidden rounded-xl border border-stone-200 transition hover:border-stone-300 dark:border-stone-800 dark:hover:border-stone-700">
+                                    <button type="button" className="relative block aspect-4/3 w-full overflow-hidden bg-black/[0.03] dark:bg-white/[0.04]" onClick={() => setPreview(work)}>
+                                        {work.kind === "video" ? (
+                                            <video src={mediaUrl(work.storageKey)} className="size-full object-cover" muted />
+                                        ) : (
+                                            <img src={mediaUrl(work.storageKey)} alt={work.title} className="size-full object-cover" loading="lazy" />
+                                        )}
+                                    </button>
+                                    <div className="flex flex-1 flex-col gap-3 p-4">
+                                        <h3 className="truncate font-medium">{work.title}</h3>
+                                        <div className="mt-auto flex items-center justify-between gap-2">
+                                            <span className="flex items-center gap-1 text-xs text-stone-500 dark:text-stone-400">
+                                                <Heart className="size-3.5" />
+                                                {work.likeCount}
+                                            </span>
+                                            <Popconfirm
+                                                title="确认下架该作品？"
+                                                description="下架后作品将从社区公开列表中移除。"
+                                                okText="下架"
+                                                cancelText={t("common.cancel")}
+                                                okButtonProps={{ danger: true }}
+                                                onConfirm={() => unpublishMutation.mutate(work.id)}
+                                            >
+                                                <Button size="small" type="text" loading={unpublishMutation.isPending && unpublishMutation.variables === work.id}>
+                                                    下架
+                                                </Button>
+                                            </Popconfirm>
+                                        </div>
+                                    </div>
+                                </article>
+                            ))}
+                        </div>
+                    )
+                ) : failed ? (
                     <Alert
                         className="mt-6"
                         type="error"
@@ -259,10 +352,19 @@ export default function CommunityPage() {
                             <div className="flex items-center gap-2">
                                 <Button
                                     icon={<Heart className={preview.liked ? "size-4 fill-rose-500 text-rose-500" : "size-4"} />}
-                                    onClick={() => void toggleLike(preview)}
+                                    onClick={async () => {
+                                        const result = await toggleLike(preview);
+                                        // 详情是打开时的快照，点赞后把结果同步回弹窗数据源，避免再点发反方向请求。
+                                        if (result) setPreview({ ...preview, liked: result.liked, likeCount: result.likeCount });
+                                    }}
                                 >
                                     {preview.likeCount}
                                 </Button>
+                                {userId ? (
+                                    <Button icon={<Repeat2 className="size-4" />} onClick={() => remix(preview)}>
+                                        以此作品为素材创作
+                                    </Button>
+                                ) : null}
                                 {userId !== preview.author.id ? (
                                     <Button icon={<MessageSquareWarning className="size-4" />} onClick={() => report(preview)}>
                                         {t("community.report")}

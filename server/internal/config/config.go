@@ -72,6 +72,12 @@ type Config struct {
 	WechatMchSerialNo   string
 	WechatMchPrivateKey string
 	WechatAPIv3Key      string
+	EasyPayEnabled      bool
+	EasyPayAPIBase      string
+	EasyPayPID          string
+	EasyPayKey          string
+	EasyPayType         string // alipay | wxpay，默认 alipay
+	EasyPayReturnURL    string
 
 	// 内容审核（第五期）
 	ModerationEnabled          bool
@@ -153,6 +159,12 @@ func Load() (*Config, error) {
 		WechatMchSerialNo:          os.Getenv("WECHATPAY_MCH_SERIAL_NO"),
 		WechatMchPrivateKey:        os.Getenv("WECHATPAY_MCH_PRIVATE_KEY"),
 		WechatAPIv3Key:             os.Getenv("WECHATPAY_API_V3_KEY"),
+		EasyPayEnabled:             getenvBool("EASYPAY_ENABLED", false),
+		EasyPayAPIBase:             os.Getenv("EASYPAY_API_BASE"),
+		EasyPayPID:                 os.Getenv("EASYPAY_PID"),
+		EasyPayKey:                 os.Getenv("EASYPAY_KEY"),
+		EasyPayType:                getenv("EASYPAY_TYPE", "alipay"),
+		EasyPayReturnURL:           os.Getenv("EASYPAY_RETURN_URL"),
 		ModerationEnabled:          getenvBool("MODERATION_ENABLED", false),
 		ModerationProvider:         getenv("MODERATION_PROVIDER", "fake"),
 		ModerationNSFWJSEndpoint:   os.Getenv("MODERATION_NSFWJS_ENDPOINT"),
@@ -288,6 +300,10 @@ func (c *Config) validate() error {
 	// 支付回调地址默认由 APP_BASE_URL 推导，可显式覆盖以指向独立域名。
 	if c.PaymentNotifyURL == "" {
 		c.PaymentNotifyURL = strings.TrimRight(c.AppBaseURL, "/") + "/api/payments/webhook"
+	}
+	// 易支付网关承载真实资金流，正式环境强制 https；测试/本地联调可放宽。
+	if c.EasyPayEnabled && c.SiteEnv == "production" && !strings.HasPrefix(c.EasyPayAPIBase, "https://") {
+		return errors.New("EASYPAY_ENABLED=true 且 SITE_ENV=production 时 EASYPAY_API_BASE 必须使用 https")
 	}
 	// 零值视同未配置，回落到默认 30 天，兼容直接构造 Config 的调用方。
 	if c.EntitlementDays <= 0 {

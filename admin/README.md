@@ -38,12 +38,13 @@ bun run build      # 先跑 prebuild 的 import 边界断言
 | `/admin/no-permission` | 已进后台但当前角色缺该页权限时的说明页，侧边栏保留，可直接走去有权限的页面 |
 | `/login` | admin 域自己的登录页，复用主站登录接口，不提供注册入口 |
 | `/forbidden` | 已登录但没有后台角色时的说明页，附退出登录（由用户自己点，不自动登出） |
+| `/admin/change-password` | 强制改密页：会话标记 `mustChangePassword` 置位（或 `/admin/me` 返回 403 `PASSWORD_CHANGE_REQUIRED`）时守卫强制送入，只有改密与退出两条出路；改密成功自动进后台 |
 | 其它任意路径 | 重定向到 `/admin`，再由守卫判断身份 |
 
 身份判定只有 `src/hooks/use-console-access.ts` 一个入口（`useConsoleAccess()`），守卫、登录页、说明页、菜单都从这里取结论：
 
 - `status === "booting"` 或 `/admin/me` 在途时只显示全屏 loading：既不放行也不跳转，否则刷新页面会先闪一下登录页；
-- 未登录 / 会话失效（401）→ `/login`；已登录但没有后台角色或接口返回 403 → `/forbidden`；有后台角色 → 放行并带上 `role` 与 `permissions`。
+- 未登录 / 会话失效（401）→ `/login`；强制改密置位 → `/admin/change-password`（优先读会话状态里的 `mustChangePassword`，闸门放下时不再发注定 403 的 `/admin/me`；`/admin/me` 返回 403 `PASSWORD_CHANGE_REQUIRED` 是兜底，覆盖会话中途被置位的情况）；已登录但没有后台角色或接口返回 403 → `/forbidden`；有后台角色 → 放行并带上 `role` 与 `permissions`。
 
 ### 权限（RBAC）
 
@@ -58,9 +59,12 @@ bun run build      # 先跑 prebuild 的 import 边界断言
 
 refresh cookie 是 host-only 挂在 API 域（`sim-art.youc.online`）的 `/api/auth` 下，admin 与主站前端打的是同一个 API 域，所以两处是同一个登录态：**在后台登录，主站也处于登录态；在后台退出，主站也会一起退出。** 这条要出现在登录页与侧边栏登出按钮旁（`sharedSession.loginNote` / `sharedSession.logoutNote`），单产品下刻意不做每产品独立会话。
 
+## 运行期配置与主站链接
+
+`config.js`（容器入口脚本 `docker-entrypoint.sh` 生成）注入 `API_BASE_URL` / `ADMIN_BASE_URL` / `MAIN_SITE_BASE_URL` / `SITE_ENV` 四个键。指向主站路由的链接（如 `/admin/system` 社区 tab 的作者主页 `/community/users/:id`）一律用 `MAIN_SITE_BASE_URL` 拼：`ADMIN_BASE_URL` 的语义是**后台自己的域名**（见 `deploy/README.md`），拿它拼主站路径只会落回后台域 404。`MAIN_SITE_BASE_URL` 缺省时回退 `ADMIN_BASE_URL` / 当前 origin（兼容旧环境与同域部署），异域部署应显式配置。
+
 ## 尚未做（后续批次）
 
 - 侧边栏顶部的产品切换器、主题与语言切换入口：拆出来后这两个开关暂时只能在主站里改（两边共用 `infinite-canvas:theme_store` 与 `infinite-canvas:locale`）。
-- `/admin/system` 社区 tab 里指向主站用户主页的链接用 `ADMIN_BASE_URL` 拼绝对地址，该值为空时降级为纯文本；注意 `ADMIN_BASE_URL` 的语义是**后台自己的域名**（见 `deploy/README.md`），这一处要跳到主站路由仍然需要主站基址，上线前需确认取值。
 - 写操作的逐按钮权限隐藏只覆盖了本批新增/改动的位置（角色管理、用户设置角色、站点设置只读、社区写操作）；其余页面的写按钮仍只靠服务端 403 兜底。
 - 页面只做到构建与类型检查通过，尚未在浏览器里实测。

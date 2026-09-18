@@ -36,9 +36,15 @@ import {
     type SiteSettings,
 } from "@admin/services/api/admin";
 
-// 后台页面之间用同样的 base 组装跨站绝对地址：主站路由挂在主站域上，相对路径在 admin 域下必然 404。
-// 该值为空时调用方降级为纯文本，不拼出半截链接。
-const ADMIN_SITE_BASE = ADMIN_BASE_URL.replace(/\/+$/, "");
+// 主站基址：作者主页等主站路由挂在主站域上，在 admin 域下用相对路径必然 404；而 ADMIN_BASE_URL
+// 的语义是后台自己的域名，拿它拼主站路径只会落回后台域（todo 批次 4 决策项①）。统一改用运行期
+// config.js 注入的 MAIN_SITE_BASE_URL；缺省时先退 ADMIN_BASE_URL（旧环境主站链接就是拿它拼的，
+// 保持原行为），再退当前 origin（主站与后台同域部署、本地开发落在这里）。浏览器里 origin 恒有值，
+// 所以下面直接拼绝对地址，不再需要「空值降级为纯文本」的分支。
+const MAIN_SITE_BASE =
+    (window.__RUNTIME_CONFIG__ as { MAIN_SITE_BASE_URL?: string } | undefined)?.MAIN_SITE_BASE_URL?.trim().replace(/\/+$/, "") ||
+    ADMIN_BASE_URL.replace(/\/+$/, "") ||
+    window.location.origin;
 
 export default function AdminSystemPage() {
     const { t } = useTranslation();
@@ -574,17 +580,13 @@ function CommunityTab() {
             render: (value: string, row) => (
                 <div className="min-w-0">
                     <div className="truncate font-medium">{value}</div>
-                    {/* 作者主页是主站路由，在 admin 域下会用相对路径必然 404：有主站基址时拼绝对地址，没有则退化成纯文本。 */}
-                    {ADMIN_SITE_BASE ? (
-                        <a
-                            href={`${ADMIN_SITE_BASE}/community/users/${row.userId}`}
-                            className="block truncate text-xs text-stone-500 hover:underline dark:text-stone-400"
-                        >
-                            {row.userId}
-                        </a>
-                    ) : (
-                        <span className="block truncate text-xs text-stone-500 dark:text-stone-400">{row.userId}</span>
-                    )}
+                    {/* 作者主页是主站路由：一律拼主站基址的绝对地址（MAIN_SITE_BASE 恒非空，见文件顶部说明）。 */}
+                    <a
+                        href={`${MAIN_SITE_BASE}/community/users/${row.userId}`}
+                        className="block truncate text-xs text-stone-500 hover:underline dark:text-stone-400"
+                    >
+                        {row.userId}
+                    </a>
                 </div>
             ),
         },

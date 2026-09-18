@@ -130,6 +130,100 @@ func formatTimePtr(t *time.Time) any {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
+// ExportMe 导出当前用户的个人数据（差异清单 #123）：档案基本字段、点数余额、
+// 订单列表、生成记录与画布列表的元数据；媒体二进制与画布正文 JSON 不在导出范围。
+func (h *AccountHandler) ExportMe(c *gin.Context) {
+	uid, _ := uuid.Parse(c.GetString("user_id"))
+	var user model.User
+	if err := h.db.First(&user, "id = ?", uid).Error; err != nil {
+		errs.Abort(c, errs.ErrUnauthorized)
+		return
+	}
+	credit, err := service.NewCreditService(h.db).Balance(c.Request.Context(), uid)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		slog.Error("导出读取点数余额失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	var orders []model.Order
+	if err := h.db.Where("user_id = ?", uid).Order("created_at DESC").Find(&orders).Error; err != nil {
+		slog.Error("导出读取订单失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	var generations []model.Generation
+	if err := h.db.Where("user_id = ?", uid).Order("created_at DESC").Find(&generations).Error; err != nil {
+		slog.Error("导出读取生成记录失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	var canvases []model.Canvas
+	if err := h.db.Where("user_id = ?", uid).Order("updated_at DESC").Find(&canvases).Error; err != nil {
+		slog.Error("导出读取画布列表失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	orderItems := make([]gin.H, 0, len(orders))
+	for _, order := range orders {
+		orderItems = append(orderItems, gin.H{
+			"id":              order.ID.String(),
+			"provider":        order.Provider,
+			"packageId":       order.PackageID,
+			"priceMicros":     order.PriceMicros,
+			"currency":        order.Currency,
+			"purchasedMicros": order.PurchasedMicros,
+			"grantedMicros":   order.GrantedMicros,
+			"status":          order.Status,
+			"paidAt":          formatTimePtr(order.PaidAt),
+			"createdAt":       formatTime(order.CreatedAt),
+		})
+	}
+	generationItems := make([]gin.H, 0, len(generations))
+	for _, item := range generations {
+		generationItems = append(generationItems, gin.H{
+			"id":               item.ID.String(),
+			"kind":             item.Kind,
+			"status":           item.Status,
+			"prompt":           item.Prompt,
+			"model":            item.Model,
+			"durationMs":       item.DurationMs,
+			"moderationStatus": item.ModerationStatus,
+			"createdAt":        formatTime(item.CreatedAt),
+		})
+	}
+	canvasItems := make([]gin.H, 0, len(canvases))
+	for _, canvas := range canvases {
+		canvasItems = append(canvasItems, gin.H{
+			"id":              canvas.ID.String(),
+			"title":           canvas.Title,
+			"nodeCount":       canvas.NodeCount,
+			"connectionCount": canvas.ConnectionCount,
+			"createdAt":       formatTime(canvas.CreatedAt),
+			"updatedAt":       formatTime(canvas.UpdatedAt),
+		})
+	}
+	c.Header("Content-Disposition", `attachment; filename="youc-export.json"`)
+	c.JSON(http.StatusOK, gin.H{
+		"exportedAt": formatTime(time.Now()),
+		"profile": gin.H{
+			"id":            user.ID.String(),
+			"email":         user.Email,
+			"username":      user.Username,
+			"displayName":   user.DisplayName,
+			"avatarUrl":     user.AvatarURL,
+			"emailVerified": user.EmailVerifiedAt != nil,
+			"createdAt":     formatTime(user.CreatedAt),
+		},
+		"credits": gin.H{
+			"purchasedMicros": credit.PurchasedMicros,
+			"grantedMicros":   credit.GrantedMicros,
+		},
+		"orders":      orderItems,
+		"generations": generationItems,
+		"canvases":    canvasItems,
+	})
+}
+
 type updateMeReq struct {
 	DisplayName *string `json:"displayName"`
 	AvatarURL   *string `json:"avatarUrl"`

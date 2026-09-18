@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Navigate } from "react-router-dom";
 
 import { FullScreenLoading } from "@admin/components/full-screen-loading";
-import { useConsoleAccess } from "@admin/hooks/use-console-access";
+import { useConsoleAccess, type AuthUserWithGate } from "@admin/hooks/use-console-access";
 import { changeMyPassword } from "@admin/services/api/admin";
 import { ApiError, getApiErrorMessage } from "@/lib/api-error";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -37,9 +37,18 @@ export default function ChangePasswordPage() {
 
     const mutation = useMutation({
         mutationFn: (values: ChangePasswordValues) => changeMyPassword({ oldPassword: values.oldPassword, newPassword: values.newPassword }),
-        // 改密是 must_change_password 的唯一清除点：重新拉 /admin/me 让 useConsoleAccess 重新判定。
-        // 拉到 200 后相位翻成 admin，本页的守卫直接把用户送去 /admin，由首页守卫落总览或第一个有权限的页面。
-        onSuccess: () => queryClient.refetchQueries({ queryKey: ["admin", "me"], exact: true }),
+        // 改密是 must_change_password 的唯一清除点：先同步清掉会话状态里的标记（store 没有专门的
+        // 动作；该字段登录/刷新响应一直下发，只是 web 的类型没声明），让 useConsoleAccess 的前置
+        // 闸门立即解除、/admin/me 恢复放行；拉到 200 后相位翻成 admin，本页的守卫直接把用户送去
+        // /admin，由首页守卫落总览或第一个有权限的页面。
+        onSuccess: () => {
+            const user = useAuthStore.getState().user as AuthUserWithGate | null;
+            if (user) {
+                const cleared: AuthUserWithGate = { ...user, mustChangePassword: false };
+                useAuthStore.setState({ user: cleared });
+            }
+            void queryClient.refetchQueries({ queryKey: ["admin", "me"], exact: true });
+        },
         onError: (err) => {
             if (err instanceof ApiError && err.code === "INVALID_CREDENTIALS") {
                 form.setFields([{ name: "oldPassword", errors: [t("changePassword.oldPasswordWrong", { ns: "admin" })] }]);

@@ -255,6 +255,10 @@ func main() {
 
 	api := router.Group("/api")
 
+	// 维护模式写拦截（差异清单 #117）：开启后非管理员的写请求 503，
+	// 读操作、认证、管理端与支付回调放行。
+	api.Use(middleware.MaintenanceGate(siteSettings, gormDB, secret))
+
 	// 强制改密：must_change_password 的账号只能登出、刷新或改密，其余接口一律 403。
 	// 挂到每个需要登录的路由上，新增受保护分组必须一并挂上。
 	passwordGate := middleware.RequirePasswordChanged(gormDB)
@@ -282,6 +286,8 @@ func main() {
 		me.POST("/free-grant/claim", middleware.RequireNotPendingDeletion(), accountHandler.ClaimFreeGrant)
 		me.POST("/deletion", accountHandler.RequestDeletion)
 		me.POST("/deletion/cancel", accountHandler.CancelDeletion)
+		// 个人数据导出（可携带权占位实现）：JSON 汇总，不含媒体二进制。
+		me.GET("/export", accountHandler.ExportMe)
 	}
 
 	canvases := api.Group("/canvases", middleware.Auth(secret), active, passwordGate)

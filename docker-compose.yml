@@ -50,6 +50,9 @@ services:
       API_BASE_URL: "${ADMIN_API_BASE_URL:?需要在 env 文件里设置 ADMIN_API_BASE_URL}"
       # 后台自己的对外域名：页面里指向主站的绝对链接用它拼（留空时降级为纯文本）。
       ADMIN_BASE_URL: "${ADMIN_BASE_URL:-}"
+      # 主站对外基址：后台里指向主站页面（如社区用户页）的链接用它拼；
+      # 复用 APP_BASE_URL（主站对外地址），留空时 admin 回退 ADMIN_BASE_URL 再回退当前 origin。
+      MAIN_SITE_BASE_URL: "${APP_BASE_URL:-}"
       SITE_ENV: "${SITE_ENV:-production}"
 
   api:
@@ -105,6 +108,13 @@ services:
       WECHATPAY_MCH_SERIAL_NO: ${WECHATPAY_MCH_SERIAL_NO:-}
       WECHATPAY_MCH_PRIVATE_KEY: ${WECHATPAY_MCH_PRIVATE_KEY:-}
       WECHATPAY_API_V3_KEY: ${WECHATPAY_API_V3_KEY:-}
+      # 易支付（聚合通道）：compose 逐项枚举环境变量且无 env_file，只改 env 文件不生效
+      EASYPAY_ENABLED: "${EASYPAY_ENABLED:-false}"
+      EASYPAY_API_BASE: ${EASYPAY_API_BASE:-}
+      EASYPAY_PID: ${EASYPAY_PID:-}
+      EASYPAY_KEY: ${EASYPAY_KEY:-}
+      EASYPAY_TYPE: ${EASYPAY_TYPE:-alipay}
+      EASYPAY_RETURN_URL: ${EASYPAY_RETURN_URL:-}
       # AI 转发超时与内网上游开关（仅本地调试开启）
       AI_IMAGE_TIMEOUT: "${AI_IMAGE_TIMEOUT:-180s}"
       AI_AUDIO_TIMEOUT: "${AI_AUDIO_TIMEOUT:-120s}"

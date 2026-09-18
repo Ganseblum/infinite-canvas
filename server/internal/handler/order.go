@@ -17,12 +17,13 @@ import (
 
 // OrderHandler 负责下单、订单列表与取消。
 type OrderHandler struct {
-	db     *gorm.DB
-	orders *service.OrderService
+	db       *gorm.DB
+	orders   *service.OrderService
+	registry *service.PaymentRegistry
 }
 
 func NewOrderHandler(db *gorm.DB, registry *service.PaymentRegistry) *OrderHandler {
-	return &OrderHandler{db: db, orders: service.NewOrderService(db, registry)}
+	return &OrderHandler{db: db, orders: service.NewOrderService(db, registry), registry: registry}
 }
 
 type createOrderReq struct {
@@ -40,7 +41,8 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		errs.Abort(c, errs.ErrValidation)
 		return
 	}
-	if req.Provider != "alipay" && req.Provider != "wechat" {
+	// 渠道是否可选以注册表为准：未配置的渠道自动不上架，也不允许下单。
+	if !h.registry.Has(req.Provider) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"provider": "provider 取值非法"}))
 		return
 	}
@@ -214,7 +216,8 @@ func (h *PaymentHandler) Webhook(c *gin.Context) {
 	}
 	// 响应格式按渠道要求返回，不能套用项目统一错误格式，否则渠道会判定回调失败并持续重试。
 	switch providerName {
-	case "alipay":
+	case "alipay", "easypay":
+		// 易支付（彩虹协议）要求响应体恰好是裸文本 success（不换行），否则会判定通知失败并持续重推。
 		c.String(http.StatusOK, "success")
 	case "wechat":
 		c.JSON(http.StatusOK, gin.H{"code": "SUCCESS", "message": "成功"})

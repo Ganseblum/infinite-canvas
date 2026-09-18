@@ -32,6 +32,15 @@ export type MediaExpirySummary = {
     expiringCount: number;
 };
 
+// POST /me/free-grant/claim 的返回：幂等，已领取时服务端原样返回既有结论。
+export type FreeGrantClaim = {
+    campaignId: string;
+    status: string;
+    imageTrials: number;
+    videoTrials: number;
+    grantedMicros: number;
+};
+
 export type MeResponse = {
     user: MeUser;
     plan: PlanDetail;
@@ -59,4 +68,21 @@ export async function updateProfile(input: UpdateProfileInput) {
 
 export function changePassword(input: { oldPassword: string; newPassword: string }) {
     return apiRequest<void>("/me/password", { method: "POST", body: input });
+}
+
+export function claimFreeGrant() {
+    return apiRequest<FreeGrantClaim>("/me/free-grant/claim", { method: "POST" });
+}
+
+// GET /me/export：个人数据导出（差异清单 #123）。取回 JSON 后触发浏览器下载，
+// 文件名与服务端 Content-Disposition 保持一致。
+export async function exportMyData() {
+    const payload = await apiRequest<unknown>("/me/export");
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "youc-export.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
 }

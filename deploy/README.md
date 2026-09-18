@@ -150,15 +150,17 @@ bun run dev
 
 `SITE_ENV` 会被容器入口脚本写进 `config.js`，只要不是 `production`，页面顶栏就会显示环境标识（如「测试环境」），避免在测试站上误当成正式站操作。`API_BASE_URL` 同理可在运行时注入，留空表示同源 `/api`。
 
+管理后台的标识在侧边栏头部常驻、不随内容滚动：**正式环境显示红色「正式环境」角标**（后台操作大多不可逆，管理员要始终看得见自己站在哪个环境）；测试/开发沿用与主站一致的黄色标识。
+
 ## 管理后台
 
-管理后台不是独立应用：页面是同一个前端里的 `/admin/*` 路由，接口在同一个 api 服务（`/api/admin/*`），因此**不需要额外部署服务、端口、域名或镜像**。前端路由守卫只负责跳转，权限由 api 的服务端中间件强制（`Auth` + `AdminOnly`）。
+管理后台已拆成独立前端应用 `admin/`：独立容器、独立端口（3101/3201）、独立域名（如 `https://sim-admin.youc.online`）与独立镜像，部署细节见下文「管理后台独立容器」。静态页面由 admin 容器自己提供，接口仍在同一个 api 服务（`/api/admin/*`），浏览器跨源直连、按「管理后台跨源（CORS）」一节配置白名单。前端路由守卫只负责跳转，权限由 api 的服务端中间件强制（`Auth` + `AdminOnly`）。
 
 管理员账号由 api 启动时按 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 初始化：账号不存在时创建，已存在但角色不是 admin 时提升为 admin；**已存在时不会用 `ADMIN_PASSWORD` 重设密码**，所以忘记管理员密码时改 env 文件无效，只能改库或走密码重置流程。这两个变量缺失会导致 api 启动失败，测试与正式环境各自使用独立的邮箱与密码。
 
 安全相关的两点：
 
-- 管理后台与其他页面同域同源，公网可访问；如需收敛，反向代理访问策略同时覆盖 `/admin` 和 `/api/admin/`，仅隐藏页面入口不能限制管理接口（尚未实施，上线前决定）。
+- 管理后台在独立域名上公网可访问；主域的 `/admin` 与 `/admin/` 已由宿主机 nginx 返回真 404（见主站站点模板 `deploy/nginx-sim-art.youc.online.conf`），后台入口只存在于独立域名。如需收敛，访问策略要覆盖 admin 域名整体与 `/api/admin/`，仅隐藏页面入口不能限制管理接口（尚未实施，上线前决定）。
 - 管理后台配置的 AI 渠道密钥用 `CREDENTIAL_MASTER_KEY` 加密存库，该密钥必须与正式环境隔离，本地与服务器测试共享测试密钥，并且必须随备份一起保存；密钥丢失则渠道密钥无法解密。
 
 ## 内容审核（可选）
@@ -266,7 +268,7 @@ admin 通过 vite 别名 `@` → `web/src` 复用主站外壳（清单见 `admin
 
 - **独立端口、不做 Host 分流**：admin 走 `127.0.0.1:3101`（测试）/`3201`（正式），容器内 nginx 只做 SPA fallback 与 `config.js` 禁缓存，**没有 `/api` 反代**——admin 跨域直连主站 API 正是这个方案的目的。
 - **不写 `depends_on: api`**：admin 是纯静态、容器内没有 upstream，依赖只会让 api 重建时多等一轮，拖慢回滚。
-- **入口脚本独立**：`admin/docker-entrypoint.sh` 只写 `API_BASE_URL` / `SITE_ENV` 两个键。刻意不复用 `web/docker-entrypoint.sh`，因为那个脚本会写 `ANALYTICS_GA4_ID` / `ANALYTICS_BAIDU_ID`——在 admin 服务上多设一个统计变量就会让第三方统计脚本跑在管理后台里，把管理员操作暴露给第三方。
+- **入口脚本独立**：`admin/docker-entrypoint.sh` 只写 `API_BASE_URL` / `ADMIN_BASE_URL` / `MAIN_SITE_BASE_URL` / `SITE_ENV` 四个键。刻意不复用 `web/docker-entrypoint.sh`，因为那个脚本会写 `ANALYTICS_GA4_ID` / `ANALYTICS_BAIDU_ID`——在 admin 服务上多设一个统计变量就会让第三方统计脚本跑在管理后台里，把管理员操作暴露给第三方。
 
 ### 新增的环境变量
 
@@ -275,7 +277,8 @@ admin 通过 vite 别名 `@` → `web/src` 复用主站外壳（清单见 `admin
 | `ADMIN_IMAGE` | `infinite-canvas-admin:test` | `infinite-canvas-admin:prod` | admin 镜像 tag，与主站一样按环境区分 |
 | `ADMIN_PORT` | `3101` | `3201` | 只绑 `127.0.0.1`，公网走宿主机 nginx |
 | `ADMIN_API_BASE_URL` | `https://sim-art.youc.online` | 主站正式域名 | admin 要连的主站 API，**必须非空绝对地址**；容器内注入为 `API_BASE_URL` |
-| `ADMIN_BASE_URL` | `https://sim-admin.youc.online` | 正式后台域名 | 主站用户菜单跳转后台用，属 app 服务的变量 |
+| `MAIN_SITE_BASE_URL` | `https://sim-art.youc.online` | 主站正式域名 | admin 页面里指向主站路由（社区用户页等）的绝对链接用它拼；留空允许启动，前端回退 `ADMIN_BASE_URL` / 当前 origin，但异域部署时应显式填写，否则链接仍会落回后台域 404 |
+| `ADMIN_BASE_URL` | `https://sim-admin.youc.online` | 正式后台域名 | **后台自己的对外域名**：主站用户菜单跳后台用（app 服务的变量），admin 容器另注入一份仅作 `MAIN_SITE_BASE_URL` 的回退 |
 | `CORS_ALLOWED_ORIGINS` | `https://sim-admin.youc.online` | 正式后台域名 | api 侧跨源白名单，留空即完全不启用 CORS |
 
 `API_BASE_URL`（主站前端，同源部署时留空）与 `ADMIN_API_BASE_URL`（admin，必须非空）是两个不同的键，不要互填。
@@ -285,10 +288,13 @@ admin 通过 vite 别名 `@` → `web/src` 复用主站外壳（清单见 `admin
 容器启动时 `/docker-entrypoint.d/40-admin-runtime-config.sh` 生成 `/usr/share/nginx/html/config.js`：
 
 - `API_BASE_URL` 为空时**容器拒绝启动**并打印明确错误。admin 域上没有 `/api`，留空只会让所有请求打到 admin 自己身上变成 404，属于静默故障，宁可不启动。
+- `MAIN_SITE_BASE_URL` 与 `ADMIN_BASE_URL` 语义不同：前者是**主站**的地址（后台里指向主站页面的链接用它拼），后者是**后台自己**的地址（主站用户菜单跳后台用它）。不要互填，否则后台里的主站链接会落回后台域 404。
 - `config.js` 由容器启动时生成，**改 env 文件必须重建容器才生效**：`./deploy.sh <env> up -d` 已把 admin 加入固定的 `--force-recreate` 列表（与 app 同理，见 `deploy.sh` 顶部注释）。
 
 ### 站点与验收顺序
 
 站点模板 `deploy/nginx-sim-admin.youc.online.conf`：先只上 HTTP，`nginx -t && systemctl reload nginx`，再 `certbot --nginx --redirect -d sim-admin.youc.online` 补证书与跳转。它比主站模板简单：没有 `/api` 反代，`client_max_body_size` 只给 1m（后台不传文件），另加 `X-Robots-Tag: noindex` 避免后台入口被搜索引擎收录。
+
+主站站点模板 `deploy/nginx-sim-art.youc.online.conf` 已给主域加 `location = /admin` 与 `location ^~ /admin/` 返回**真 404**：管理后台拆到独立域名后主域不再有后台页面，既不能靠 SPA 兜底返回 200（会被当有效页面收录），也不做 301（跳转会把 admin 主机名主动泄露给匿名访客）。
 
 上线前仍需：DNS 解析、证书签发、在正式/测试 env 文件里填齐上表变量，并按「管理后台跨源（CORS）」一节确认 `CORS_ALLOWED_ORIGINS` 与 `ADMIN_API_BASE_URL` 指向同一个环境的主站。

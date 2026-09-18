@@ -179,7 +179,9 @@ func (h *AIHandler) Images(c *gin.Context) {
 	// 参考素材先读出来，既用于审核也用于后续生成；读取失败不进入预扣。
 	refs, err := h.loadInlineMedia(user.ID, req.References)
 	if err != nil {
-		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"references": err.Error()}))
+		// 存储层错误可能带对象路径，只回固定文案，原始错误进日志（差异清单 #120）。
+		slog.Error("读取参考素材失败", "err", err)
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"references": "参考素材不可用，请检查参考素材后重试"}))
 		return
 	}
 	// 输入预审必须在预扣之前：被拒输入不占免费次数、不写流水、不调上游。
@@ -760,7 +762,9 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 	audioRefs := nonEmptyRefs(req.AudioReferences)
 	media, err := h.loadInlineMedia(user.ID, append(append(append([]string{}, refs...), videoRefs...), audioRefs...))
 	if err != nil {
-		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"references": err.Error()}))
+		// 存储层错误可能带对象路径，只回固定文案，原始错误进日志（差异清单 #120）。
+		slog.Error("读取参考素材失败", "err", err)
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"references": "参考素材不可用，请检查参考素材后重试"}))
 		return
 	}
 	images := media[:len(refs)]

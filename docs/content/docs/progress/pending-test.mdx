@@ -7,6 +7,20 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+## 差异清单批量修复（本版本新增，待验收）
+
+- **账号与合规**：生产模板下 `REGISTRATION_ENABLED` 未设置时应默认关闭注册；申请注销后 7 天内仍能登录、刷新并从用户菜单撤销注销，撤销后账号恢复；冷静期内调生成接口应 403 `ACCOUNT_PENDING_DELETION`；重置密码邮件 1 小时内有效、验证邮件 24 小时；同一重置链接并发打开只能用一次；`/terms` 与 `/privacy` 可未登录访问，注册不勾选同意无法提交；个人中心「数据导出」下载的 JSON 含资料/余额/订单/生成与画布元数据。
+- **免费额度**：领取入口在个人中心，领取后生成显示剩余次数；超 cheapest 参数组合（如 n>1、非最小尺寸）应走点数扣费而非免费；未领取/被拒用户生成按点数计费；并发提交同一账号的免费生成不能超发；生成失败后试用计数应退还；邀请绑定：注册不满 1 小时、邮箱未验证会报具体原因。
+- **社区与上传**：用户 B 浏览用户 A 已发布作品的图片/视频应正常显示（未发布/已下架仍 404）；上传伪装成图片的非图片文件应 400「Content-Type 与文件内容不符」；同一用户一天最多发 20 篇作品、同素材同标题当日重复发布 409；源素材删除后作品从公开流消失。
+- **审核链路**：开审核（含 fake provider）后视频任务应正常到 succeeded/failed 终态，不再永久 moderating；被拒视频原件保留隔离区、管理端可预览可释放；语音产物有 provider=none 的审核记录且正常可用；隔离区统计字节数与真实对象大小一致；正式环境 `MODERATION_ENABLED=true` + fake 应拒绝启动，其它环境有明确告警。
+- **易支付**（配置 `EASYPAY_ENABLED=true` 后）：充值弹窗出现易支付渠道，跳转收银台支付后订单到账且只到账一次；金额被篡改的回调被拒绝；渠道回调返回 `success` 文本；未启用时界面与接口都不出现该渠道。
+- **维护模式与并发**：站点设置开启维护模式后，普通用户写接口 503 `MAINTENANCE_MODE`、浏览正常、管理员不受限、支付回调照常；生成接口默认全局并发 8、每用户每分钟 30 次，超限 429 带 Retry-After。
+- **admin**：登录响应带 `mustChangePassword` 的账号进后台被强制导向改密页，改密成功后正常进入；admin 社区用户页链接落主站域（`MAIN_SITE_BASE_URL`）；主站域名访问 `/admin` 返回 404（需在宿主机应用新 nginx 模板后验证）；正式环境侧边栏显示红色「正式环境」角标。
+- **部署**：按根 `.env.example` 填好后 `docker compose up -d` 一键可起；本地 `go run ./cmd/server` 能读取仓库根 `.env`；`scripts/backup.sh` 备份出「库 + 媒体 + env」三件、`restore.sh` 可复原；启动后 `schema_migrations` 表写入版本行。
+- **画布与工作台**：模型目录请求失败后选择器显示「模型加载失败 + 重试」；两个视频同时生成时结果卡各自更新不互相覆盖；删除历史失败有 toast；Firefox 滚轮缩放正常；Agent 写回提示词后节点输入框立即反映新内容；任一页面渲染抛错显示中文错误页（可返回首页/重试）。
+
+The Chinese version contains the complete item-by-item acceptance checklist.
+
 - Frontend design mockups: `design/html/` now contains 23 static HTML mockups (overview entry `index.html`, 11 front-site pages, 7 admin pages, a component spec, and a canvas theme reference), all with light/dark switching and mobile layouts; key interactions are mocked (no API calls, randomized success/failure toasts): workbench generation flows (success/failure/content-rejected/cancel), login/register validation with redirects, admin user bulk grant/ban with checkbox sync, model listing/delisting and removal, channel connectivity tests, moderation card approve/reject removal, prompt publish toggles, activity end/delete, order cancellation, compensation dialogs, asset CRUD with batch ops, community like counters, and custom constraint tag adding with format validation and dedup. A new [Design-to-API Coverage](/docs/progress/design-api-coverage) document records the coverage review, three conflicts (now fixed), and nine API gaps; the moderation stack has been switched from paid Aliyun service to open source (NSFWJS for images, Detoxify for text), with planning docs and mockups updated accordingly.
 
 - Local proxy: Settings should show a dedicated Local proxy tab between Providers and Preferences, with a switch that is off by default. Turning it on should reveal the `npx @basketikun/canvas-proxy@latest` command (with `--port` appended when a non-default port is configured), a copy action, and an address field defaulting to `http://127.0.0.1:23210` that normalizes a missing scheme and trailing slashes on blur. Test connection should succeed only while the command is running. With the proxy on, fetching model lists, generating images, videos, text (including streamed output), and audio, running custom call scripts, polling video tasks, and downloading generated images and videos should all route through the proxy and keep working; turning it off should restore direct requests. The proxy itself should forward request methods, headers, query strings, and bodies unchanged, stream SSE responses without buffering, and keep `data:` and `blob:` URLs untouched.

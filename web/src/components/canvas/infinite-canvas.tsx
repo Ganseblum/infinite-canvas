@@ -88,7 +88,9 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
 
-        const delta = -event.deltaY;
+        // Firefox 等浏览器的滚轮事件按行（deltaMode=1）或页（deltaMode=2）上报，先归一化成像素再算缩放系数。
+        const deltaUnit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1;
+        const delta = -event.deltaY * deltaUnit;
         const factor = Math.pow(1.1, delta / 100);
         const newScale = Math.min(Math.max(viewport.k * factor, 0.05), 5);
         const rect = containerRef.current?.getBoundingClientRect();

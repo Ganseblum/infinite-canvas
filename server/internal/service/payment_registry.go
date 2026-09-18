@@ -45,6 +45,21 @@ func NewPaymentRegistry(cfg *config.Config) (*PaymentRegistry, error) {
 		}
 		registry.providers[provider.Name()] = provider
 	}
+	// EASYPAY_ENABLED=true 时注册易支付，配置缺失或非法直接报启动错误；不开启则渠道自动不上架。
+	if cfg.EasyPayEnabled {
+		provider, err := payment.NewEasyPay(payment.EasyPayConfig{
+			APIBase:   cfg.EasyPayAPIBase,
+			PID:       cfg.EasyPayPID,
+			Key:       cfg.EasyPayKey,
+			Type:      cfg.EasyPayType,
+			NotifyURL: cfg.PaymentNotifyURL + "/easypay",
+			ReturnURL: cfg.EasyPayReturnURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		registry.providers[provider.Name()] = provider
+	}
 	return registry, nil
 }
 

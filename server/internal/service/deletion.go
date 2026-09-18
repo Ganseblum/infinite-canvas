@@ -112,6 +112,12 @@ func (s *DeletionService) anonymizeOne(ctx context.Context, user *model.User, no
 			Update("revoked_at", now).Error; err != nil {
 			return err
 		}
+		// 会话痕迹匿名化：全部令牌的 IP/UA 置空，只保留吊销时间供审计（差异清单 #114）。
+		if err := tx.Model(&model.RefreshToken{}).
+			Where("user_id = ?", user.ID).
+			Updates(map[string]any{"ip": "", "user_agent": ""}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("user_id = ?", user.ID).Delete(&model.Canvas{}).Error; err != nil {
 			return err
 		}
