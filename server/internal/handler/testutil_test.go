@@ -376,7 +376,7 @@ func newResourceRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Confi
 	generations.GET("/:id", genH.Get)
 	generations.DELETE("/:id", genH.Delete)
 
-	media := api.Group("/media", middleware.MediaAuth(secret))
+	media := api.Group("/media", middleware.MediaAuth(secret, g))
 	media.HEAD("/:storageKey", mediaH.Head)
 	media.GET("/:storageKey", mediaH.Get)
 	media.PUT("/:storageKey", mediaH.Put)

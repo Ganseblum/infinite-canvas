@@ -284,7 +284,7 @@ func TestMediaReadAuthBearerAndCookie(t *testing.T) {
 		t.Fatalf("Bearer GET 应 200, got %d", w.Code)
 	}
 	// ic_media cookie 可用（模拟 <img src>）
-	mediaToken, err := auth.IssueMediaToken(user.ID, []byte(cfg.JWTSecret))
+	mediaToken, err := auth.IssueMediaToken(user.ID, []byte(cfg.JWTSecret), 0)
 	if err != nil {
 		t.Fatalf("签发媒体令牌失败: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestMediaReadAuthBearerAndCookie(t *testing.T) {
 	if w := doRaw(r, http.MethodGet, "/api/media/image:Auth1", nil, "", otherToken, nil); w.Code != http.StatusNotFound {
 		t.Fatalf("跨用户 GET 应 404, got %d", w.Code)
 	}
-	otherMediaToken, err := auth.IssueMediaToken(other.ID, []byte(cfg.JWTSecret))
+	otherMediaToken, err := auth.IssueMediaToken(other.ID, []byte(cfg.JWTSecret), 0)
 	if err != nil {
 		t.Fatalf("签发他人媒体令牌失败: %v", err)
 	}

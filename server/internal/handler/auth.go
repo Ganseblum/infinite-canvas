@@ -88,8 +88,9 @@ func (h *AuthHandler) clearRefreshCookie(c *gin.Context) {
 }
 
 // setMediaCookie 下发只读媒体 cookie（ic_media），与 refresh token 同周期。
-func (h *AuthHandler) setMediaCookie(c *gin.Context, userID uuid.UUID) {
-	token, err := auth.IssueMediaToken(userID, []byte(h.cfg.JWTSecret))
+// 带上签发时用户的媒体令牌版本，改密等安全事件递增版本后旧 cookie 失效。
+func (h *AuthHandler) setMediaCookie(c *gin.Context, user *model.User) {
+	token, err := auth.IssueMediaToken(user.ID, []byte(h.cfg.JWTSecret), user.MediaTokenVersion)
 	if err != nil {
 		slog.Error("签发媒体令牌失败", "err", err)
 		return
@@ -369,6 +370,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 }
 
 func (h *AuthHandler) revokeAllUserTokens(userID uuid.UUID) {
+	// 复用检测属安全事件：媒体令牌版本一并递增（差异清单 #9）。
+	if err := h.db.Model(&model.User{}).Where("id = ?", userID).
+		UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
+		slog.Error("递增媒体令牌版本失败", "err", err)
+	}
 	h.db.Model(&model.RefreshToken{}).Where("user_id = ? AND revoked_at IS NULL", userID).Update("revoked_at", time.Now())
 }
 
@@ -400,7 +406,7 @@ func (h *AuthHandler) issueSession(c *gin.Context, user *model.User) string {
 		return ""
 	}
 	h.setRefreshCookie(c, plain)
-	h.setMediaCookie(c, user.ID)
+	h.setMediaCookie(c, user)
 	c.Set("user_id", user.ID.String())
 	c.Set("user_role", user.Role)
 	return accessToken
@@ -593,7 +599,11 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.User{}).Where("id = ?", et.UserID).Update("password_hash", hash).Error; err != nil {
+		// 重置密码同时递增媒体令牌版本，ic_media cookie 立即失效（差异清单 #9）。
+		if err := tx.Model(&model.User{}).Where("id = ?", et.UserID).Updates(map[string]any{
+			"password_hash":       hash,
+			"media_token_version": gorm.Expr("media_token_version + 1"),
+		}).Error; err != nil {
 			return err
 		}
 		// 撤销该用户全部 refresh token，强制所有设备重新登录

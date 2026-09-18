@@ -20,6 +20,9 @@ type User struct {
 	Status  string  `gorm:"type:varchar(24);not null;default:active;comment:账号状态，active 正常、disabled 已封禁、pending_deletion 待注销"` // active | disabled | pending_deletion
 	// MustChangePassword 由管理员重置密码后置位，要求用户下次登录修改密码。
 	MustChangePassword bool `gorm:"not null;default:false;comment:是否必须修改密码"`
+	// MediaTokenVersion 是 ic_media 媒体令牌的版本号：改密、重置、封禁等安全事件
+	// 递增一次，旧版本媒体令牌随即失效（差异清单 #9，此前改密后旧媒体令牌仍可用 30 天）。
+	MediaTokenVersion int `gorm:"not null;default:0;comment:媒体令牌版本号，安全事件递增使旧 ic_media 失效"`
 	// InviteCode 可空：唯一索引允许多行 NULL；注册时生成，用于邀请返利。
 	InviteCode          *string    `gorm:"type:varchar(16);uniqueIndex;comment:本人的邀请码，注册时生成，空值表示未生成"`
 	DeletionScheduledAt *time.Time `gorm:"comment:注销生效时间，到期后由后台任务真正删除账号"`

@@ -436,6 +436,11 @@ func (h *AdminHandler) PatchUser(c *gin.Context) {
 		}
 		// 封禁必须同时撤销全部 refresh token，最多 15 分钟后彻底掉线。
 		if *req.Status == "disabled" {
+			// 封禁同时递增媒体令牌版本，ic_media 立即失效（差异清单 #9）。
+			if err := tx.Model(&model.User{}).Where("id = ?", userID).
+				UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
+				return err
+			}
 			if err := tx.Model(&model.RefreshToken{}).
 				Where("user_id = ? AND revoked_at IS NULL", userID).
 				Update("revoked_at", now).Error; err != nil {
@@ -488,6 +493,11 @@ func (h *AdminHandler) ResetPassword(c *gin.Context) {
 			"password_hash":        hash,
 			"must_change_password": mustChange,
 		}).Error; err != nil {
+			return err
+		}
+		// 管理员重置密码：媒体令牌版本一并递增（差异清单 #9）。
+		if err := tx.Model(&model.User{}).Where("id = ?", userID).
+			UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&model.RefreshToken{}).

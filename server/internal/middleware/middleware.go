@@ -134,7 +134,8 @@ func Auth(secret []byte) gin.HandlerFunc {
 //	PUT / DELETE 只接受 Bearer，不认 cookie。
 //
 // cookie 是专为 <img src> 准备的只读凭据，写操作认 cookie 等于给跨站请求开写入口。
-func MediaAuth(secret []byte) gin.HandlerFunc {
+// db 用于媒体令牌版本校验：安全事件递增 media_token_version 后旧 cookie 立即失效（差异清单 #9）。
+func MediaAuth(secret []byte, db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		readMethod := c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead
 		header := c.GetHeader("Authorization")
@@ -161,6 +162,13 @@ func MediaAuth(secret []byte) gin.HandlerFunc {
 		}
 		claims, err := auth.ParseMediaToken(cookie, secret)
 		if err != nil {
+			errs.Abort(c, errs.ErrUnauthorized)
+			return
+		}
+		// 媒体令牌版本校验（差异清单 #9）：改密/重置/封禁递增版本后旧令牌失效。
+		var ver int
+		if err := db.Model(&model.User{}).Select("media_token_version").
+			Where("id = ?", claims.Sub).Scan(&ver).Error; err != nil || ver != claims.Ver {
 			errs.Abort(c, errs.ErrUnauthorized)
 			return
 		}

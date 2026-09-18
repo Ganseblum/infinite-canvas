@@ -13,7 +13,7 @@ func TestMediaTokenScopeBoundary(t *testing.T) {
 	secret := []byte(strings.Repeat("s", 32))
 	uid := uuid.New()
 
-	mediaToken, err := IssueMediaToken(uid, secret)
+	mediaToken, err := IssueMediaToken(uid, secret, 0)
 	if err != nil {
 		t.Fatalf("签发媒体令牌失败: %v", err)
 	}

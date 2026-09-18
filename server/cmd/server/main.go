@@ -355,7 +355,7 @@ func main() {
 	}
 
 	// 媒体读路径额外认 ic_media cookie（GET/HEAD），写路径只认 Bearer。
-	media := api.Group("/media", middleware.MediaAuth(secret), active, passwordGate)
+	media := api.Group("/media", middleware.MediaAuth(secret, gormDB), active, passwordGate)
 	{
 		media.HEAD("/:storageKey", mediaHandler.Head)
 		media.GET("/:storageKey", mediaHandler.Get)

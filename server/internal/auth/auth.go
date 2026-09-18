@@ -92,19 +92,24 @@ func ParseAccessToken(tokenStr string, secret []byte) (*AccessClaims, error) {
 	return claims, nil
 }
 
-// MediaClaims 是 ic_media cookie 的 claims，只放 sub 与 scope。
+// MediaClaims 是 ic_media cookie 的 claims：sub、scope 与签发时的媒体令牌版本。
 type MediaClaims struct {
 	Sub   string `json:"sub"`
 	Scope string `json:"scope"`
+	// Ver 是签发时用户的 media_token_version；中间件校验与当前值一致，
+	// 改密/重置/封禁递增版本后旧媒体令牌立即失效（差异清单 #9）。
+	Ver int `json:"ver,omitempty"`
 	jwt.RegisteredClaims
 }
 
 // IssueMediaToken 独立签发一枚只读媒体 JWT，有效期与 refresh token 同为 30 天。
-func IssueMediaToken(userID uuid.UUID, secret []byte) (string, error) {
+// ver 传签发时用户的 MediaTokenVersion，撤销时靠递增版本让旧令牌失效。
+func IssueMediaToken(userID uuid.UUID, secret []byte, ver int) (string, error) {
 	now := time.Now()
 	claims := MediaClaims{
 		Sub:   userID.String(),
 		Scope: MediaScope,
+		Ver:   ver,
 		RegisteredClaims: jwt.RegisteredClaims{
 			// jti 保证同一秒内重新签发也是不同的令牌，刷新时可见轮换。
 			ID:        uuid.NewString(),

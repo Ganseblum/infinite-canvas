@@ -297,7 +297,11 @@ func (h *AccountHandler) ChangePassword(c *gin.Context) {
 			return err
 		}
 		// 撤销该用户全部 refresh token（含当前会话），旧令牌一律失效；
-		// 事务外再签发一套新会话，保证当前页面不用重新登录。
+		// 同时递增媒体令牌版本，ic_media cookie 随之失效（差异清单 #9）。
+		if err := tx.Model(&model.User{}).Where("id = ?", uid).
+			UpdateColumn("media_token_version", gorm.Expr("media_token_version + 1")).Error; err != nil {
+			return err
+		}
 		return tx.Model(&model.RefreshToken{}).
 			Where("user_id = ? AND revoked_at IS NULL", uid).
 			Update("revoked_at", now).Error
