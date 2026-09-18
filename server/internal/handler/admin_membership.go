@@ -243,6 +243,11 @@ func (h *AdminHandler) RevokeSubscription(c *gin.Context) {
 		if res.RowsAffected == 0 {
 			return errSubscriptionAlreadyEnded
 		}
+		// 作废立即生效的另一半：共享池配额回写到派生档位（free），否则上传侧仍按
+		// paid 旧配额放行、而 GetMe/生成预检按 ActivePlan 派生拒绝，口径分裂（评审门③ P1-2）。
+		if err := h.membership.SyncQuotaWithin(tx, before.UserID, now); err != nil {
+			return err
+		}
 		return h.audit.Record(tx, actorID, "membership.revoke", "membership_subscription", subID.String(),
 			c.GetString("request_id"), reason,
 			gin.H{"status": before.Status, "periodEnd": formatTime(before.PeriodEnd)},

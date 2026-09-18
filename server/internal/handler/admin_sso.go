@@ -226,8 +226,13 @@ func (h *AdminHandler) UpdateOAuthClient(c *gin.Context) {
 		if err := tx.Model(&model.OAuthClient{}).Where("id = ?", clientID).Updates(updates).Error; err != nil {
 			return err
 		}
+		// 审计 after 需要更新后的行：事务内回读（评审门④ P2-5 口径统一）。
+		var updated model.OAuthClient
+		if err := tx.First(&updated, "id = ?", clientID).Error; err != nil {
+			return err
+		}
 		return h.audit.Record(tx, actorID, "sso.client.update", "oauth_client", clientID.String(),
-			c.GetString("request_id"), "", oauthClientPayload(client), nil)
+			c.GetString("request_id"), "", oauthClientPayload(client), oauthClientPayload(updated))
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		errs.Abort(c, errs.ErrNotFound)

@@ -68,7 +68,7 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	}
 }
 
-func TestMediaUploadReadOnlyReturns402(t *testing.T) {
+func TestMediaUploadReadOnlyReturns403(t *testing.T) {
 	g := newTestDB(t)
 	cfg := testConfig()
 	r := newResourceRouter(t, g, cfg, newLocalStorage(t.TempDir()))

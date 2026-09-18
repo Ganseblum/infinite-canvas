@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/membership"
 	"github.com/infinite-canvas/server/internal/platform/storage"
 )
 
@@ -127,6 +128,14 @@ func (s *ReconcileService) ReconcileStorage(ctx context.Context, now time.Time) 
 		}
 		fixed++
 		slog.Warn("storage_reconcile_drift", "user", userID, "action", "recalculated", "at", now.Format(time.RFC3339))
+	}
+	// 配额收敛：订阅自然到期/降档后 storage_accounts.quota 不会自动回写（惰性派生的兜底），
+	// 夜间按 ActivePlan 当前档位统一回写一次，保证上传侧配额与派生口径一致（评审门③ P1-2）。
+	ms := membership.NewService(s.db)
+	for userID := range users {
+		if err := ms.SyncQuotaWithin(s.db.WithContext(ctx), userID, now); err != nil {
+			slog.Error("存储配额夜间同步失败", "user", userID, "err", err)
+		}
 	}
 	return checked, fixed, nil
 }

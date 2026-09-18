@@ -102,6 +102,8 @@ services:
       WATERMARK_ENABLED: "${WATERMARK_ENABLED:-false}"
       WATERMARK_FONT_PATH: "${WATERMARK_FONT_PATH:-}"
       WATERMARK_TEXT: "${WATERMARK_TEXT:-优刻 AI}"
+      # OIDC RS256 私钥（PEM PKCS#8）：测试可留空（临时密钥，重启失效）；生产必须配置持久私钥
+      OIDC_JWKS_PRIVATE_KEY: "${OIDC_JWKS_PRIVATE_KEY:-}"
       # 支付回调地址缺省由 APP_BASE_URL 推导；渠道未配置时自动不上架，配了就必须完整
       PAYMENT_NOTIFY_URL: ${PAYMENT_NOTIFY_URL:-}
       ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}
