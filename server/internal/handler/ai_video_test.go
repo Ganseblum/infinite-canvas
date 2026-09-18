@@ -16,6 +16,7 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -96,8 +97,7 @@ func TestVideoTaskLifecycleAndRefund(t *testing.T) {
 		t.Fatalf("任务创建响应不完整: %v", body)
 	}
 	// 创建时就扣点，并写入一条 pending 的生成记录。
-	credits := service.NewCreditService(g)
-	balance, _ := credits.Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 4_600_000 {
 		t.Fatalf("创建任务时应扣点, 余额=%d", balance.PurchasedMicros)
 	}
@@ -182,13 +182,12 @@ func TestVideoTaskFailureRefundsOnce(t *testing.T) {
 	if err := taskService.PollTask(context.Background(), &task, time.Now()); err != nil {
 		t.Fatalf("重复轮询失败: %v", err)
 	}
-	credits := service.NewCreditService(g)
-	balance, _ := credits.Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 5_000_000 {
 		t.Fatalf("失败应全额退还, 余额=%d", balance.PurchasedMicros)
 	}
 	var refunds int64
-	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, service.TxTypeRefund).Count(&refunds)
+	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, billing.TxTypeRefund).Count(&refunds)
 	if refunds != 1 {
 		t.Fatalf("退款流水应只有一条, got %d", refunds)
 	}
@@ -233,8 +232,7 @@ func TestChatNonStreamAndRequestConvergence(t *testing.T) {
 	}
 
 	// 启动收敛：把一条请求改成超时的 running，应被置为 failed 并退款。
-	credits := service.NewCreditService(g)
-	balanceBefore, _ := credits.Balance(context.Background(), user.ID)
+	balanceBefore, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	stale := &model.AIRequest{
 		ID:              uuid.New(),
 		UserID:          user.ID,
@@ -265,7 +263,7 @@ func TestChatNonStreamAndRequestConvergence(t *testing.T) {
 	if reloaded.Status != "failed" {
 		t.Fatalf("滞留请求应置为 failed: %s", reloaded.Status)
 	}
-	balanceAfter, _ := credits.Balance(context.Background(), user.ID)
+	balanceAfter, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balanceAfter.PurchasedMicros != balanceBefore.PurchasedMicros {
 		t.Fatalf("无消费流水的请求不应改变余额")
 	}

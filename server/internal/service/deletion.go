@@ -10,6 +10,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/storage"
 )
 
@@ -18,13 +19,18 @@ import (
 type DeletionService struct {
 	db       *gorm.DB
 	identity *identity.Service
+	usage    *platformstorage.Service
 	// storage 用于匿名化提交后删除用户的媒体对象本体；未注入时只清索引
 	// （后台任务接线时传入，与媒体接口共用同一驱动）。
 	storage storage.Storage
 }
 
 func NewDeletionService(db *gorm.DB, stor ...storage.Storage) *DeletionService {
-	s := &DeletionService{db: db, identity: identity.NewService(db)}
+	s := &DeletionService{
+		db:       db,
+		identity: identity.NewService(db),
+		usage:    platformstorage.NewService(db, model.ProductCanvas),
+	}
 	if len(stor) > 0 {
 		s.storage = stor[0]
 	}
@@ -83,7 +89,7 @@ func (s *DeletionService) AnonymizeExpired(ctx context.Context, now time.Time) (
 			return err
 		}
 		if mediaBytes > 0 {
-			if _, err := NewQuotaService(s.db).AddUsage(tx, user.ID, MetricStorageBytes, -mediaBytes); err != nil {
+			if err := s.usage.Commit(tx, user.ID, -mediaBytes); err != nil {
 				return err
 			}
 		}

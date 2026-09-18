@@ -15,30 +15,47 @@ import (
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/platform/membership"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
 type AccountHandler struct {
-	db       *gorm.DB
-	cfg      *config.Config
-	grant    *service.FreeGrantService
-	authH    *AuthHandler
-	credits  *service.CreditService
-	quota    *service.QuotaService
-	identity *identity.Service
+	db         *gorm.DB
+	cfg        *config.Config
+	grant      *service.FreeGrantService
+	authH      *AuthHandler
+	credits    *billing.Service
+	membership *membership.Service
+	usage      *platformstorage.Service
+	quota      *service.QuotaService
+	identity   *identity.Service
 }
 
 func NewAccountHandler(db *gorm.DB, cfg *config.Config, grant *service.FreeGrantService, authH *AuthHandler) *AccountHandler {
 	return &AccountHandler{
-		db:       db,
-		cfg:      cfg,
-		grant:    grant,
-		authH:    authH,
-		credits:  service.NewCreditService(db),
-		quota:    service.NewQuotaService(db),
-		identity: identity.NewService(db),
+		db:         db,
+		cfg:        cfg,
+		grant:      grant,
+		authH:      authH,
+		credits:    billing.NewService(db, model.ProductCanvas),
+		membership: membership.NewService(db),
+		usage:      platformstorage.NewService(db, model.ProductCanvas),
+		quota:      service.NewQuotaService(db),
+		identity:   identity.NewService(db),
 	}
+}
+
+// latestPaidUntil 返回该用户最新订阅的 period_end；无订阅时为 nil。
+// paidUntil 键的值来源由 credits.paid_until 迁移到订阅周期（D6）。
+func latestPaidUntil(db *gorm.DB, userID uuid.UUID) *time.Time {
+	var sub model.MembershipSubscription
+	if err := db.Where("user_id = ?", userID).Order("period_end DESC").First(&sub).Error; err != nil {
+		return nil
+	}
+	return &sub.PeriodEnd
 }
 
 func (h *AccountHandler) GetMe(c *gin.Context) {
@@ -49,19 +66,25 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 		return
 	}
 	now := time.Now()
-	credit, plan, err := h.quota.DerivePlan(c.Request.Context(), uid, now)
+	planID, graceEndsAt, err := h.membership.ActivePlan(c.Request.Context(), uid, now)
 	if err != nil {
 		slog.Error("读取档位失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	storageBytes, err := h.quota.StorageBytes(c.Request.Context(), uid)
+	plan, err := h.membership.PlanDef(c.Request.Context(), planID)
+	if err != nil {
+		slog.Error("读取档位定义失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	used, _, err := h.usage.Snapshot(c.Request.Context(), uid)
 	if err != nil {
 		slog.Error("读取存储用量失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	readOnly := storageBytes > plan.StorageBytes
+	readOnly := used > plan.StorageBytes
 	expiry, err := h.quota.ExpiringMedia(c.Request.Context(), uid, plan.RetentionDays, now)
 	if err != nil {
 		slog.Error("计算媒体到期时间失败", "err", err)
@@ -70,6 +93,12 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 	}
 	imageTrials, _ := h.usageValue(uid, service.MetricFreeImageTrial)
 	videoTrials, _ := h.usageValue(uid, service.MetricFreeVideoTrial)
+	account, err := h.credits.Balance(c.Request.Context(), uid)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		slog.Error("读取点数余额失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
 
 	deletion := gin.H{"status": "none", "scheduledAt": nil}
 	if user.Status == "pending_deletion" {
@@ -95,13 +124,13 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 			"retentionDays": plan.RetentionDays,
 		},
 		"credits": gin.H{
-			"purchasedMicros": credit.PurchasedMicros,
-			"grantedMicros":   credit.GrantedMicros,
-			"totalMicros":     credit.PurchasedMicros + credit.GrantedMicros,
-			"paidUntil":       formatTimePtr(credit.PaidUntil),
+			"purchasedMicros": account.PurchasedMicros,
+			"grantedMicros":   account.GrantedMicros,
+			"totalMicros":     account.PurchasedMicros + account.GrantedMicros,
+			"paidUntil":       formatTimePtr(latestPaidUntil(h.db, uid)),
 		},
 		"usage": gin.H{
-			"storageBytes":        storageBytes,
+			"storageBytes":        used,
 			"freeImageTrialsUsed": imageTrials,
 			"freeVideoTrialsUsed": videoTrials,
 		},
@@ -111,7 +140,7 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 		},
 		"deletion":    deletion,
 		"readOnly":    readOnly,
-		"graceEndsAt": formatTimePtr(service.GraceEndsAt(credit, now)),
+		"graceEndsAt": formatTimePtr(graceEndsAt),
 	})
 }
 
@@ -140,7 +169,7 @@ func (h *AccountHandler) ExportMe(c *gin.Context) {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
 	}
-	credit, err := service.NewCreditService(h.db).Balance(c.Request.Context(), uid)
+	credit, err := h.credits.Balance(c.Request.Context(), uid)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		slog.Error("导出读取点数余额失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)

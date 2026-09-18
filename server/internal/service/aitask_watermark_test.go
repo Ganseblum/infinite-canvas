@@ -19,6 +19,7 @@ import (
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/db"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/provider"
 	"github.com/infinite-canvas/server/internal/storage"
 )
@@ -125,7 +126,7 @@ func newWMTestDB(t *testing.T) *gorm.DB {
 	if err := db.Migrate(g); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
-	if err := db.SeedPlans(g); err != nil {
+	if err := db.SeedMembershipPlans(g); err != nil {
 		t.Fatalf("写入默认档位失败: %v", err)
 	}
 	return g
@@ -146,10 +147,9 @@ func newWMTaskService(t *testing.T, g *gorm.DB, stor *wmStorage, wm videoWaterma
 	return s
 }
 
-// seedWMTask 写入 paid/free 均可用的任务夹具：先入账再真实预扣，
+// seedWMTask 写入 paid/free 均可用的任务夹具：先入账再按请求 id（bizKey）真实预扣，
 // 退款断言才有消费流水可依。isPaid=false 时只入赠送桶，保持 free 档身份；
-// isPaid=true 时入账两倍金额：PlanOf 按 purchased 余额判 paid（quota.go PlanOf），
-// 预扣恰好消耗 costMicros，只入账一份会把余额扣空退化为 free 档。
+// isPaid=true 时发放付费订阅（D6：付费身份由订阅表达，与余额无关）并入购买桶。
 func seedWMTask(t *testing.T, g *gorm.DB, isPaid bool, costMicros int64) (*model.AITask, *model.AIRequest, model.PlatformUser) {
 	t.Helper()
 	user := model.PlatformUser{
@@ -161,20 +161,28 @@ func seedWMTask(t *testing.T, g *gorm.DB, isPaid bool, costMicros int64) (*model
 	if err := g.Create(&user).Error; err != nil {
 		t.Fatalf("创建用户失败: %v", err)
 	}
-	credits := NewCreditService(g)
-	if err := credits.EnsureCredit(g, user.ID); err != nil {
+	if isPaid {
+		// 付费身份按 D6 新口径来自有效订阅。
+		if err := g.Create(&model.MembershipSubscription{
+			ID: uuid.New(), UserID: user.ID, PlanID: "paid", Status: "active",
+			StartedAt: time.Now(), PeriodEnd: time.Now().AddDate(0, 0, 30),
+		}).Error; err != nil {
+			t.Fatalf("写入付费订阅失败: %v", err)
+		}
+	}
+	points := billing.NewService(g, model.ProductCanvas)
+	if err := points.EnsureAccount(g, user.ID); err != nil {
 		t.Fatalf("建账本行失败: %v", err)
 	}
-	bucket := BucketGranted
-	deposit := costMicros
+	bucket := billing.BucketGranted
 	if isPaid {
-		bucket = BucketPurchased
-		deposit = costMicros * 2
+		bucket = billing.BucketPurchased
 	}
-	if _, err := credits.Adjust(context.Background(), g, user.ID, bucket, deposit, "水印挂钩测试入账", "test"); err != nil {
+	if _, err := points.Adjust(g, user.ID, bucket, costMicros, "水印挂钩测试入账", "test"); err != nil {
 		t.Fatalf("入账失败: %v", err)
 	}
-	transactions, err := credits.Reserve(context.Background(), user.ID, costMicros, "", "测试预扣")
+	requestID := uuid.New()
+	transactions, err := points.Reserve(g, user.ID, costMicros, requestID.String())
 	if err != nil {
 		t.Fatalf("预扣失败: %v", err)
 	}
@@ -184,7 +192,7 @@ func seedWMTask(t *testing.T, g *gorm.DB, isPaid bool, costMicros int64) (*model
 	}
 	raw, _ := json.Marshal(ids)
 	request := &model.AIRequest{
-		ID:                    uuid.New(),
+		ID:                    requestID,
 		UserID:                user.ID,
 		Capability:            "video",
 		Model:                 "test-video",
@@ -224,11 +232,11 @@ func succeedWMTask(t *testing.T, s *AITaskService, task *model.AITask, data []by
 func assertWMRefund(t *testing.T, g *gorm.DB, userID uuid.UUID, requestID uuid.UUID, costMicros int64) {
 	t.Helper()
 	var refunds int64
-	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", userID, TxTypeRefund).Count(&refunds)
+	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", userID, billing.TxTypeRefund).Count(&refunds)
 	if refunds != 1 {
 		t.Fatalf("退款流水应只有一条, got %d", refunds)
 	}
-	balance, err := NewCreditService(g).Balance(context.Background(), userID)
+	balance, err := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), userID)
 	if err != nil {
 		t.Fatalf("读取余额失败: %v", err)
 	}
@@ -441,7 +449,7 @@ func TestVideoTaskSaveFailureCompensatesOrig(t *testing.T) {
 	task, request, user := seedWMTask(t, g, false, 400_000)
 
 	// 把 free 档单文件上限压到与原始产物等大：水印字节必然超限，Save 必失败。
-	if err := g.Model(&model.Plan{}).Where("id = ?", "free").Update("max_file_bytes", len("fake-mp4-data")).Error; err != nil {
+	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("max_file_bytes", len("fake-mp4-data")).Error; err != nil {
 		t.Fatalf("调整档位上限失败: %v", err)
 	}
 

@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +12,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/db"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 )
 
 func newServiceDB(t *testing.T) *gorm.DB {
@@ -32,7 +31,7 @@ func newServiceDB(t *testing.T) *gorm.DB {
 	if err := db.Migrate(g); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
-	if err := db.SeedPlans(g); err != nil {
+	if err := db.SeedMembershipPlans(g); err != nil {
 		t.Fatalf("写入默认档位失败: %v", err)
 	}
 	return g
@@ -51,169 +50,6 @@ func createUserRow(t *testing.T, g *gorm.DB) model.PlatformUser {
 		t.Fatalf("创建用户失败: %v", err)
 	}
 	return user
-}
-
-func TestReserveAndRefundAcrossBuckets(t *testing.T) {
-	g := newServiceDB(t)
-	credits := NewCreditService(g)
-	user := createUserRow(t, g)
-	if err := credits.EnsureCredit(g, user.ID); err != nil {
-		t.Fatalf("建账本行失败: %v", err)
-	}
-	now := time.Now()
-	if err := credits.Purchase(context.Background(), g, &model.Order{
-		UserID: user.ID, ID: uuid.New(), PurchasedMicros: 500_000, GrantedMicros: 300_000, EntitlementDays: 30,
-	}, now); err != nil {
-		t.Fatalf("充值入账失败: %v", err)
-	}
-
-	// 跨桶扣减：先扣 granted 再扣 purchased，写成两条流水。
-	txs, err := credits.Reserve(context.Background(), user.ID, 400_000, "g1", "测试")
-	if err != nil {
-		t.Fatalf("扣减失败: %v", err)
-	}
-	if len(txs) != 2 {
-		t.Fatalf("跨桶扣减应产生两条流水, got %d", len(txs))
-	}
-	balance, _ := credits.Balance(context.Background(), user.ID)
-	if balance.GrantedMicros != 0 || balance.PurchasedMicros != 400_000 {
-		t.Fatalf("扣减后余额错误: granted=%d purchased=%d", balance.GrantedMicros, balance.PurchasedMicros)
-	}
-
-	// 逐桶对账等式成立。
-	totals, err := credits.SumByBucket(context.Background(), user.ID)
-	if err != nil {
-		t.Fatalf("汇总流水失败: %v", err)
-	}
-	if totals[BucketPurchased] != balance.PurchasedMicros || totals[BucketGranted] != balance.GrantedMicros {
-		t.Fatalf("流水合计与余额不一致: totals=%v balance=%+v", totals, balance)
-	}
-
-	// 退款回到原桶，且重复退款幂等。
-	consumeIDs := []uuid.UUID{txs[0].ID, txs[1].ID}
-	if err := credits.Refund(context.Background(), user.ID, consumeIDs, "失败退还"); err != nil {
-		t.Fatalf("退款失败: %v", err)
-	}
-	if err := credits.Refund(context.Background(), user.ID, consumeIDs, "失败退还"); err != nil {
-		t.Fatalf("重复退款应幂等: %v", err)
-	}
-	balance, _ = credits.Balance(context.Background(), user.ID)
-	if balance.GrantedMicros != 300_000 || balance.PurchasedMicros != 500_000 {
-		t.Fatalf("退款后余额未回原值: granted=%d purchased=%d", balance.GrantedMicros, balance.PurchasedMicros)
-	}
-}
-
-func TestReserveInsufficientCredits(t *testing.T) {
-	g := newServiceDB(t)
-	credits := NewCreditService(g)
-	user := createUserRow(t, g)
-
-	txs, err := credits.Reserve(context.Background(), user.ID, 100, "g1", "")
-	if !errors.Is(err, ErrInsufficientCredits) {
-		t.Fatalf("余额不足应返回 ErrInsufficientCredits, got %v", err)
-	}
-	if len(txs) != 0 {
-		t.Fatalf("余额不足不应产生流水, got %d", len(txs))
-	}
-	balance, _ := credits.Balance(context.Background(), user.ID)
-	if balance.PurchasedMicros != 0 || balance.GrantedMicros != 0 {
-		t.Fatalf("余额不足不应改变余额: %+v", balance)
-	}
-}
-
-func TestConcurrentReserveNeverOverdraws(t *testing.T) {
-	g := newServiceDB(t)
-	credits := NewCreditService(g)
-	user := createUserRow(t, g)
-	if err := credits.EnsureCredit(g, user.ID); err != nil {
-		t.Fatalf("建账本行失败: %v", err)
-	}
-	if err := credits.Purchase(context.Background(), g, &model.Order{
-		UserID: user.ID, ID: uuid.New(), PurchasedMicros: 1_000, EntitlementDays: 30,
-	}, time.Now()); err != nil {
-		t.Fatalf("充值入账失败: %v", err)
-	}
-
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	succeeded := 0
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := credits.Reserve(context.Background(), user.ID, 100, "g", ""); err == nil {
-				mu.Lock()
-				succeeded++
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-	if succeeded != 10 {
-		t.Fatalf("并发扣减应恰好成功 10 次, got %d", succeeded)
-	}
-	balance, _ := credits.Balance(context.Background(), user.ID)
-	if balance.PurchasedMicros != 0 {
-		t.Fatalf("并发扣减后余额应为 0, got %d", balance.PurchasedMicros)
-	}
-	totals, _ := credits.SumByBucket(context.Background(), user.ID)
-	if totals[BucketPurchased] != 0 {
-		t.Fatalf("流水合计应为 0, got %d", totals[BucketPurchased])
-	}
-}
-
-func TestAdminAdjustRejectsNegative(t *testing.T) {
-	g := newServiceDB(t)
-	credits := NewCreditService(g)
-	user := createUserRow(t, g)
-	if err := credits.EnsureCredit(g, user.ID); err != nil {
-		t.Fatalf("建账本行失败: %v", err)
-	}
-	_, err := credits.Adjust(context.Background(), g, user.ID, BucketGranted, -100, "补偿", "admin")
-	if !errors.Is(err, ErrInsufficientCredits) {
-		t.Fatalf("扣成负数应被拒绝, got %v", err)
-	}
-	balance, _ := credits.Balance(context.Background(), user.ID)
-	if balance.GrantedMicros != 0 {
-		t.Fatalf("被拒绝的调整不应改变余额: %+v", balance)
-	}
-}
-
-func TestPlanOfDerivation(t *testing.T) {
-	now := time.Now()
-	past := now.Add(-24 * time.Hour)
-	withinGrace := now.AddDate(0, 0, -30)
-	beyondGrace := now.AddDate(0, 0, -90)
-	future := now.AddDate(0, 0, 30)
-
-	cases := []struct {
-		name   string
-		credit model.Credit
-		want   string
-	}{
-		{"只有赠送是免费档", model.Credit{GrantedMicros: 999_999, PaidUntil: &past}, "sunset"},
-		{"赠送不产生付费身份", model.Credit{GrantedMicros: 1_000_000}, "free"},
-		{"购买桶非零是付费档", model.Credit{PurchasedMicros: 1, PaidUntil: &past}, "paid"},
-		{"权益过期 30 天在日落期", model.Credit{PaidUntil: &withinGrace}, "sunset"},
-		{"过期 60 天外落免费档", model.Credit{PaidUntil: &beyondGrace}, "free"},
-		{"未过期是付费档", model.Credit{PaidUntil: &future}, "paid"},
-	}
-	for _, tc := range cases {
-		if got := PlanOf(tc.credit, now); got != tc.want {
-			t.Errorf("%s: PlanOf=%s want=%s", tc.name, got, tc.want)
-		}
-	}
-	unchanged := model.Credit{PaidUntil: &past}
-	if PlanOf(unchanged, now) != "sunset" {
-		t.Errorf("刚过期的权益应落在日落期")
-	}
-	graceEnd := GraceEndsAt(model.Credit{PaidUntil: &withinGrace}, now)
-	if graceEnd == nil || graceEnd.Before(now) {
-		t.Errorf("日落期结束时间应晚于当前时间: %v", graceEnd)
-	}
-	if GraceEndsAt(model.Credit{PaidUntil: &beyondGrace}, now) != nil {
-		t.Errorf("超出日落期的账号不应再有宽限期")
-	}
 }
 
 func TestPromotionMatchingAndConflict(t *testing.T) {
@@ -332,8 +168,7 @@ func TestExtractStorageKeys(t *testing.T) {
 func TestQuoteStalenessOnPromotionChange(t *testing.T) {
 	g := newServiceDB(t)
 	catalog := NewCatalogService(g, func() bool { return true })
-	quota := NewQuotaService(g)
-	quotes := NewQuoteService(catalog, quota, "quote-secret")
+	quotes := NewQuoteService(catalog, billing.NewService(g, model.ProductCanvas), "quote-secret")
 	user := createUserRow(t, g)
 
 	modelID := uuid.New()
@@ -402,8 +237,7 @@ func TestQuoteStalenessOnPromotionChange(t *testing.T) {
 func TestFreeTrialTakesPriorityOverDiscount(t *testing.T) {
 	g := newServiceDB(t)
 	catalog := NewCatalogService(g, func() bool { return true })
-	quota := NewQuotaService(g)
-	quotes := NewQuoteService(catalog, quota, "quote-secret")
+	quotes := NewQuoteService(catalog, billing.NewService(g, model.ProductCanvas), "quote-secret")
 	user := createUserRow(t, g)
 
 	modelID := uuid.New()
@@ -439,7 +273,14 @@ func TestFreeTrialTakesPriorityOverDiscount(t *testing.T) {
 	}
 	// 用掉一次后剩余次数减少，仍然优先免费。
 	if err := g.Transaction(func(tx *gorm.DB) error {
-		return quota.ConsumeFreeTrial(tx, user.ID, MetricFreeImageTrial)
+		consumed, err := billing.NewService(g, model.ProductCanvas).ConsumeFreeTrial(tx, user.ID, billing.MetricFreeImageTrial)
+		if err != nil {
+			return err
+		}
+		if !consumed {
+			t.Fatal("首次占用免费额度应成功")
+		}
+		return nil
 	}); err != nil {
 		t.Fatalf("占用免费额度失败: %v", err)
 	}

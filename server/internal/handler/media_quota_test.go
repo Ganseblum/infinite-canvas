@@ -8,7 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/infinite-canvas/server/internal/model"
-	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/platform/membership"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 )
 
 func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
@@ -19,9 +20,12 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	user := createUser(t, g, "quota@example.com", "quotauser", "password123", true)
 	token := accessToken(t, cfg, &user)
 
-	// 把免费档的存储上限调小，便于触达 507。
-	if err := g.Model(&model.Plan{}).Where("id = ?", "free").Update("storage_bytes", 40).Error; err != nil {
+	// 把免费档的存储上限调小，便于触达 507：改档位后按 SyncQuota 把配额回写账户行。
+	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("storage_bytes", 40).Error; err != nil {
 		t.Fatalf("调整档位失败: %v", err)
+	}
+	if err := membership.NewService(g).SyncQuota(context.Background(), user.ID); err != nil {
+		t.Fatalf("回写配额失败: %v", err)
 	}
 	w := doRaw(r, http.MethodPut, "/api/media/image:Quota1", testPNG, "image/png", token, nil)
 	if w.Code != http.StatusCreated {
@@ -43,8 +47,8 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("覆盖上传失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	quota := service.NewQuotaService(g)
-	used, err := quota.StorageBytes(context.Background(), user.ID)
+	usage := platformstorage.NewService(g, model.ProductCanvas)
+	used, _, err := usage.Snapshot(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("读取用量失败: %v", err)
 	}
@@ -55,7 +59,10 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("删除失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	used, _ = quota.StorageBytes(context.Background(), user.ID)
+	used, _, err = usage.Snapshot(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("读取用量失败: %v", err)
+	}
 	if used != 0 {
 		t.Fatalf("删除后用量应为 0, got %d", used)
 	}
@@ -68,12 +75,12 @@ func TestMediaUploadReadOnlyReturns402(t *testing.T) {
 	user := createUser(t, g, "readonly@example.com", "readonlyuser", "password123", true)
 	token := accessToken(t, cfg, &user)
 
-	if err := g.Model(&model.Plan{}).Where("id = ?", "free").Update("storage_bytes", 4).Error; err != nil {
+	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("storage_bytes", 4).Error; err != nil {
 		t.Fatalf("调整档位失败: %v", err)
 	}
-	// 人为写入一个超过档位上限的用量计数，模拟降档后的只读态。
-	record := model.UsageRecord{UserID: user.ID, Metric: service.MetricStorageBytes, Period: service.PeriodTotal, Value: 100}
-	if err := g.Create(&record).Error; err != nil {
+	// 人为把账户行改成 used > quota 的只读态，模拟降档后的只读态。
+	if err := g.Model(&model.StorageAccount{}).Where("user_id = ?", user.ID).
+		Updates(map[string]any{"quota_bytes": 4, "used_bytes": 100}).Error; err != nil {
 		t.Fatalf("写入用量失败: %v", err)
 	}
 	w := doRaw(r, http.MethodPut, "/api/media/image:ReadOnly1", testPNG, "image/png", token, nil)
@@ -101,12 +108,12 @@ func TestAdminRecalculateStorageHealsCounter(t *testing.T) {
 	if err := g.Create(&file).Error; err != nil {
 		t.Fatalf("写入媒体记录失败: %v", err)
 	}
-	record := model.UsageRecord{UserID: user.ID, Metric: service.MetricStorageBytes, Period: service.PeriodTotal, Value: 999}
-	if err := g.Save(&record).Error; err != nil {
+	if err := g.Model(&model.StorageAccount{}).Where("user_id = ?", user.ID).
+		Update("used_bytes", 999).Error; err != nil {
 		t.Fatalf("写入用量失败: %v", err)
 	}
 	// 直接调用重算，验证计数被 SUM(bytes) 覆盖。
-	used, err := service.NewQuotaService(g).RecalculateStorage(context.Background(), user.ID)
+	used, err := platformstorage.NewService(g, model.ProductCanvas).Recalculate(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("重算失败: %v", err)
 	}

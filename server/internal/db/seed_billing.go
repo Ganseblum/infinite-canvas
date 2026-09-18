@@ -11,13 +11,14 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 )
 
-// SeedBilling 幂等写入默认充值档位与示例平台模型目录。
+// SeedBilling 幂等写入默认点数包与示例平台模型目录。
 // 只有在对应记录不存在时才插入，已存在的一行都不动，人工调整过的价格不会被重启打回默认值。
+// 会员订阅档位由 SeedMembershipPlans 负责（D5 两表拆分）。
 func SeedBilling(gormDB *gorm.DB) error {
 	packages := []model.CreditPackage{
-		{ID: "starter", Name: "体验包", PriceMicros: 10_000_000, BonusMicros: 0, EntitlementDays: 30, Currency: "CNY", Enabled: true, Sort: 1},
-		{ID: "standard", Name: "标准包", PriceMicros: 30_000_000, BonusMicros: 3_000_000, EntitlementDays: 30, Currency: "CNY", Enabled: true, Sort: 2},
-		{ID: "pro", Name: "专业包", PriceMicros: 100_000_000, BonusMicros: 15_000_000, EntitlementDays: 90, Currency: "CNY", Enabled: true, Sort: 3},
+		{ID: "starter", Name: "体验包", PriceMicros: 10_000_000, BonusMicros: 0, Currency: "CNY", Enabled: true, Sort: 1},
+		{ID: "standard", Name: "标准包", PriceMicros: 30_000_000, BonusMicros: 3_000_000, Currency: "CNY", Enabled: true, Sort: 2},
+		{ID: "pro", Name: "专业包", PriceMicros: 100_000_000, BonusMicros: 15_000_000, Currency: "CNY", Enabled: true, Sort: 3},
 	}
 	for _, p := range packages {
 		var count int64

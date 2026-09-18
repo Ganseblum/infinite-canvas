@@ -341,8 +341,8 @@ func (h *AdminHandler) RevenueStats(c *gin.Context) {
 
 	var userTotal, paidUsers int64
 	h.db.Model(&model.PlatformUser{}).Count(&userTotal)
-	// 付费用户 = 购买桶非零或权益未过期，与档位解析器口径一致。
-	h.db.Model(&model.Credit{}).Where("purchased_micros > 0 OR (paid_until IS NOT NULL AND paid_until > ?)", now).Count(&paidUsers)
+	// 付费用户 = 存在 period_end 未到的订阅，与 membership.ActivePlan 派生口径一致（D6）。
+	h.db.Model(&model.MembershipSubscription{}).Where("period_end > ?", now).Distinct("user_id").Count(&paidUsers)
 	conversion := 0.0
 	if userTotal > 0 {
 		conversion = float64(paidUsers) / float64(userTotal)

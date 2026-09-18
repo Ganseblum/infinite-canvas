@@ -12,6 +12,8 @@ import (
 
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/payment"
+	"github.com/infinite-canvas/server/internal/platform/billing"
+	"github.com/infinite-canvas/server/internal/platform/membership"
 )
 
 // ErrOrderAlreadyPaid 表示取消一个已支付的订单，调用方映射为 409 ORDER_ALREADY_PAID。
@@ -23,13 +25,19 @@ var ErrAccountPendingDeletion = errors.New("账号处于注销冷静期")
 // OrderService 负责订单创建、列表、取消与支付到账。
 // 渠道差异全部收敛在 internal/payment，本层只认统一后的结构。
 type OrderService struct {
-	db       *gorm.DB
-	registry *PaymentRegistry
-	credits  *CreditService
+	db         *gorm.DB
+	registry   *PaymentRegistry
+	billing    *billing.Service
+	membership *membership.Service
 }
 
 func NewOrderService(db *gorm.DB, registry *PaymentRegistry) *OrderService {
-	return &OrderService{db: db, registry: registry, credits: NewCreditService(db)}
+	return &OrderService{
+		db:         db,
+		registry:   registry,
+		billing:    billing.NewService(db, model.ProductCanvas),
+		membership: membership.NewService(db),
+	}
 }
 
 // CreateOrderResult 是下单成功后的返回结构。
@@ -38,8 +46,9 @@ type CreateOrderResult struct {
 	Payment payment.Params `json:"payment"`
 }
 
-// CreateOrder 建单并生成支付参数。价格、两个桶与权益天数在建单时从档位快照到订单行。
-func (s *OrderService) CreateOrder(ctx context.Context, user model.PlatformUser, packageID, providerName string) (*CreateOrderResult, error) {
+// CreateOrder 建单并生成支付参数。价格与权益天数在建单时从档位快照到订单行。
+// packageID 与 planID 二选一：点数包走 credit_packages，会员订单走 membership_plans。
+func (s *OrderService) CreateOrder(ctx context.Context, user model.PlatformUser, packageID, planID, providerName string) (*CreateOrderResult, error) {
 	if user.Status == "pending_deletion" {
 		return nil, ErrAccountPendingDeletion
 	}
@@ -47,33 +56,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, user model.PlatformUser,
 	if !ok {
 		return nil, ErrProviderUnavailable
 	}
-	var pack model.CreditPackage
-	if err := s.db.WithContext(ctx).First(&pack, "id = ?", packageID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrPackageNotFound
-		}
+	order, err := s.buildOrder(ctx, user, packageID, planID)
+	if err != nil {
 		return nil, err
 	}
-	if !pack.Enabled {
-		return nil, ErrPackageNotFound
-	}
-	// 提交给支付渠道时换算成分，因此价格必须是 10000 微元的整数倍（整分）。
-	if pack.PriceMicros <= 0 || pack.PriceMicros%10000 != 0 {
-		return nil, errors.New("档位价格必须是整分（10000 微元的整数倍）")
-	}
-
-	order := &model.Order{
-		ID:              uuid.New(),
-		UserID:          user.ID,
-		Provider:        provider.Name(),
-		PackageID:       pack.ID,
-		PriceMicros:     pack.PriceMicros,
-		Currency:        pack.Currency,
-		PurchasedMicros: pack.PriceMicros,
-		GrantedMicros:   pack.BonusMicros,
-		EntitlementDays: pack.EntitlementDays,
-		Status:          "pending",
-	}
+	order.Provider = provider.Name()
 	if err := s.db.WithContext(ctx).Create(order).Error; err != nil {
 		return nil, err
 	}
@@ -95,8 +82,67 @@ func (s *OrderService) CreateOrder(ctx context.Context, user model.PlatformUser,
 	return &CreateOrderResult{Order: order, Payment: params}, nil
 }
 
-// ErrPackageNotFound 表示档位不存在或已下架。
+// buildOrder 按「点数包或会员档位二选一」组装订单行，价格在建单时快照。
+func (s *OrderService) buildOrder(ctx context.Context, user model.PlatformUser, packageID, planID string) (*model.Order, error) {
+	order := &model.Order{
+		ID:      uuid.New(),
+		UserID:  user.ID,
+		Product: model.ProductCanvas,
+		Status:  "pending",
+	}
+	switch {
+	case packageID != "" && planID != "":
+		return nil, ErrOrderTargetConflict
+	case planID != "":
+		var plan model.MembershipPlan
+		if err := s.db.WithContext(ctx).First(&plan, "id = ?", planID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, ErrPlanNotPurchasable
+			}
+			return nil, err
+		}
+		if !plan.Enabled || plan.DurationDays <= 0 {
+			return nil, ErrPlanNotPurchasable
+		}
+		// 提交给支付渠道时换算成分，价格必须是 10000 微元的整数倍（整分）。
+		if plan.PriceMicros <= 0 || plan.PriceMicros%10000 != 0 {
+			return nil, errors.New("档位价格必须是整分（10000 微元的整数倍）")
+		}
+		order.PlanID = &plan.ID
+		order.PriceMicros = plan.PriceMicros
+		order.Currency = plan.Currency
+		order.EntitlementDays = plan.DurationDays
+	default:
+		var pack model.CreditPackage
+		if err := s.db.WithContext(ctx).First(&pack, "id = ?", packageID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, ErrPackageNotFound
+			}
+			return nil, err
+		}
+		if !pack.Enabled {
+			return nil, ErrPackageNotFound
+		}
+		if pack.PriceMicros <= 0 || pack.PriceMicros%10000 != 0 {
+			return nil, errors.New("档位价格必须是整分（10000 微元的整数倍）")
+		}
+		order.PackageID = pack.ID
+		order.PriceMicros = pack.PriceMicros
+		order.Currency = pack.Currency
+		order.PurchasedMicros = pack.PriceMicros
+		order.GrantedMicros = pack.BonusMicros
+	}
+	return order, nil
+}
+
+// ErrPackageNotFound 表示点数包不存在或已下架。
 var ErrPackageNotFound = errors.New("充值档位不存在或已下架")
+
+// ErrPlanNotPurchasable 表示会员档位不存在、未上架或不可购买。
+var ErrPlanNotPurchasable = errors.New("会员档位不可购买")
+
+// ErrOrderTargetConflict 表示 packageId 与 planId 同时传给下单接口。
+var ErrOrderTargetConflict = errors.New("packageId 与 planId 只能二选一")
 
 // ListOrders 游标分页返回当前用户的订单。
 func (s *OrderService) ListOrders(ctx context.Context, userID uuid.UUID, cursor string, size int, status string) ([]model.Order, string, error) {
@@ -209,8 +255,10 @@ func (s *OrderService) HandleCallback(ctx context.Context, providerName string, 
 	}
 }
 
-// markPaid 在一个事务内完成状态跃迁、双桶入账、权益延长与流水写入。
+// markPaid 在一个事务内完成状态跃迁、双桶入账、会员发放与流水写入。
 // 重复回调命中已支付状态时直接返回成功，不做任何写入。
+// 加点（billing.Purchase）与发会员（membership.GrantFromOrder）在同一事务，
+// 任一失败整体回滚，下次回调幂等重放（异常矩阵路径二）。
 func (s *OrderService) markPaid(ctx context.Context, order *model.Order, providerOrderID string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var locked model.Order
@@ -234,7 +282,10 @@ func (s *OrderService) markPaid(ctx context.Context, order *model.Order, provide
 		}
 		locked.Status = "paid"
 		locked.PaidAt = &now
-		return s.credits.Purchase(ctx, tx, &locked, now)
+		if err := s.billing.Purchase(tx, &locked, now); err != nil {
+			return err
+		}
+		return s.membership.GrantFromOrder(tx, &locked, now)
 	})
 }
 

@@ -68,6 +68,7 @@ type Generation struct {
 type MediaFile struct {
 	ID               uuid.UUID `gorm:"type:char(36);primaryKey;comment:媒体文件主键"`
 	UserID           uuid.UUID `gorm:"type:char(36);not null;uniqueIndex:idx_media_user_key,priority:1;comment:归属用户，与存储键组成唯一约束"`
+	Product          string    `gorm:"type:varchar(32);not null;default:youc-canvas;comment:归属产品，共享池下按产品分账"`
 	StorageKey       string    `gorm:"type:varchar(80);not null;uniqueIndex:idx_media_user_key,priority:2;comment:存储键，格式为 类型前缀：对象ID，画布与素材都通过它引用本行"`
 	ObjectPath       string    `gorm:"type:varchar(300);not null;comment:对象在存储后端的实际路径或对象键"`
 	MimeType         string    `gorm:"type:varchar(120);not null;comment:文件 MIME 类型"`

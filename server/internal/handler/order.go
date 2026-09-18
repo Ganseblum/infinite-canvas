@@ -28,6 +28,7 @@ func NewOrderHandler(db *gorm.DB, registry *service.PaymentRegistry) *OrderHandl
 
 type createOrderReq struct {
 	PackageID string `json:"packageId"`
+	PlanID    string `json:"planId"`
 	Provider  string `json:"provider"`
 }
 
@@ -37,7 +38,16 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		return
 	}
 	var req createOrderReq
-	if err := c.ShouldBindJSON(&req); err != nil || req.PackageID == "" {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Abort(c, errs.ErrValidation)
+		return
+	}
+	// packageId 与 planId 二选一：都传或都不传按 400 VALIDATION 处理。
+	switch {
+	case req.PackageID != "" && req.PlanID != "":
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"planId": "packageId 与 planId 只能二选一"}))
+		return
+	case req.PackageID == "" && req.PlanID == "":
 		errs.Abort(c, errs.ErrValidation)
 		return
 	}
@@ -51,13 +61,15 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
 	}
-	result, err := h.orders.CreateOrder(c.Request.Context(), user, req.PackageID, req.Provider)
+	result, err := h.orders.CreateOrder(c.Request.Context(), user, req.PackageID, req.PlanID, req.Provider)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrAccountPendingDeletion):
 			errs.Abort(c, errs.ErrAccountPendingDeletion)
 		case errors.Is(err, service.ErrPackageNotFound):
 			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"packageId": "档位不存在或已下架"}))
+		case errors.Is(err, service.ErrPlanNotPurchasable):
+			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"planId": "会员档位不存在或不可购买"}))
 		case errors.Is(err, service.ErrProviderUnavailable):
 			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"provider": "支付渠道未配置"}))
 		default:

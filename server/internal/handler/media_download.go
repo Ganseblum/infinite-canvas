@@ -146,14 +146,19 @@ func (h *MediaHandler) RequestDownload(c *gin.Context) {
 		return
 	}
 	// 档位按媒体行归属者派生（此处归属者即当前用户），口径与下发选字节一致。
-	_, plan, err := h.quota.DerivePlan(c.Request.Context(), file.UserID, time.Now())
+	planID, _, err := h.membership.ActivePlan(c.Request.Context(), file.UserID, time.Now())
 	if err != nil {
 		slog.Error("读取档位失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
+	if _, err := h.membership.PlanDef(c.Request.Context(), planID); err != nil {
+		slog.Error("读取档位定义失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
 	mediaURL := "/api/media/" + key
-	if plan.ID != "paid" {
+	if planID != "paid" {
 		// 非付费档：下发层本就出主对象（水印版），无需签发取件链接。
 		c.JSON(http.StatusOK, gin.H{"url": mediaURL, "expiresAt": nil})
 		return

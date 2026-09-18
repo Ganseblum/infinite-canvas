@@ -19,7 +19,10 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/platform/membership"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 )
@@ -29,8 +32,9 @@ type AdminHandler struct {
 	db         *gorm.DB
 	identity   *identity.Service
 	cfg        *config.Config
-	credits    *service.CreditService
-	quota      *service.QuotaService
+	credits    *billing.Service
+	membership *membership.Service
+	usage      *platformstorage.Service
 	catalog    *service.CatalogService
 	audit      *service.AuditService
 	cleanup    *service.CleanupService
@@ -48,17 +52,18 @@ func NewAdminHandler(db *gorm.DB, cfg *config.Config, stor storage.Storage) *Adm
 // NewAdminHandlerWithUpstream 注入上游服务后启用平台渠道管理。
 func NewAdminHandlerWithUpstream(db *gorm.DB, cfg *config.Config, stor storage.Storage, upstream *service.UpstreamService) *AdminHandler {
 	return &AdminHandler{
-		db:       db,
-		identity: identity.NewService(db),
-		cfg:      cfg,
-		credits:  service.NewCreditService(db),
-		quota:    service.NewQuotaService(db),
-		catalog:  service.NewCatalogService(db, func() bool { return cfg.PromotionEnabled }),
-		audit:    service.NewAuditService(db),
-		cleanup:  service.NewCleanupService(db, stor),
-		upstream: upstream,
-		requests: service.NewAIRequestService(db),
-		media:    service.NewMediaWriteService(db, stor),
+		db:         db,
+		identity:   identity.NewService(db),
+		cfg:        cfg,
+		credits:    billing.NewService(db, model.ProductCanvas),
+		membership: membership.NewService(db),
+		usage:      platformstorage.NewService(db, model.ProductCanvas),
+		catalog:    service.NewCatalogService(db, func() bool { return cfg.PromotionEnabled }),
+		audit:      service.NewAuditService(db),
+		cleanup:    service.NewCleanupService(db, stor),
+		upstream:   upstream,
+		requests:   service.NewAIRequestService(db),
+		media:      service.NewMediaWriteService(db, stor),
 	}
 }
 
@@ -66,9 +71,9 @@ func NewAdminHandlerWithUpstream(db *gorm.DB, cfg *config.Config, stor storage.S
 
 var adminUserSorts = map[string]string{
 	"createdAt":       "platform_users.created_at",
-	"purchasedMicros": "purchased_micros",
-	"grantedMicros":   "granted_micros",
-	"storageBytes":    "storage_bytes",
+	"purchasedMicros": "COALESCE(ca.purchased_micros, 0)",
+	"grantedMicros":   "COALESCE(ca.granted_micros, 0)",
+	"storageBytes":    "COALESCE(sa.used_bytes, 0)",
 }
 
 type createUserReq struct {
@@ -144,8 +149,11 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		if err := tx.Create(&user).Error; err != nil {
 			return err
 		}
-		// 账本行随建号一起建，与注册保持一致，后续读余额不需要处理「行不存在」。
-		if err := h.credits.EnsureCredit(tx, user.ID); err != nil {
+		// 平台账本行与免费配额随建号一起建，与注册保持一致，后续读余额不需要处理「行不存在」。
+		if err := h.credits.EnsureAccount(tx, user.ID); err != nil {
+			return err
+		}
+		if err := h.membership.SyncQuotaWithin(tx, user.ID, now); err != nil {
 			return err
 		}
 		return h.audit.Record(tx, actorID, "user.create", "user", user.ID.String(), c.GetString("request_id"), "",
@@ -243,13 +251,23 @@ func usernameBase(email string) string {
 	return name
 }
 
-// planIDExpr 是统一档位表达式的 SQL 版本，用户列表的筛选与展示都复用它。
-const planIDExpr = `CASE
-	WHEN COALESCE(c.purchased_micros, 0) > 0 THEN 'paid'
-	WHEN c.paid_until IS NULL THEN 'free'
-	WHEN c.paid_until > ? THEN 'paid'
-	WHEN c.paid_until > ? THEN 'sunset'
-	ELSE 'free' END`
+// planFilter 是用户列表按档位筛选的 SQL 条件（D6 新口径，与 membership.ActivePlan
+// 逐行派生等价）：存在 period_end 未到的订阅为 paid；最新订阅（period_end 最大）落在
+// 到期后 60 天宽限内为 sunset；其余 free。返回条件 SQL 与对应绑定参数。
+func planFilter(planID string, now time.Time) (string, []any) {
+	sunsetLine := now.AddDate(0, 0, -membership.SunsetGraceDays)
+	switch planID {
+	case "paid":
+		return "EXISTS (SELECT 1 FROM membership_subscriptions s WHERE s.user_id = platform_users.id AND s.period_end > ?)", []any{now}
+	case "sunset":
+		return "(EXISTS (SELECT 1 FROM membership_subscriptions s WHERE s.user_id = platform_users.id AND s.period_end <= ? AND s.period_end > ?) AND NOT EXISTS (SELECT 1 FROM membership_subscriptions s WHERE s.user_id = platform_users.id AND s.period_end > ?))",
+			[]any{now, sunsetLine, now}
+	case "free":
+		return "NOT EXISTS (SELECT 1 FROM membership_subscriptions s WHERE s.user_id = platform_users.id AND s.period_end > ?)", []any{sunsetLine}
+	default:
+		return "", nil
+	}
+}
 
 func (h *AdminHandler) ListUsers(c *gin.Context) {
 	params, ok := parsePageParams(c)
@@ -273,10 +291,9 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	}
 
 	now := time.Now()
-	sunsetLine := now.AddDate(0, 0, -60)
 	base := h.db.Model(&model.PlatformUser{}).
-		Joins("LEFT JOIN credits c ON c.user_id = platform_users.id").
-		Joins("LEFT JOIN usage_records u ON u.user_id = platform_users.id AND u.metric = ? AND u.period = ?", service.MetricStorageBytes, service.PeriodTotal).
+		Joins("LEFT JOIN credit_accounts ca ON ca.user_id = platform_users.id").
+		Joins("LEFT JOIN storage_accounts sa ON sa.user_id = platform_users.id").
 		Where("platform_users.id <> ?", uuid.Nil)
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		pattern := searchPattern(q)
@@ -286,7 +303,8 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		base = base.Where("platform_users.status = ?", status)
 	}
 	if planID != "" {
-		base = base.Where("("+planIDExpr+") = ?", now, sunsetLine, planID)
+		cond, args := planFilter(planID, now)
+		base = base.Where(cond, args...)
 	}
 
 	var total int64
@@ -307,17 +325,14 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		CreatedAt       time.Time
 		PurchasedMicros int64
 		GrantedMicros   int64
-		PaidUntil       *time.Time
 		StorageBytes    int64
 	}
-	selectExpr := fmt.Sprintf(`platform_users.id, platform_users.email, platform_users.username, platform_users.role, platform_users.role_key, platform_users.status,
+	selectExpr := `platform_users.id, platform_users.email, platform_users.username, platform_users.role, platform_users.role_key, platform_users.status,
 		platform_users.email_verified_at, platform_users.created_at,
-		COALESCE(c.purchased_micros, 0) AS purchased_micros,
-		COALESCE(c.granted_micros, 0) AS granted_micros,
-		c.paid_until,
-		COALESCE(u.value, 0) AS storage_bytes,
-		(%s) AS plan_id`, planIDExpr)
-	err := base.Select(selectExpr, now, sunsetLine).
+		COALESCE(ca.purchased_micros, 0) AS purchased_micros,
+		COALESCE(ca.granted_micros, 0) AS granted_micros,
+		COALESCE(sa.used_bytes, 0) AS storage_bytes`
+	err := base.Select(selectExpr).
 		Order(sortColumn).Order("platform_users.id ASC").
 		Offset((params.Page - 1) * params.Size).Limit(params.Size).
 		Scan(&rows).Error
@@ -327,9 +342,15 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		return
 	}
 
+	// 管理流量低：逐行派生档位与最新订阅周期，planId/paidUntil 键名不变、语义按 D6 新口径。
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		credit := model.Credit{PurchasedMicros: row.PurchasedMicros, GrantedMicros: row.GrantedMicros, PaidUntil: row.PaidUntil}
+		derived, _, err := h.membership.ActivePlan(c.Request.Context(), row.ID, now)
+		if err != nil {
+			slog.Error("派生用户档位失败", "err", err)
+			errs.Abort(c, errs.ErrInternal)
+			return
+		}
 		items = append(items, gin.H{
 			"id":              row.ID.String(),
 			"email":           row.Email,
@@ -338,10 +359,10 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"roleKey":         roleKeyJSON(row.RoleKey),
 			"status":          row.Status,
 			"emailVerified":   row.EmailVerifiedAt != nil,
-			"planId":          service.PlanOf(credit, now),
+			"planId":          derived,
 			"purchasedMicros": row.PurchasedMicros,
 			"grantedMicros":   row.GrantedMicros,
-			"paidUntil":       formatTimePtr(row.PaidUntil),
+			"paidUntil":       formatTimePtr(latestPaidUntil(h.db, row.ID)),
 			"storageBytes":    row.StorageBytes,
 			"createdAt":       formatTime(row.CreatedAt),
 		})
@@ -360,12 +381,22 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		return
 	}
 	now := time.Now()
-	credit, plan, err := h.quota.DerivePlan(c.Request.Context(), userID, now)
+	planID, _, err := h.membership.ActivePlan(c.Request.Context(), userID, now)
 	if err != nil {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	storageBytes, _ := h.quota.StorageBytes(c.Request.Context(), userID)
+	plan, err := h.membership.PlanDef(c.Request.Context(), planID)
+	if err != nil {
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	storageBytes, _, _ := h.usage.Snapshot(c.Request.Context(), userID)
+	balance, err := h.credits.Balance(c.Request.Context(), userID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
 	mediaCount, _ := h.mediaCount(userID)
 	c.JSON(http.StatusOK, gin.H{"user": gin.H{
 		"id":              user.ID.String(),
@@ -382,9 +413,9 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		"storageLimit":    plan.StorageBytes,
 		"maxFileBytes":    plan.MaxFileBytes,
 		"retentionDays":   plan.RetentionDays,
-		"purchasedMicros": credit.PurchasedMicros,
-		"grantedMicros":   credit.GrantedMicros,
-		"paidUntil":       formatTimePtr(credit.PaidUntil),
+		"purchasedMicros": balance.PurchasedMicros,
+		"grantedMicros":   balance.GrantedMicros,
+		"paidUntil":       formatTimePtr(latestPaidUntil(h.db, userID)),
 		"storageBytes":    storageBytes,
 		"mediaCount":      mediaCount,
 		"readOnly":        storageBytes > plan.StorageBytes,
@@ -530,7 +561,7 @@ func (h *AdminHandler) AdjustCredits(c *gin.Context) {
 		return
 	}
 	fields := map[string]string{}
-	if req.Bucket != service.BucketPurchased && req.Bucket != service.BucketGranted {
+	if req.Bucket != billing.BucketPurchased && req.Bucket != billing.BucketGranted {
 		fields["bucket"] = "bucket 只能是 purchased 或 granted"
 	}
 	if req.AmountMicros == 0 {
@@ -544,18 +575,18 @@ func (h *AdminHandler) AdjustCredits(c *gin.Context) {
 		return
 	}
 	actorID, _ := uuid.Parse(c.GetString("user_id"))
-	var credit model.Credit
+	var account model.CreditAccount
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		updated, err := h.credits.Adjust(c.Request.Context(), tx, userID, req.Bucket, req.AmountMicros, req.Note, actorID.String())
+		updated, err := h.credits.Adjust(tx, userID, req.Bucket, req.AmountMicros, req.Note, actorID.String())
 		if err != nil {
 			return err
 		}
-		credit = updated
+		account = updated
 		return h.audit.Record(tx, actorID, "user.credits_adjust", "user", userID.String(), c.GetString("request_id"), req.Note,
 			nil, gin.H{"bucket": req.Bucket, "amountMicros": req.AmountMicros})
 	})
 	if err != nil {
-		if errors.Is(err, service.ErrInsufficientCredits) {
+		if errors.Is(err, billing.ErrInsufficientCredits) {
 			errs.Abort(c, errs.ErrInsufficientCredits)
 			return
 		}
@@ -564,8 +595,8 @@ func (h *AdminHandler) AdjustCredits(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"purchasedMicros": credit.PurchasedMicros,
-		"grantedMicros":   credit.GrantedMicros,
+		"purchasedMicros": account.PurchasedMicros,
+		"grantedMicros":   account.GrantedMicros,
 	})
 }
 
@@ -574,7 +605,7 @@ func (h *AdminHandler) RecalculateUsage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	used, err := h.quota.RecalculateStorage(c.Request.Context(), userID)
+	used, err := h.usage.Recalculate(c.Request.Context(), userID)
 	if err != nil {
 		slog.Error("重算存储用量失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -590,7 +621,7 @@ func (h *AdminHandler) ReclaimMedia(c *gin.Context) {
 	}
 	dryRun := c.Query("dryRun") == "true"
 	now := time.Now()
-	_, plan, err := h.quota.DerivePlan(c.Request.Context(), userID, now)
+	plan, err := service.PlanDefFor(c.Request.Context(), h.db, userID)
 	if err != nil {
 		errs.Abort(c, errs.ErrInternal)
 		return
@@ -616,7 +647,7 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 	h.db.Model(&model.Generation{}).Where("created_at >= ?", dayStart).Count(&generationToday)
 	h.db.Model(&model.Order{}).Where("status = ? AND paid_at >= ?", "paid", dayStart).Count(&orderToday)
 	h.db.Model(&model.MediaFile{}).Select("COALESCE(SUM(bytes), 0)").Scan(&storageTotal)
-	h.db.Model(&model.Credit{}).Select("COALESCE(SUM(purchased_micros + granted_micros), 0)").Scan(&creditsTotal)
+	h.db.Model(&model.CreditAccount{}).Select("COALESCE(SUM(purchased_micros + granted_micros), 0)").Scan(&creditsTotal)
 	h.db.Model(&model.Order{}).Where("status = ? AND paid_at >= ?", "paid", dayStart).
 		Select("COALESCE(SUM(price_micros), 0)").Scan(&revenueToday)
 	c.JSON(http.StatusOK, gin.H{
@@ -1098,6 +1129,7 @@ func (h *AdminHandler) ListPackages(c *gin.Context) {
 }
 
 // packagePayload 与用户侧 GET /api/credit-packages 保持同一字段形状。
+// 点数包不再承载会员时长（D5）：entitlementDays 键保留形状、固定输出 0。
 func packagePayload(pack model.CreditPackage) gin.H {
 	return gin.H{
 		"id":              pack.ID,
@@ -1105,7 +1137,7 @@ func packagePayload(pack model.CreditPackage) gin.H {
 		"priceMicros":     pack.PriceMicros,
 		"purchasedMicros": pack.PriceMicros,
 		"bonusMicros":     pack.BonusMicros,
-		"entitlementDays": pack.EntitlementDays,
+		"entitlementDays": 0,
 		"currency":        pack.Currency,
 		"enabled":         pack.Enabled,
 		"sort":            pack.Sort,
@@ -1133,12 +1165,11 @@ func (h *AdminHandler) CreatePackage(c *gin.Context) {
 		return
 	}
 	pack := model.CreditPackage{
-		ID:              req.ID,
-		Name:            req.Name,
-		PriceMicros:     *req.PriceMicros,
-		EntitlementDays: entitlementDaysOrDefault(req.EntitlementDays, h.cfg.EntitlementDays),
-		Currency:        "CNY",
-		Enabled:         req.Enabled == nil || *req.Enabled,
+		ID:          req.ID,
+		Name:        req.Name,
+		PriceMicros: *req.PriceMicros,
+		Currency:    "CNY",
+		Enabled:     req.Enabled == nil || *req.Enabled,
 	}
 	if req.BonusMicros != nil {
 		pack.BonusMicros = *req.BonusMicros
@@ -1191,9 +1222,6 @@ func (h *AdminHandler) UpdatePackage(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"priceMicros": err.Error()}))
 		return
 	}
-	if req.EntitlementDays != nil {
-		pack.EntitlementDays = *req.EntitlementDays
-	}
 	if req.Enabled != nil {
 		pack.Enabled = *req.Enabled
 	}
@@ -1229,24 +1257,13 @@ func validatePackage(price *int64, bonus *int64) error {
 	return nil
 }
 
-func entitlementDaysOrDefault(value *int, fallback int) int {
-	if value != nil && *value > 0 {
-		return *value
-	}
-	if fallback > 0 {
-		return fallback
-	}
-	return 30
-}
-
 func packageAudit(pack model.CreditPackage) gin.H {
 	return gin.H{
-		"name":            pack.Name,
-		"priceMicros":     pack.PriceMicros,
-		"bonusMicros":     pack.BonusMicros,
-		"entitlementDays": pack.EntitlementDays,
-		"enabled":         pack.Enabled,
-		"sort":            pack.Sort,
+		"name":        pack.Name,
+		"priceMicros": pack.PriceMicros,
+		"bonusMicros": pack.BonusMicros,
+		"enabled":     pack.Enabled,
+		"sort":        pack.Sort,
 	}
 }
 

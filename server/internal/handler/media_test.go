@@ -191,7 +191,7 @@ func TestMediaFileTooLargeBoundary(t *testing.T) {
 	token := accessToken(t, cfg, &user)
 
 	// 把免费档单文件上限改成 16 字节，验证边界与超限
-	if err := g.Model(&model.Plan{}).Where("id = ?", "free").Update("max_file_bytes", 16).Error; err != nil {
+	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("max_file_bytes", 16).Error; err != nil {
 		t.Fatalf("调整档位失败: %v", err)
 	}
 

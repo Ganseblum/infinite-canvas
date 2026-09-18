@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/model"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/storage"
 )
 
@@ -19,10 +20,11 @@ import (
 type CleanupService struct {
 	db      *gorm.DB
 	storage storage.Storage
+	usage   *platformstorage.Service
 }
 
 func NewCleanupService(db *gorm.DB, stor storage.Storage) *CleanupService {
-	return &CleanupService{db: db, storage: stor}
+	return &CleanupService{db: db, storage: stor, usage: platformstorage.NewService(db, model.ProductCanvas)}
 }
 
 // MediaRef 是一条待清理的媒体记录与其清理原因。
@@ -142,8 +144,7 @@ func (s *CleanupService) Reclaim(ctx context.Context, userID uuid.UUID, retentio
 				if err := tx.Where("id = ?", file.ID).Delete(&model.MediaFile{}).Error; err != nil {
 					return err
 				}
-				_, err := NewQuotaService(s.db).AddUsage(tx, userID, MetricStorageBytes, -file.Bytes)
-				return err
+				return s.usage.Commit(tx, userID, -file.Bytes)
 			}); err != nil {
 				slog.Error("清理媒体记录失败", "storageKey", item.StorageKey, "err", err)
 				continue
@@ -156,7 +157,7 @@ func (s *CleanupService) Reclaim(ctx context.Context, userID uuid.UUID, retentio
 		report.FreedBytes = freed
 	}
 
-	used, err := NewQuotaService(s.db).RecalculateStorage(ctx, userID)
+	used, err := s.usage.Recalculate(ctx, userID)
 	if err == nil {
 		report.StorageUsed = used
 	}

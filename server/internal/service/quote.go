@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 )
 
 const (
@@ -41,16 +42,16 @@ var ErrQuoteStale = errors.New("报价已失效，请重新报价")
 // QuoteService 负责参数校验、价格解析与报价凭证签发校验。
 type QuoteService struct {
 	catalog *CatalogService
-	quota   *QuotaService
+	billing *billing.Service
 	secret  []byte
 	trials  map[string]string // capability -> usage metric
 }
 
 // NewQuoteService 构造报价服务。secret 用于给 quoteToken 做 HMAC 签名。
-func NewQuoteService(catalog *CatalogService, quota *QuotaService, secret string) *QuoteService {
+func NewQuoteService(catalog *CatalogService, points *billing.Service, secret string) *QuoteService {
 	return &QuoteService{
 		catalog: catalog,
-		quota:   quota,
+		billing: points,
 		secret:  []byte(secret),
 		trials: map[string]string{
 			"image": MetricFreeImageTrial,
@@ -400,11 +401,11 @@ func (s *QuoteService) FreeTrialFor(userID uuid.UUID, catalogItem model.ModelCat
 	if !freeTrialParamsLocked(catalogItem, params) {
 		return false, 0
 	}
-	granted, err := s.quota.HasGrantedFreeClaim(userID)
+	granted, err := s.billing.HasGrantedClaim(s.billing.DB(), userID)
 	if err != nil || !granted {
 		return false, 0
 	}
-	remaining, err := s.quota.FreeTrialRemaining(userID, metric)
+	remaining, err := s.billing.FreeTrialRemaining(context.Background(), userID, metric)
 	if err != nil || remaining <= 0 {
 		return false, 0
 	}

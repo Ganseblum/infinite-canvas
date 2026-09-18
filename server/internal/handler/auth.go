@@ -19,7 +19,9 @@ import (
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/platform/membership"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -36,6 +38,8 @@ var (
 type AuthHandler struct {
 	db           *gorm.DB
 	identity     *identity.Service
+	billing      *billing.Service
+	membership   *membership.Service
 	cfg          *config.Config
 	mail         *mail.Mailer
 	failLim      *middleware.Limiter // 账号连续失败锁定
@@ -60,6 +64,8 @@ func NewAuthHandler(db *gorm.DB, cfg *config.Config, mailer *mail.Mailer) *AuthH
 	return &AuthHandler{
 		db:           db,
 		identity:     identity.NewService(db),
+		billing:      billing.NewService(db, model.ProductCanvas),
+		membership:   membership.NewService(db),
 		cfg:          cfg,
 		mail:         mailer,
 		failLim:      middleware.NewLimiter(15*time.Minute, 5),
@@ -182,8 +188,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		if err := tx.Create(&user).Error; err != nil {
 			return err
 		}
-		// 账本行随注册一起建，后续任何读余额的地方都不需要处理「行不存在」。
-		if err := service.NewCreditService(h.db).EnsureCredit(tx, user.ID); err != nil {
+		// 平台账本行与免费配额随注册一起建，后续任何读余额/配额的地方都不需要处理「行不存在」。
+		if err := h.billing.EnsureAccount(tx, user.ID); err != nil {
+			return err
+		}
+		if err := h.membership.SyncQuotaWithin(tx, user.ID, time.Now()); err != nil {
 			return err
 		}
 		var err error
@@ -418,15 +427,17 @@ func (h *AuthHandler) issueSession(c *gin.Context, user *model.PlatformUser) str
 	return accessToken
 }
 
-func (h *AuthHandler) planFor(user *model.PlatformUser) model.Plan {
-	var plan model.Plan
-	if err := h.db.First(&plan, "id = ?", "free").Error; err != nil {
-		return model.Plan{ID: "free", Name: "免费"}
+// planFor 返回注册/登录响应里的 plan 展示。会话负载只展示免费档定义（形状不变），
+// 真实档位与权益由 /api/me 的 membership 域派生。
+func (h *AuthHandler) planFor(user *model.PlatformUser) model.MembershipPlan {
+	plan, err := h.membership.PlanDef(context.Background(), "free")
+	if err != nil {
+		return model.MembershipPlan{ID: "free", Name: "免费"}
 	}
 	return plan
 }
 
-func sessionPayload(user *model.PlatformUser, plan model.Plan, accessToken string) gin.H {
+func sessionPayload(user *model.PlatformUser, plan model.MembershipPlan, accessToken string) gin.H {
 	return gin.H{
 		"user":        userPayload(user),
 		"accessToken": accessToken,

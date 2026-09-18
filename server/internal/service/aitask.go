@@ -211,7 +211,7 @@ func (s *AITaskService) succeedTask(ctx context.Context, task *model.AITask, sta
 	saveData := data
 	origPath := ""
 	if s.wm != nil && s.wmEnabled() {
-		_, plan, err := NewQuotaService(s.db).DerivePlan(ctx, task.UserID, time.Now())
+		plan, err := PlanDefFor(ctx, s.db, task.UserID)
 		if err != nil {
 			slog.Error("watermark_failed", "kind", "video", "task", task.ID, "err", err)
 			return s.failTask(ctx, task, "水印处理失败")
@@ -350,7 +350,7 @@ func (s *AITaskService) providerFor(name string) (provider.Provider, error) {
 }
 
 func (s *AITaskService) maxFileBytes(userID uuid.UUID) (int64, error) {
-	_, plan, err := NewQuotaService(s.db).DerivePlan(context.Background(), userID, time.Now())
+	plan, err := PlanDefFor(context.Background(), s.db, userID)
 	if err != nil {
 		return 0, err
 	}

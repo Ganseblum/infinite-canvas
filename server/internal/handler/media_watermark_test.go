@@ -22,11 +22,15 @@ import (
 
 // ===== 媒体水印下发闸门（T4）测试夹具 =====
 
-// makePaid 写入非零充值桶余额，使 DerivePlan 派生为 paid 档。
+// makePaid 发放一笔有效付费订阅，使 membership.ActivePlan 派生为 paid 档（D6）。
 func makePaid(t *testing.T, g *gorm.DB, user model.PlatformUser) {
 	t.Helper()
-	if err := g.Create(&model.Credit{UserID: user.ID, PurchasedMicros: 1_000_000}).Error; err != nil {
-		t.Fatalf("写入付费余额失败: %v", err)
+	now := time.Now()
+	if err := g.Create(&model.MembershipSubscription{
+		ID: uuid.New(), UserID: user.ID, PlanID: "paid", Status: "active",
+		StartedAt: now, PeriodEnd: now.AddDate(0, 0, 30),
+	}).Error; err != nil {
+		t.Fatalf("写入付费订阅失败: %v", err)
 	}
 }
 
@@ -314,8 +318,8 @@ func TestMediaDeliveryDerivePlanFailClosed(t *testing.T) {
 	makePaid(t, g, owner)
 	file := seedMediaFile(t, g, owner, "image:Fail1", "image/png", testPNG)
 	fake.objects[file.ObjectPath] = testPNG
-	// 删除 paid 档定义，使 DerivePlan 的 LoadPlan 失败
-	if err := g.Where("id = ?", "paid").Delete(&model.Plan{}).Error; err != nil {
+	// 删除 paid 档定义，使 PlanDefFor 的 PlanDef 失败
+	if err := g.Where("id = ?", "paid").Delete(&model.MembershipPlan{}).Error; err != nil {
 		t.Fatalf("删除付费档失败: %v", err)
 	}
 

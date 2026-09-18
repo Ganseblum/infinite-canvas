@@ -21,6 +21,7 @@ import (
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/provider"
 	"github.com/infinite-canvas/server/internal/service"
@@ -68,7 +69,7 @@ func newAITestRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Config,
 	upstream := service.NewUpstreamService(g, cipher, service.DefaultUpstreamTimeouts())
 	upstream.SetAllowPrivate(true) // 测试用 localhost 假上游
 	catalog := service.NewCatalogService(g, func() bool { return cfg.PromotionEnabled })
-	quotes := service.NewQuoteService(catalog, service.NewQuotaService(g), cfg.JWTSecret)
+	quotes := service.NewQuoteService(catalog, billing.NewService(g, model.ProductCanvas), cfg.JWTSecret)
 	store := newFakeStorage("local")
 	aiHandler := NewAIHandler(g, catalog, quotes, upstream, store, "http://localhost:3000", moderationService)
 
@@ -129,15 +130,15 @@ func seedImageModel(t *testing.T, g *gorm.DB, channelID uuid.UUID) model.ModelCa
 
 func seedCredits(t *testing.T, g *gorm.DB, userID uuid.UUID, purchased int64) {
 	t.Helper()
-	credits := service.NewCreditService(g)
-	if err := credits.EnsureCredit(g, userID); err != nil {
+	points := billing.NewService(g, model.ProductCanvas)
+	if err := points.EnsureAccount(g, userID); err != nil {
 		t.Fatalf("建账本行失败: %v", err)
 	}
 	if purchased == 0 {
 		return
 	}
-	if err := credits.Purchase(context.Background(), g, &model.Order{
-		ID: uuid.New(), UserID: userID, PurchasedMicros: purchased, EntitlementDays: 30,
+	if err := points.Purchase(g, &model.Order{
+		ID: uuid.New(), UserID: userID, PurchasedMicros: purchased,
 	}, time.Now()); err != nil {
 		t.Fatalf("入账失败: %v", err)
 	}
@@ -275,8 +276,7 @@ func TestImageGenerationReservesCreditsAndWritesGeneration(t *testing.T) {
 	}
 
 	// 点数按报价扣减，流水只有一条消费。
-	credits := service.NewCreditService(g)
-	balance, _ := credits.Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 900_000 {
 		t.Fatalf("余额应为 900000, got %d", balance.PurchasedMicros)
 	}
@@ -318,14 +318,13 @@ func TestImageGenerationRefundsOnUpstreamFailure(t *testing.T) {
 		t.Fatalf("上游 500 应映射为 502 UPSTREAM_ERROR, got %d %s", w.Code, w.Body.String())
 	}
 
-	credits := service.NewCreditService(g)
-	balance, _ := credits.Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 1_000_000 {
 		t.Fatalf("失败应全额退还, 余额=%d", balance.PurchasedMicros)
 	}
 	// 逐桶对账：消费与退款各一条，净额为零。
-	totals, _ := credits.SumByBucket(context.Background(), user.ID)
-	if totals[service.BucketPurchased] != 1_000_000 {
+	totals, _ := billing.NewService(g, model.ProductCanvas).SumByBucket(context.Background(), user.ID)
+	if totals[billing.BucketPurchased] != 1_000_000 {
 		t.Fatalf("流水合计应回到原始余额: %v", totals)
 	}
 }
@@ -363,8 +362,7 @@ func TestImageGenerationIdempotencyAndMissingKey(t *testing.T) {
 	if second.Code == http.StatusOK {
 		t.Fatalf("重复提交不应再次生成成功")
 	}
-	credits := service.NewCreditService(g)
-	balance, _ := credits.Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 900_000 {
 		t.Fatalf("重复提交只应扣一次, 余额=%d", balance.PurchasedMicros)
 	}
@@ -582,7 +580,7 @@ func TestChatStreamStopsFailoverAfterProducedOutput(t *testing.T) {
 	if req.Status != "succeeded" {
 		t.Fatalf("已产出后应按成功记账, got %s", req.Status)
 	}
-	if refund := creditTxCount(t, g, user.ID, service.TxTypeRefund); refund != 0 {
+	if refund := creditTxCount(t, g, user.ID, billing.TxTypeRefund); refund != 0 {
 		t.Fatalf("不应产生退款流水, got %d", refund)
 	}
 }
@@ -631,10 +629,10 @@ func TestChatStreamRetryAndFailoverBilling(t *testing.T) {
 		if req.Status != "succeeded" {
 			t.Fatalf("切换后成功应记 succeeded, got %s", req.Status)
 		}
-		if consume := creditTxCount(t, g, user.ID, service.TxTypeConsume); consume != 1 {
+		if consume := creditTxCount(t, g, user.ID, billing.TxTypeConsume); consume != 1 {
 			t.Fatalf("应恰好一条消费流水, got %d", consume)
 		}
-		if refund := creditTxCount(t, g, user.ID, service.TxTypeRefund); refund != 0 {
+		if refund := creditTxCount(t, g, user.ID, billing.TxTypeRefund); refund != 0 {
 			t.Fatalf("成功不应退款, got %d 条退款流水", refund)
 		}
 	})
@@ -669,11 +667,10 @@ func TestChatStreamRetryAndFailoverBilling(t *testing.T) {
 		if req.Status != "failed" {
 			t.Fatalf("全失败应记 failed, got %s", req.Status)
 		}
-		if refund := creditTxCount(t, g, user.ID, service.TxTypeRefund); refund != 1 {
+		if refund := creditTxCount(t, g, user.ID, billing.TxTypeRefund); refund != 1 {
 			t.Fatalf("应恰好一条退款流水, got %d", refund)
 		}
-		credits := service.NewCreditService(g)
-		balance, _ := credits.Balance(context.Background(), user.ID)
+		balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 		if balance.PurchasedMicros != 1_000_000 {
 			t.Fatalf("失败应全额退还, 余额=%d", balance.PurchasedMicros)
 		}

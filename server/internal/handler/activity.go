@@ -14,6 +14,7 @@ import (
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -25,13 +26,13 @@ const inviteMinAccountAge = time.Hour
 type ActivityHandler struct {
 	db       *gorm.DB
 	settings *service.SiteSettingService
-	credits  *service.CreditService
+	credits  *billing.Service
 	grant    *service.FreeGrantService
 	cfg      *config.Config
 }
 
 func NewActivityHandler(db *gorm.DB, settings *service.SiteSettingService, grant *service.FreeGrantService, cfg *config.Config) *ActivityHandler {
-	return &ActivityHandler{db: db, settings: settings, credits: service.NewCreditService(db), grant: grant, cfg: cfg}
+	return &ActivityHandler{db: db, settings: settings, credits: billing.NewService(db, model.ProductCanvas), grant: grant, cfg: cfg}
 }
 
 func (h *ActivityHandler) checkinEnabled() bool {
@@ -106,13 +107,13 @@ func (h *ActivityHandler) Checkin(c *gin.Context) {
 			CreatedAt:    time.Now(),
 		}
 		if err := tx.Create(&record).Error; err != nil {
-			if service.IsDuplicateKey(err) {
+			if billing.IsDuplicateKey(err) {
 				return tx.Where("user_id = ? AND checkin_date = ?", uid, today).First(&record).Error
 			}
 			return err
 		}
 		if reward > 0 {
-			if _, err := h.credits.Adjust(c.Request.Context(), tx, uid, service.BucketGranted, reward, "每日签到", "system"); err != nil {
+			if _, err := h.credits.Adjust(tx, uid, billing.BucketGranted, reward, "每日签到", "system"); err != nil {
 				return err
 			}
 		}
@@ -167,7 +168,7 @@ func (h *ActivityHandler) InviteInfo(c *gin.Context) {
 		for attempt := 0; attempt < 3; attempt++ {
 			candidate := randomInviteCode()
 			if err := h.db.Model(&model.PlatformUser{}).Where("id = ?", uid).Update("invite_code", candidate).Error; err != nil {
-				if service.IsDuplicateKey(err) {
+				if billing.IsDuplicateKey(err) {
 					continue
 				}
 				break
@@ -271,19 +272,19 @@ func (h *ActivityHandler) BindInvite(c *gin.Context) {
 			return err
 		}
 		if inviterReward > 0 {
-			if _, err := h.credits.Adjust(c.Request.Context(), tx, inviter.ID, service.BucketGranted, inviterReward, "邀请返利", "system"); err != nil {
+			if _, err := h.credits.Adjust(tx, inviter.ID, billing.BucketGranted, inviterReward, "邀请返利", "system"); err != nil {
 				return err
 			}
 		}
 		if inviteeReward > 0 {
-			if _, err := h.credits.Adjust(c.Request.Context(), tx, uid, service.BucketGranted, inviteeReward, "受邀奖励", "system"); err != nil {
+			if _, err := h.credits.Adjust(tx, uid, billing.BucketGranted, inviteeReward, "受邀奖励", "system"); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		if service.IsDuplicateKey(err) {
+		if billing.IsDuplicateKey(err) {
 			errs.Abort(c, errs.AddConflict("你已经绑定过邀请关系"))
 			return
 		}

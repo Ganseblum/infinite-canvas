@@ -29,7 +29,9 @@ import (
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/platform/membership"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 	"github.com/infinite-canvas/server/internal/watermark"
@@ -63,7 +65,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err := db.Migrate(g); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
-	if err := db.SeedPlans(g); err != nil {
+	if err := db.SeedMembershipPlans(g); err != nil {
 		t.Fatalf("写入默认档位失败: %v", err)
 	}
 	// 与生产启动一致：同步系统角色与权限点投影，管理接口的权限判定依赖它。
@@ -290,6 +292,8 @@ func registerUser(t *testing.T, r http.Handler, email, username, password string
 }
 
 // createUser 直接写入用户，密码哈希用最低 cost，加速登录相关用例。
+// 平台账本行与免费存储配额随夹具一起建（与注册事务一致），
+// 读余额/配额的接口不需要处理「行不存在」。
 func createUser(t *testing.T, g *gorm.DB, email, username, password string, verified bool) model.PlatformUser {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
@@ -309,7 +313,15 @@ func createUser(t *testing.T, g *gorm.DB, email, username, password string, veri
 		now := time.Now()
 		user.EmailVerifiedAt = &now
 	}
-	if err := g.Create(&user).Error; err != nil {
+	if err := g.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		if err := billing.NewService(g, model.ProductCanvas).EnsureAccount(tx, user.ID); err != nil {
+			return err
+		}
+		return membership.NewService(g).SyncQuotaWithin(tx, user.ID, time.Now())
+	}); err != nil {
 		t.Fatalf("创建用户失败: %v", err)
 	}
 	return user

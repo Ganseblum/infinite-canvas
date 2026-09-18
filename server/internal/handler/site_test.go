@@ -13,6 +13,7 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 )
@@ -219,7 +220,7 @@ func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
 	if decodeBody(t, second)["granted"] != false {
 		t.Fatalf("重复签到不应再发放: %s", second.Body.String())
 	}
-	balance, _ := service.NewCreditService(g).Balance(t.Context(), inviter.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(t.Context(), inviter.ID)
 	if balance.GrantedMicros != 30000 || balance.PurchasedMicros != 0 {
 		t.Fatalf("签到奖励只应进入赠送桶: %+v", balance)
 	}
@@ -238,8 +239,8 @@ func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
 	if repeat.Code != http.StatusConflict {
 		t.Fatalf("重复绑定应 409, got %d", repeat.Code)
 	}
-	inviterBalance, _ := service.NewCreditService(g).Balance(t.Context(), inviter.ID)
-	inviteeBalance, _ := service.NewCreditService(g).Balance(t.Context(), invitee.ID)
+	inviterBalance, _ := billing.NewService(g, model.ProductCanvas).Balance(t.Context(), inviter.ID)
+	inviteeBalance, _ := billing.NewService(g, model.ProductCanvas).Balance(t.Context(), invitee.ID)
 	if inviterBalance.GrantedMicros != 100000 || inviteeBalance.GrantedMicros != 20000 {
 		t.Fatalf("邀请奖励金额错误: inviter=%d invitee=%d", inviterBalance.GrantedMicros, inviteeBalance.GrantedMicros)
 	}

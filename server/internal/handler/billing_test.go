@@ -104,7 +104,7 @@ func TestCreditsAndPackagesRequireAuth(t *testing.T) {
 	user := createUser(t, g, "credits@example.com", "creditsuser", "password123", true)
 	token := accessToken(t, cfg, &user)
 
-	if err := g.Create(&model.CreditPackage{ID: "standard", Name: "标准包", PriceMicros: 30_000_000, BonusMicros: 3_000_000, EntitlementDays: 30, Currency: "CNY", Enabled: true, Sort: 1}).Error; err != nil {
+	if err := g.Create(&model.CreditPackage{ID: "standard", Name: "标准包", PriceMicros: 30_000_000, BonusMicros: 3_000_000, Currency: "CNY", Enabled: true, Sort: 1}).Error; err != nil {
 		t.Fatalf("写入档位失败: %v", err)
 	}
 	w := doAuthJSON(r, http.MethodGet, "/api/credits", token, nil)

@@ -21,6 +21,9 @@ import (
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
+	"github.com/infinite-canvas/server/internal/platform/billing"
+	"github.com/infinite-canvas/server/internal/platform/membership"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/provider"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
@@ -41,6 +44,9 @@ type AIHandler struct {
 	slots      *concurrencySlots
 	tasks      *service.AITaskService
 	moderation *service.ModerationService
+	billing    *billing.Service
+	membership *membership.Service
+	usage      *platformstorage.Service
 	appURL     string
 	wm         imageWatermarker // 生成落盘水印挂钩（T5），main.go 注入 *watermark.Service
 	wmEnabled  func() bool      // 水印总开关，生产恒为 watermark.Enabled
@@ -65,6 +71,9 @@ func NewAIHandler(db *gorm.DB, catalog *service.CatalogService, quotes *service.
 		slots:      newConcurrencySlots(),
 		tasks:      service.NewAITaskService(db, upstream, media),
 		moderation: moderation,
+		billing:    billing.NewService(db, model.ProductCanvas),
+		membership: membership.NewService(db),
+		usage:      platformstorage.NewService(db, model.ProductCanvas),
 		appURL:     appURL,
 		wmEnabled:  watermark.Enabled,
 	}
@@ -586,7 +595,7 @@ func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix st
 // ③ 水印版落正式存储，失败 → 补偿删除已写的 orig（best-effort）再整单失败。
 func (h *AIHandler) saveGeneratedImage(ctx context.Context, userID uuid.UUID, storageKey, mimeType string, data []byte, maxBytes int64, moderation string) (*model.MediaFile, error) {
 	if h.wm != nil && h.wmEnabled() {
-		_, plan, err := service.NewQuotaService(h.db).DerivePlan(ctx, userID, time.Now())
+		plan, err := service.PlanDefFor(ctx, h.db, userID)
 		if err != nil {
 			slog.Error("watermark_failed", "kind", "image", "storageKey", storageKey, "err", err)
 			return nil, fmt.Errorf("读取水印档位失败: %w", err)
@@ -1329,14 +1338,14 @@ func (h *AIHandler) verifyQuote(c *gin.Context, user model.PlatformUser, catalog
 }
 
 // precheck 邮箱已在 currentUser 校验；这里补存储配额预检，避免生成后才发现存不下。
+// 只读态（实际用量超过档位配额）按 403 READ_ONLY 拦截，与媒体上传同口径。
 func (h *AIHandler) precheck(c *gin.Context, user model.PlatformUser) bool {
-	now := time.Now()
-	credit, plan, err := service.NewQuotaService(h.db).DerivePlan(c.Request.Context(), user.ID, now)
+	plan, err := service.PlanDefFor(c.Request.Context(), h.db, user.ID)
 	if err != nil {
 		errs.Abort(c, errs.ErrInternal)
 		return false
 	}
-	used, err := service.NewQuotaService(h.db).StorageBytes(c.Request.Context(), user.ID)
+	used, _, err := h.usage.Snapshot(c.Request.Context(), user.ID)
 	if err != nil {
 		errs.Abort(c, errs.ErrInternal)
 		return false
@@ -1345,7 +1354,6 @@ func (h *AIHandler) precheck(c *gin.Context, user model.PlatformUser) bool {
 		errs.Abort(c, errs.WithExtra(errs.ErrReadOnly, gin.H{"planId": plan.ID, "used": used, "limit": plan.StorageBytes}))
 		return false
 	}
-	_ = credit
 	return true
 }
 
@@ -1357,38 +1365,10 @@ type requestDims struct {
 	Spec      string
 }
 
-// beginRequest 预扣或占用免费额度并落 ai_requests 行。
-// 重复的 idempotencyKey 会返回既有请求，此时不重复扣点，分析维度也保留首次的值。
+// beginRequest 预扣或占用免费额度并落 ai_requests 行。扣费与请求行在同一个事务内
+// （异常矩阵路径一）：余额不足、免费额度被并发占用或重复幂等键命中时整体回滚，
+// 不留下任何扣费。重复的 idempotencyKey 返回既有请求，不重复扣点，分析维度保留首次的值。
 func (h *AIHandler) beginRequest(c *gin.Context, user model.PlatformUser, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload, idempotencyKey string, dims requestDims) (*model.AIRequest, *service.ReserveResult, bool) {
-	reserved, err := h.reserve(c.Request.Context(), user, catalogItem, capability, payload)
-	if err != nil {
-		if errors.Is(err, service.ErrFreeTrialTaken) || errors.Is(err, service.ErrQuoteStale) {
-			errs.Abort(c, errs.ErrQuoteStale)
-			return nil, nil, false
-		}
-		if errors.Is(err, service.ErrInsufficientCredits) {
-			available, _ := h.availableMicros(user.ID)
-			required := payload.FinalCostMicros
-			shortfall := required - available
-			if shortfall < 0 {
-				shortfall = 0
-			}
-			errs.Abort(c, errs.WithExtra(errs.ErrInsufficientCredits, gin.H{
-				"requiredMicros":  required,
-				"availableMicros": available,
-				"shortfallMicros": shortfall,
-			}))
-			return nil, nil, false
-		}
-		if errors.Is(err, service.ErrMediaQuotaExceeded) {
-			errs.Abort(c, errs.ErrStorageQuota)
-			return nil, nil, false
-		}
-		slog.Error("预扣点数失败", "err", err)
-		errs.Abort(c, errs.ErrInternal)
-		return nil, nil, false
-	}
-
 	key := idempotencyKey
 	snapshot, _ := json.Marshal(gin.H{
 		"model":            catalogItem.Name,
@@ -1418,79 +1398,98 @@ func (h *AIHandler) beginRequest(c *gin.Context, user model.PlatformUser, catalo
 		ParamSpec:        clipRunes(dims.Spec, 64),
 		StatDate:         time.Now().In(statZone).Format(statDateFormat),
 		Status:           "running",
-		UsedFreeTrial:    reserved != nil && reserved.UsedFreeTrial,
 	}
-	if reserved != nil && len(reserved.Transactions) > 0 {
-		ids := make([]uuid.UUID, 0, len(reserved.Transactions))
-		for _, transaction := range reserved.Transactions {
-			ids = append(ids, transaction.ID)
+	var reserved *service.ReserveResult
+	var duplicate *model.AIRequest
+	// errDuplicateConflict 让事务整体回滚（含预扣），再按既有请求收敛响应。
+	errDuplicateConflict := errors.New("duplicate idempotency key")
+	err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		result, err := h.reserve(tx, user, capability, payload, request.ID.String())
+		if err != nil {
+			return err
 		}
-		raw, _ := json.Marshal(ids)
-		request.ConsumeTransactionIDs = raw
-	}
-	existing, created, err := h.requests.CreateOrGet(request)
-	if err != nil {
-		slog.Error("写入生成请求失败", "err", err)
-		// 请求行写不进去就把预扣的点数退回去，不能让用户白扣。
-		if reserved != nil && len(reserved.Transactions) > 0 {
-			_ = h.requests.Refund(c.Request.Context(), request)
+		reserved = result
+		request.UsedFreeTrial = reserved.UsedFreeTrial
+		if len(reserved.Transactions) > 0 {
+			ids := make([]uuid.UUID, 0, len(reserved.Transactions))
+			for _, transaction := range reserved.Transactions {
+				ids = append(ids, transaction.ID)
+			}
+			raw, _ := json.Marshal(ids)
+			request.ConsumeTransactionIDs = raw
 		}
-		errs.Abort(c, errs.ErrInternal)
+		existing, created, err := h.requests.CreateOrGet(tx, request)
+		if err != nil {
+			return err
+		}
+		if !created {
+			duplicate = existing
+			return errDuplicateConflict
+		}
+		return h.requests.MarkConsumeTransactions(tx, request.ID, reserved.Transactions)
+	})
+	if errors.Is(err, errDuplicateConflict) {
+		switch duplicate.Status {
+		case "succeeded":
+			errs.Abort(c, errs.WithExtra(errs.ErrQuoteStale, gin.H{"duplicate": true, "requestId": duplicate.ID.String()}))
+		default:
+			errs.Abort(c, errs.WithExtra(errs.ErrConcurrencyLimited, gin.H{"duplicate": true, "requestId": duplicate.ID.String()}))
+		}
 		return nil, nil, false
 	}
-	if !created {
-		// 重复提交：退掉这次预扣（含免费试用占用），直接返回既有请求的状态。
-		if reserved != nil && reserved.UsedFreeTrial {
-			_ = h.requests.Refund(c.Request.Context(), request)
-		} else if reserved != nil && len(reserved.Transactions) > 0 {
-			_ = service.NewCreditService(h.db).Refund(c.Request.Context(), user.ID, transactionIDs(reserved.Transactions), "重复请求退还")
-		}
-		switch existing.Status {
-		case "succeeded":
-			errs.Abort(c, errs.WithExtra(errs.ErrQuoteStale, gin.H{"duplicate": true, "requestId": existing.ID.String()}))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrFreeTrialTaken) || errors.Is(err, service.ErrQuoteStale):
+			errs.Abort(c, errs.ErrQuoteStale)
+		case errors.Is(err, billing.ErrInsufficientCredits):
+			available, _ := h.availableMicros(user.ID)
+			required := payload.FinalCostMicros
+			shortfall := required - available
+			if shortfall < 0 {
+				shortfall = 0
+			}
+			errs.Abort(c, errs.WithExtra(errs.ErrInsufficientCredits, gin.H{
+				"requiredMicros":  required,
+				"availableMicros": available,
+				"shortfallMicros": shortfall,
+			}))
+		case errors.Is(err, service.ErrMediaQuotaExceeded):
+			errs.Abort(c, errs.ErrStorageQuota)
 		default:
-			errs.Abort(c, errs.WithExtra(errs.ErrConcurrencyLimited, gin.H{"duplicate": true, "requestId": existing.ID.String()}))
+			slog.Error("写入生成请求失败", "err", err)
+			errs.Abort(c, errs.ErrInternal)
 		}
 		return nil, nil, false
 	}
 	return request, reserved, true
 }
 
-func transactionIDs(transactions []model.CreditTransaction) []uuid.UUID {
-	ids := make([]uuid.UUID, 0, len(transactions))
-	for _, transaction := range transactions {
-		ids = append(ids, transaction.ID)
-	}
-	return ids
-}
-
-// reserve 原子占用免费额度或按报价预扣。免费额度被并发占用时返回 ErrFreeTrialTaken。
-func (h *AIHandler) reserve(ctx context.Context, user model.PlatformUser, catalogItem model.ModelCatalog, capability string, payload service.QuotePayload) (*service.ReserveResult, error) {
+// reserve 在传入事务内原子占用免费额度或按报价预扣，bizKey 统一用 ai_requests 行 id，
+// 失败退还按它定位消费流水。免费额度被并发占用时返回 ErrFreeTrialTaken。
+func (h *AIHandler) reserve(tx *gorm.DB, user model.PlatformUser, capability string, payload service.QuotePayload, bizKey string) (*service.ReserveResult, error) {
 	if payload.BillingMode == service.BillingModeFreeTrial {
 		metric := ""
 		switch capability {
 		case "image":
-			metric = service.MetricFreeImageTrial
+			metric = billing.MetricFreeImageTrial
 		case "video":
-			metric = service.MetricFreeVideoTrial
+			metric = billing.MetricFreeVideoTrial
 		default:
 			return nil, service.ErrQuoteStale
 		}
-		err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return service.NewQuotaService(h.db).ConsumeFreeTrial(tx, user.ID, metric)
-		})
+		consumed, err := h.billing.ConsumeFreeTrial(tx, user.ID, metric)
 		if err != nil {
-			if errors.Is(err, service.ErrFreeTrialTaken) {
-				return nil, service.ErrFreeTrialTaken
-			}
 			return nil, err
+		}
+		if !consumed {
+			return nil, service.ErrFreeTrialTaken
 		}
 		return &service.ReserveResult{UsedFreeTrial: true}, nil
 	}
 	if payload.FinalCostMicros <= 0 {
 		return &service.ReserveResult{}, nil
 	}
-	transactions, err := service.NewCreditService(h.db).Reserve(ctx, user.ID, payload.FinalCostMicros, "", catalogItem.Name)
+	transactions, err := h.billing.Reserve(tx, user.ID, payload.FinalCostMicros, bizKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1626,8 +1625,7 @@ func (h *AIHandler) loadInlineMedia(userID uuid.UUID, keys []string) ([]provider
 }
 
 func (h *AIHandler) maxFileBytes(userID uuid.UUID) (int64, error) {
-	now := time.Now()
-	_, plan, err := service.NewQuotaService(h.db).DerivePlan(context.Background(), userID, now)
+	plan, err := service.PlanDefFor(context.Background(), h.db, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -1635,14 +1633,14 @@ func (h *AIHandler) maxFileBytes(userID uuid.UUID) (int64, error) {
 }
 
 func (h *AIHandler) availableMicros(userID uuid.UUID) (int64, error) {
-	credit, err := service.NewCreditService(h.db).Balance(context.Background(), userID)
+	account, err := h.billing.Balance(context.Background(), userID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, nil
 	}
 	if err != nil {
 		return 0, err
 	}
-	return credit.PurchasedMicros + credit.GrantedMicros, nil
+	return account.PurchasedMicros + account.GrantedMicros, nil
 }
 
 func (h *AIHandler) creditsPayload(request *model.AIRequest, remaining int64) gin.H {

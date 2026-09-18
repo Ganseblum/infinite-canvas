@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 )
 
 func intPtr(value int) *int { return &value }
@@ -59,7 +60,7 @@ func TestValidateParamsNConstraint(t *testing.T) {
 func TestQuoteAcceptsNUpToConstraintMax(t *testing.T) {
 	g := newServiceDB(t)
 	catalog := NewCatalogService(g, func() bool { return true })
-	quotes := NewQuoteService(catalog, NewQuotaService(g), "quote-secret")
+	quotes := NewQuoteService(catalog, billing.NewService(g, model.ProductCanvas), "quote-secret")
 	user := createUserRow(t, g)
 
 	item := model.ModelCatalog{

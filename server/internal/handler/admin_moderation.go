@@ -15,6 +15,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -278,9 +279,9 @@ func (h *AdminHandler) CompensateModeration(c *gin.Context) {
 		errs.Abort(c, errs.AddConflict("该审核记录已补偿"))
 		return
 	}
-	var credit model.Credit
+	var credit model.CreditAccount
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		updated, err := h.credits.Adjust(c.Request.Context(), tx, record.UserID, service.BucketGranted, req.AmountMicros, req.Note, actorID.String())
+		updated, err := h.credits.Adjust(tx, record.UserID, billing.BucketGranted, req.AmountMicros, req.Note, actorID.String())
 		if err != nil {
 			return err
 		}
@@ -300,7 +301,7 @@ func (h *AdminHandler) CompensateModeration(c *gin.Context) {
 			nil, gin.H{"amountMicros": req.AmountMicros})
 	})
 	if err != nil {
-		if errors.Is(err, service.ErrInsufficientCredits) {
+		if errors.Is(err, billing.ErrInsufficientCredits) {
 			errs.Abort(c, errs.ErrInsufficientCredits)
 			return
 		}

@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/model"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/storage"
 )
 
@@ -108,6 +109,10 @@ func TestCleanupRemovesOrphansKeepsReferenced(t *testing.T) {
 	stor := newMapStorage()
 	cleanup := NewCleanupService(g, stor)
 	user := createUserRow(t, g)
+	// 存储账户行随注册创建（SyncQuotaWithin），清理记账与重算都落在这层。
+	if err := platformstorage.NewService(g, model.ProductCanvas).EnsureAccount(g, user.ID, 1<<30); err != nil {
+		t.Fatalf("建存储账户失败: %v", err)
+	}
 
 	referenced := seedMedia(t, g, stor, user.ID, "image:Referenced1", 100)
 	orphan := seedMedia(t, g, stor, user.ID, "image:Orphan1", 50)
@@ -135,7 +140,10 @@ func TestCleanupRemovesOrphansKeepsReferenced(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("清理后应剩一条媒体记录, got %d", count)
 	}
-	used, _ := NewQuotaService(g).StorageBytes(context.Background(), user.ID)
+	used, _, err := platformstorage.NewService(g, model.ProductCanvas).Snapshot(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("读取存储用量失败: %v", err)
+	}
 	if used != 100 {
 		t.Fatalf("清理后计数应重算为 100, got %d", used)
 	}

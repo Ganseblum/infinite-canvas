@@ -17,6 +17,7 @@ import (
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 )
@@ -50,7 +51,7 @@ func newWatermarkRouter(t *testing.T, g *gorm.DB, cfg *config.Config, stor stora
 	upstream := service.NewUpstreamService(g, cipher, service.DefaultUpstreamTimeouts())
 	upstream.SetAllowPrivate(true) // 测试用 localhost 假上游
 	catalog := service.NewCatalogService(g, func() bool { return false })
-	quotes := service.NewQuoteService(catalog, service.NewQuotaService(g), cfg.JWTSecret)
+	quotes := service.NewQuoteService(catalog, billing.NewService(g, model.ProductCanvas), cfg.JWTSecret)
 	aiHandler := NewAIHandler(g, catalog, quotes, upstream, stor, "http://localhost:3000", nil)
 	aiHandler.SetWatermark(wm, enabled)
 
@@ -64,14 +65,14 @@ func newWatermarkRouter(t *testing.T, g *gorm.DB, cfg *config.Config, stor stora
 	return r, aiHandler
 }
 
-// seedGrantedCredits 只给赠送桶入账：PlanOf 不看赠送桶，用户保持 free 档但有余额可预扣。
+// seedGrantedCredits 只给赠送桶入账：档位派生不看赠送桶（D6），用户保持 free 档但有余额可预扣。
 func seedGrantedCredits(t *testing.T, g *gorm.DB, userID uuid.UUID, micros int64) {
 	t.Helper()
-	credits := service.NewCreditService(g)
-	if err := credits.EnsureCredit(g, userID); err != nil {
+	points := billing.NewService(g, model.ProductCanvas)
+	if err := points.EnsureAccount(g, userID); err != nil {
 		t.Fatalf("建账本行失败: %v", err)
 	}
-	if _, err := credits.Adjust(context.Background(), g, userID, service.BucketGranted, micros, "水印挂钩测试入账", "test"); err != nil {
+	if _, err := points.Adjust(g, userID, billing.BucketGranted, micros, "水印挂钩测试入账", "test"); err != nil {
 		t.Fatalf("赠送桶入账失败: %v", err)
 	}
 }
@@ -144,7 +145,7 @@ func TestImageGenerationWatermarkFailClosed(t *testing.T) {
 		t.Fatalf("非拒绝失败不写生成记录（既有语义）, got %d", generationCount)
 	}
 	// 预扣冲销：余额回到原值，退款流水恰好一条。
-	balance, err := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, err := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("读取余额失败: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestImageGenerationWatermarkFailClosed(t *testing.T) {
 		t.Fatalf("失败应全额退还, granted=%d", balance.GrantedMicros)
 	}
 	var refunds int64
-	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, service.TxTypeRefund).Count(&refunds)
+	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, billing.TxTypeRefund).Count(&refunds)
 	if refunds != 1 {
 		t.Fatalf("退款流水应只有一条, got %d", refunds)
 	}
@@ -195,7 +196,7 @@ func TestImageGenerationOrigPutFailureFailsClosed(t *testing.T) {
 	if request.Status != "failed" {
 		t.Fatalf("请求应收敛为 failed: %s", request.Status)
 	}
-	balance, err := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, err := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("读取余额失败: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestImageGenerationOrigPutFailureFailsClosed(t *testing.T) {
 		t.Fatalf("失败应全额退还, granted=%d", balance.GrantedMicros)
 	}
 	var refunds int64
-	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, service.TxTypeRefund).Count(&refunds)
+	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, billing.TxTypeRefund).Count(&refunds)
 	if refunds != 1 {
 		t.Fatalf("退款流水应只有一条, got %d", refunds)
 	}
@@ -262,7 +263,7 @@ func TestImageGenerationWatermarkFreeStoresOrig(t *testing.T) {
 	if generation.Status != "success" {
 		t.Fatalf("生成记录应为 success: %s", generation.Status)
 	}
-	balance, _ := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.GrantedMicros != 900_000 {
 		t.Fatalf("成功应正常扣点, granted=%d", balance.GrantedMicros)
 	}
@@ -281,7 +282,8 @@ func TestImageGenerationPaidSkipsWatermark(t *testing.T) {
 	wm := &stubWatermarker{}
 	r, _ := newWatermarkRouter(t, g, cfg, stor, wm, func() bool { return true })
 	user := createUser(t, g, "wmpaid@example.com", "wmpaid", "password123", true)
-	seedCredits(t, g, user.ID, 1_000_000) // purchased > 0 → paid 档
+	makePaid(t, g, user)                  // 有效订阅 → paid 档（D6）
+	seedCredits(t, g, user.ID, 1_000_000) // 余额可预扣
 	token := accessToken(t, cfg, &user)
 
 	w, key := generateImage(t, r, token, "wm-paid-1")
@@ -356,7 +358,7 @@ func TestImageGenerationSaveFailureCompensatesOrig(t *testing.T) {
 	token := accessToken(t, cfg, &user)
 
 	// 把 free 档单文件上限压到与原始产物等大：水印字节必然超限，Save 必失败。
-	if err := g.Model(&model.Plan{}).Where("id = ?", "free").Update("max_file_bytes", len("fake-png-data")).Error; err != nil {
+	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("max_file_bytes", len("fake-png-data")).Error; err != nil {
 		t.Fatalf("调整档位上限失败: %v", err)
 	}
 
@@ -389,7 +391,7 @@ func TestImageGenerationSaveFailureCompensatesOrig(t *testing.T) {
 	if request.Status != "failed" {
 		t.Fatalf("请求应收敛为 failed: %s", request.Status)
 	}
-	balance, _ := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.GrantedMicros != 1_000_000 {
 		t.Fatalf("落盘失败应全额退还, granted=%d", balance.GrantedMicros)
 	}

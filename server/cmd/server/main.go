@@ -21,7 +21,9 @@ import (
 	"github.com/infinite-canvas/server/internal/handler"
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
+	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
@@ -67,7 +69,7 @@ func main() {
 	if err := db.RecordSchemaVersion(gormDB); err != nil {
 		slog.Warn("记录 schema 版本失败（不阻断启动）", "err", err)
 	}
-	if err := db.SeedPlans(gormDB); err != nil {
+	if err := db.SeedMembershipPlans(gormDB); err != nil {
 		slog.Error("写入默认档位失败", "err", err)
 		os.Exit(1)
 	}
@@ -207,9 +209,10 @@ func main() {
 	}
 	upstreamService := service.NewUpstreamService(gormDB, credentialCipher, timeouts)
 	upstreamService.SetAllowPrivate(cfg.AIAllowPrivateUpstream)
+	// 平台权益三域：报价的免费试用判定走 billing 域，媒体记账与档位派生走 storage/membership 域。
 	catalogService := service.NewCatalogService(gormDB, func() bool { return cfg.PromotionEnabled })
-	quotaService := service.NewQuotaService(gormDB)
-	quoteService := service.NewQuoteService(catalogService, quotaService, cfg.JWTSecret)
+	billingService := billing.NewService(gormDB, model.ProductCanvas)
+	quoteService := service.NewQuoteService(catalogService, billingService, cfg.JWTSecret)
 	aiHandler := handler.NewAIHandler(gormDB, catalogService, quoteService, upstreamService, mediaStorage, cfg.AppBaseURL, moderationService)
 	aiTaskService := service.NewAITaskService(gormDB, upstreamService, service.NewMediaWriteService(gormDB, mediaStorage))
 	aiTaskService.SetModeration(moderationService)

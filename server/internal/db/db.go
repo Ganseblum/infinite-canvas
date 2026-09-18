@@ -54,13 +54,16 @@ func Migrate(gormDB *gorm.DB) error {
 		&model.Session{},
 		&model.EmailToken{},
 		&model.FreeGrantClaim{},
-		&model.Plan{},
+		&model.MembershipPlan{},
+		&model.MembershipSubscription{},
+		&model.StorageAccount{},
+		&model.StorageUsage{},
 		&model.Canvas{},
 		&model.Asset{},
 		&model.AssetTag{},
 		&model.Generation{},
 		&model.MediaFile{},
-		&model.Credit{},
+		&model.CreditAccount{},
 		&model.CreditTransaction{},
 		&model.UsageRecord{},
 		&model.CreditPackage{},
@@ -84,22 +87,23 @@ func Migrate(gormDB *gorm.DB) error {
 	)
 }
 
-// SeedPlans 幂等写入三档默认数据。只有 plans 表里没有对应 id 时才插入，
-// 已存在的记录一行都不动，保证人工调整过的档位额度不被重启打回默认值。
-func SeedPlans(gormDB *gorm.DB) error {
-	plans := []model.Plan{
+// SeedMembershipPlans 幂等写入三档会员默认数据（plans 表 M2 退役后的继任者）。
+// 只有 membership_plans 表里没有对应 id 时才插入，已存在的记录一行都不动，
+// 保证人工调整过的档位额度不被重启打回默认值。
+func SeedMembershipPlans(gormDB *gorm.DB) error {
+	plans := []model.MembershipPlan{
 		{ID: "free", Name: "免费", StorageBytes: 50 * 1024 * 1024, MaxFileBytes: 20 * 1024 * 1024, RetentionDays: 7},
-		{ID: "paid", Name: "付费", StorageBytes: 1 * 1024 * 1024 * 1024, MaxFileBytes: 200 * 1024 * 1024, RetentionDays: 15},
+		{ID: "paid", Name: "付费", StorageBytes: 1 * 1024 * 1024 * 1024, MaxFileBytes: 200 * 1024 * 1024, RetentionDays: 15, PriceMicros: 30_000_000, DurationDays: 30},
 		{ID: "sunset", Name: "日落", StorageBytes: 200 * 1024 * 1024, MaxFileBytes: 200 * 1024 * 1024, RetentionDays: 7},
 	}
 	for _, p := range plans {
 		var count int64
-		if err := gormDB.Model(&model.Plan{}).Where("id = ?", p.ID).Count(&count).Error; err != nil {
-			return fmt.Errorf("查询档位 %s 失败: %w", p.ID, err)
+		if err := gormDB.Model(&model.MembershipPlan{}).Where("id = ?", p.ID).Count(&count).Error; err != nil {
+			return fmt.Errorf("查询会员档位 %s 失败: %w", p.ID, err)
 		}
 		if count == 0 {
 			if err := gormDB.Create(&p).Error; err != nil {
-				return fmt.Errorf("写入档位 %s 失败: %w", p.ID, err)
+				return fmt.Errorf("写入会员档位 %s 失败: %w", p.ID, err)
 			}
 		}
 	}

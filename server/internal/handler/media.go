@@ -20,6 +20,8 @@ import (
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
+	"github.com/infinite-canvas/server/internal/platform/membership"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 	"github.com/infinite-canvas/server/internal/watermark"
@@ -52,14 +54,23 @@ func allowedUploadType(t string) bool {
 type MediaHandler struct {
 	db         *gorm.DB
 	storage    storage.Storage
-	quota      *service.QuotaService
+	usage      *platformstorage.Service
+	membership *membership.Service
 	moderation *service.ModerationService
 	secret     []byte
 	wm         *watermark.Service
 }
 
 func NewMediaHandler(db *gorm.DB, stor storage.Storage, moderation *service.ModerationService, secret []byte, wm *watermark.Service) *MediaHandler {
-	return &MediaHandler{db: db, storage: stor, quota: service.NewQuotaService(db), moderation: moderation, secret: secret, wm: wm}
+	return &MediaHandler{
+		db:         db,
+		storage:    stor,
+		usage:      platformstorage.NewService(db, model.ProductCanvas),
+		membership: membership.NewService(db),
+		moderation: moderation,
+		secret:     secret,
+		wm:         wm,
+	}
 }
 
 func (h *MediaHandler) Head(c *gin.Context) {
@@ -238,13 +249,19 @@ func (h *MediaHandler) selectBytes(c *gin.Context, file *model.MediaFile) (*medi
 	if !watermarkableMime(file.MimeType) {
 		return sel, true
 	}
-	_, plan, err := h.quota.DerivePlan(c.Request.Context(), file.UserID, time.Now())
+	planID, _, err := h.membership.ActivePlan(c.Request.Context(), file.UserID, time.Now())
 	if err != nil {
 		slog.Error("读取媒体归属者档位失败", "err", err, "storageKey", file.StorageKey)
 		errs.Abort(c, errs.ErrInternal)
 		return nil, false
 	}
-	if plan.ID != "paid" {
+	// 档位定义读不到同样按 500 fail-closed，绝不降级直出字节。
+	if _, err := h.membership.PlanDef(c.Request.Context(), planID); err != nil {
+		slog.Error("读取媒体归属者档位定义失败", "err", err, "storageKey", file.StorageKey)
+		errs.Abort(c, errs.ErrInternal)
+		return nil, false
+	}
+	if planID != "paid" {
 		// 免费档的 image/video 一律视为可变字节：无论历史产物是否带水印，
 		// 保守按「可能被水印替换」处理，缓存绝不长存。
 		sel.mutable = true
@@ -321,9 +338,15 @@ func (h *MediaHandler) Put(c *gin.Context) {
 	}
 
 	now := time.Now()
-	_, plan, err := h.quota.DerivePlan(c.Request.Context(), uid, now)
+	planID, _, err := h.membership.ActivePlan(c.Request.Context(), uid, now)
 	if err != nil {
 		slog.Error("读取档位失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	plan, err := h.membership.PlanDef(c.Request.Context(), planID)
+	if err != nil {
+		slog.Error("读取档位定义失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
@@ -334,7 +357,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 	}
 
 	// 配额校验先于写盘：重复 PUT 是覆盖语义，计数的增量是「新文件大小 - 旧文件大小」。
-	used, err := h.quota.StorageBytes(c.Request.Context(), uid)
+	used, quotaBytes, err := h.usage.Snapshot(c.Request.Context(), uid)
 	if err != nil {
 		slog.Error("读取存储用量失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -350,7 +373,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	if err := service.CheckUpload(baseline, c.Request.ContentLength, plan.StorageBytes); err != nil {
+	if err := checkStorageQuota(baseline, c.Request.ContentLength, quotaBytes); err != nil {
 		h.abortStorageError(c, err, plan, baseline, c.Request.ContentLength)
 		return
 	}
@@ -377,7 +400,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 		}
 		// 分块传输没有 ContentLength，预检失效：按实际字节数复核总用量，超限 507。
 		if c.Request.ContentLength < 0 {
-			if err := service.CheckUpload(baseline, int64(len(raw)), plan.StorageBytes); err != nil {
+			if err := checkStorageQuota(baseline, int64(len(raw)), quotaBytes); err != nil {
 				h.abortStorageError(c, err, plan, baseline, int64(len(raw)))
 				return
 			}
@@ -408,7 +431,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 	// 分块传输没有 ContentLength，预检失效：写完后按实际字节数复核总用量，
 	// 超限则删除已写对象并返回 507（响应结构与预检一致），不让配额被绕过。
 	if c.Request.ContentLength < 0 {
-		if err := service.CheckUpload(baseline, written, plan.StorageBytes); err != nil {
+		if err := checkStorageQuota(baseline, written, quotaBytes); err != nil {
 			_ = h.storage.Delete(c.Request.Context(), objectPath)
 			h.abortStorageError(c, err, plan, baseline, written)
 			return
@@ -449,7 +472,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 			return err
 		}
 		if delta != 0 {
-			if _, err := h.quota.AddUsage(tx, uid, service.MetricStorageBytes, delta); err != nil {
+			if err := h.usage.Commit(tx, uid, delta); err != nil {
 				return err
 			}
 		}
@@ -508,7 +531,7 @@ func (h *MediaHandler) Delete(c *gin.Context) {
 		if err := tx.Where("id = ?", file.ID).Delete(&model.MediaFile{}).Error; err != nil {
 			return err
 		}
-		if _, err := h.quota.AddUsage(tx, uid, service.MetricStorageBytes, -file.Bytes); err != nil {
+		if err := h.usage.Commit(tx, uid, -file.Bytes); err != nil {
 			return err
 		}
 		return nil
@@ -579,7 +602,7 @@ func (h *MediaHandler) quarantineUpload(c *gin.Context, uid uuid.UUID, raw []byt
 			return err
 		}
 		if delta != 0 {
-			if _, err := h.quota.AddUsage(tx, uid, service.MetricStorageBytes, delta); err != nil {
+			if err := h.usage.Commit(tx, uid, delta); err != nil {
 				return err
 			}
 		}
@@ -627,10 +650,22 @@ func (h *MediaHandler) abortUploadError(c *gin.Context, err error) {
 	errs.Abort(c, errs.ErrInternal)
 }
 
+// checkStorageQuota 与 storage 域 Check 同语义的纯函数版本：先看只读态（403），
+// 再看增量是否超过配额（507）；错误由 abortStorageError 映射成与现状一致的响应体。
+func checkStorageQuota(used, incoming, limit int64) error {
+	if used > limit {
+		return platformstorage.ErrReadOnly
+	}
+	if used+incoming > limit {
+		return platformstorage.ErrQuotaExceeded
+	}
+	return nil
+}
+
 // abortStorageError 写上传配额错误响应，响应体带当前档位、已用量与上限，
 // 让前端区分「该充值」和「该清理」。
-func (h *MediaHandler) abortStorageError(c *gin.Context, err error, plan model.Plan, used, incoming int64) {
-	if errors.Is(err, service.ErrReadOnly) {
+func (h *MediaHandler) abortStorageError(c *gin.Context, err error, plan model.MembershipPlan, used, incoming int64) {
+	if errors.Is(err, platformstorage.ErrReadOnly) {
 		errs.Abort(c, errs.WithExtra(errs.ErrReadOnly, gin.H{
 			"planId": plan.ID,
 			"used":   used,

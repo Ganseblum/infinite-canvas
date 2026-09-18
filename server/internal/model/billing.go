@@ -7,19 +7,20 @@ import (
 	"gorm.io/datatypes"
 )
 
-// Credit 一个用户一行，双桶余额与付费权益截止时间。
+// CreditAccount 平台点数账户（credit_accounts）替换 credits：一用户一行、全产品共享余额（D3）。
 // 不变量：purchased_micros 等于该用户 bucket=purchased 的流水之和，granted 同理。
-type Credit struct {
-	UserID          uuid.UUID  `gorm:"type:char(36);primaryKey;comment:用户 id，与 users 一一对应，一用户一行"`
-	PurchasedMicros int64      `gorm:"not null;default:0;comment:充值桶余额，单位微元（1 元 = 1000000 微元），只能由充值入账"`
-	GrantedMicros   int64      `gorm:"not null;default:0;comment:赠送桶余额，单位微元（1 元 = 1000000 微元），来自活动发放与系统赠送"`
-	PaidUntil       *time.Time `gorm:"comment:付费权益截止时间，早于当前时间表示权益已过期"`
-	UpdatedAt       time.Time  `gorm:"comment:余额最近变动时间"`
+// paid_until 已移除：付费身份由 membership_subscriptions.period_end 表达（D2/D6）。
+type CreditAccount struct {
+	UserID          uuid.UUID `gorm:"type:char(36);primaryKey;comment:平台账号，与 platform_users 一一对应，一用户一行"`
+	PurchasedMicros int64     `gorm:"not null;default:0;comment:充值桶余额，单位微元（1 元 = 1000000 微元），只能由充值入账"`
+	GrantedMicros   int64     `gorm:"not null;default:0;comment:赠送桶余额，单位微元（1 元 = 1000000 微元），来自活动发放与系统赠送"`
+	UpdatedAt       time.Time `gorm:"comment:余额最近变动时间"`
 }
 
 type CreditTransaction struct {
 	ID                    uuid.UUID  `gorm:"type:char(36);primaryKey;comment:流水主键"`
 	UserID                uuid.UUID  `gorm:"type:char(36);index;not null;comment:流水所属用户"`
+	Product               string     `gorm:"type:varchar(32);not null;default:youc-canvas;index;comment:产生流水的产品标识，全产品共享余额下按产品分账"`
 	Bucket                string     `gorm:"type:varchar(16);not null;comment:点数的桶，purchased 充值桶、granted 赠送桶，退款按原桶退回"`                     // purchased | granted
 	Type                  string     `gorm:"type:varchar(16);not null;comment:流水类型，purchase 充值、consume 消费、refund 退款、grant 发放、expire 过期作废"` // purchase | consume | refund | grant | expire
 	AmountMicros          int64      `gorm:"not null;comment:本次变动金额，单位微元，正数为增加、负数为扣减"`
@@ -40,28 +41,31 @@ type UsageRecord struct {
 	UpdatedAt time.Time `gorm:"comment:最近一次累加时间"`
 }
 
+// CreditPackage 点数包（credit_packages）：D5 拆分后只承载点数属性，
+// 订阅属性（会员时长）在 membership_plans。
 type CreditPackage struct {
-	ID              string `gorm:"primaryKey;type:varchar(32);comment:套餐标识，管理后台创建时指定"`
-	Name            string `gorm:"type:varchar(80);not null;comment:套餐显示名"`
-	PriceMicros     int64  `gorm:"not null;comment:套餐售价，单位微元（1 元 = 1000000 微元）"`
-	BonusMicros     int64  `gorm:"not null;default:0;comment:套餐附赠点数，单位微元，支付成功后与购买额一起入账"`
-	EntitlementDays int    `gorm:"not null;default:30;comment:购买后付费权益的有效天数"`
-	Currency        string `gorm:"type:varchar(8);not null;default:CNY;comment:计价货币，如 CNY"`
-	Enabled         bool   `gorm:"not null;default:true;comment:是否上架，下架后前台不可见且不可下单"`
-	Sort            int    `gorm:"not null;default:0;comment:展示排序，数值小的排前面"`
+	ID          string `gorm:"primaryKey;type:varchar(32);comment:套餐标识，管理后台创建时指定"`
+	Name        string `gorm:"type:varchar(80);not null;comment:套餐显示名"`
+	PriceMicros int64  `gorm:"not null;comment:套餐售价，单位微元（1 元 = 1000000 微元）"`
+	BonusMicros int64  `gorm:"not null;default:0;comment:套餐附赠点数，单位微元，支付成功后与购买额一起入账"`
+	Currency    string `gorm:"type:varchar(8);not null;default:CNY;comment:计价货币，如 CNY"`
+	Enabled     bool   `gorm:"not null;default:true;comment:是否上架，下架后前台不可见且不可下单"`
+	Sort        int    `gorm:"not null;default:0;comment:展示排序，数值小的排前面"`
 }
 
 type Order struct {
 	ID              uuid.UUID  `gorm:"type:char(36);primaryKey;comment:订单主键"`
 	UserID          uuid.UUID  `gorm:"type:char(36);index:idx_order_user_created,priority:1;index:idx_order_status_created,priority:1;not null;comment:下单用户"`
+	Product         string     `gorm:"type:varchar(32);not null;default:youc-canvas;comment:下单产品标识，共享余额下按产品分账"`
 	Provider        string     `gorm:"type:varchar(16);not null;comment:支付渠道，alipay 支付宝、wechat 微信支付"` // alipay | wechat
 	ProviderOrderID *string    `gorm:"type:varchar(128);uniqueIndex;comment:支付渠道侧订单号，用于回调对账，未支付前为空"`
-	PackageID       string     `gorm:"type:varchar(32);not null;comment:购买的套餐标识，指向 credit_packages"`
+	PackageID       string     `gorm:"type:varchar(32);not null;default:'';comment:购买的点数包标识，指向 credit_packages；购买会员时为空"`
+	PlanID          *string    `gorm:"type:varchar(32);index;comment:购买的会员档位，指向 membership_plans；购买点数包时为空"`
 	PriceMicros     int64      `gorm:"not null;comment:订单实付金额，单位微元（1 元 = 1000000 微元）"`
 	Currency        string     `gorm:"type:varchar(8);not null;comment:结算货币，如 CNY"`
 	PurchasedMicros int64      `gorm:"not null;comment:本单入账到充值桶的点数，单位微元"`
 	GrantedMicros   int64      `gorm:"not null;comment:本单入账到赠送桶的点数，单位微元，含套餐附赠"`
-	EntitlementDays int        `gorm:"not null;comment:本单带来的付费权益天数"`
+	EntitlementDays int        `gorm:"not null;default:0;comment:本单带来的付费权益天数；点数包订单为 0，会员订单为档位周期快照"`
 	Status          string     `gorm:"type:varchar(16);not null;default:pending;index:idx_order_status_created,priority:2;comment:订单状态，pending 待支付、paid 已支付、failed 支付失败、refunded 已退款"`
 	PaidAt          *time.Time `gorm:"comment:支付成功时间，未支付为空"`
 	CreatedAt       time.Time  `gorm:"index:idx_order_user_created,priority:2,sort:desc;comment:下单时间"`

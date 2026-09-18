@@ -68,11 +68,3 @@ type FreeGrantClaim struct {
 }
 
 func (FreeGrantClaim) TableName() string { return "free_grant_claims" }
-
-type Plan struct {
-	ID            string `gorm:"primaryKey;comment:档位标识，free 免费、paid 付费、sunset 日落"` // free | paid | sunset
-	Name          string `gorm:"not null;comment:档位显示名"`
-	StorageBytes  int64  `gorm:"not null;comment:该档位的存储配额上限，单位字节"`
-	MaxFileBytes  int64  `gorm:"not null;comment:该档位单个上传文件的体积上限，单位字节"`
-	RetentionDays int    `gorm:"not null;comment:媒体保留天数，超期由清理任务回收"`
-}

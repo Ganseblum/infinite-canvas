@@ -11,6 +11,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/payment"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 )
 
 // fakeProvider 是支付渠道测试替身，避免单测依赖真实渠道 SDK 与网络。
@@ -64,17 +65,17 @@ func TestCreateOrderSnapshotsPackage(t *testing.T) {
 	provider := &fakeProvider{createParams: payment.Params{Type: payment.PaymentTypeRedirect, Payload: "https://example.com/pay"}}
 	orders := newOrderServiceForTest(t, g, provider)
 	user := createUserRow(t, g)
-	pack := model.CreditPackage{ID: "standard", Name: "标准包", PriceMicros: 30_000_000, BonusMicros: 3_000_000, EntitlementDays: 30, Currency: "CNY", Enabled: true}
+	pack := model.CreditPackage{ID: "standard", Name: "标准包", PriceMicros: 30_000_000, BonusMicros: 3_000_000, Currency: "CNY", Enabled: true}
 	if err := g.Create(&pack).Error; err != nil {
 		t.Fatalf("写入档位失败: %v", err)
 	}
 
-	result, err := orders.CreateOrder(context.Background(), user, "standard", "alipay")
+	result, err := orders.CreateOrder(context.Background(), user, "standard", "", "alipay")
 	if err != nil {
 		t.Fatalf("下单失败: %v", err)
 	}
-	if result.Order.PriceMicros != 30_000_000 || result.Order.PurchasedMicros != 30_000_000 || result.Order.GrantedMicros != 3_000_000 || result.Order.EntitlementDays != 30 {
-		t.Fatalf("订单快照错误: %+v", result.Order)
+	if result.Order.PriceMicros != 30_000_000 || result.Order.PurchasedMicros != 30_000_000 || result.Order.GrantedMicros != 3_000_000 || result.Order.EntitlementDays != 0 {
+		t.Fatalf("点数包订单快照错误（entitlementDays 恒 0）: %+v", result.Order)
 	}
 	// 快照不随档位修改而变化。
 	if err := g.Model(&model.CreditPackage{}).Where("id = ?", "standard").Update("price_micros", 50_000_000).Error; err != nil {
@@ -93,9 +94,9 @@ func TestCallbackIdempotentAndAmountMismatch(t *testing.T) {
 	g := newServiceDB(t)
 	provider := &fakeProvider{callback: payment.CallbackResult{Status: "paid", PriceMicros: 30_000_000, ProviderOrderID: "trade-1"}}
 	orders := newOrderServiceForTest(t, g, provider)
-	credits := NewCreditService(g)
+	points := billing.NewService(g, model.ProductCanvas)
 	user := createUserRow(t, g)
-	if err := credits.EnsureCredit(g, user.ID); err != nil {
+	if err := points.EnsureAccount(g, user.ID); err != nil {
 		t.Fatalf("建账本行失败: %v", err)
 	}
 	order := &model.Order{
@@ -114,12 +115,12 @@ func TestCallbackIdempotentAndAmountMismatch(t *testing.T) {
 	if err := orders.HandleCallback(context.Background(), "alipay", provider.callback); err != nil {
 		t.Fatalf("重复回调应返回成功: %v", err)
 	}
-	balance, _ := credits.Balance(context.Background(), user.ID)
+	balance, _ := points.Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 30_000_000 || balance.GrantedMicros != 3_000_000 {
 		t.Fatalf("重复回调导致重复到账: %+v", balance)
 	}
 	var paidCount int64
-	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, TxTypePurchase).Count(&paidCount)
+	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, billing.TxTypePurchase).Count(&paidCount)
 	if paidCount != 2 {
 		t.Fatalf("到账应写两条流水（购买+赠送）, got %d", paidCount)
 	}
@@ -182,9 +183,9 @@ func TestExpirePendingOrdersQueriesProviderFirst(t *testing.T) {
 	g := newServiceDB(t)
 	provider := &fakeProvider{queryResult: payment.CallbackResult{Status: "paid", PriceMicros: 10_000_000, ProviderOrderID: "trade-9"}}
 	orders := newOrderServiceForTest(t, g, provider)
-	credits := NewCreditService(g)
+	points := billing.NewService(g, model.ProductCanvas)
 	user := createUserRow(t, g)
-	if err := credits.EnsureCredit(g, user.ID); err != nil {
+	if err := points.EnsureAccount(g, user.ID); err != nil {
 		t.Fatalf("建账本行失败: %v", err)
 	}
 	order := &model.Order{
@@ -210,11 +211,11 @@ func TestPackagePriceMustBeWholeCents(t *testing.T) {
 	provider := &fakeProvider{}
 	orders := newOrderServiceForTest(t, g, provider)
 	user := createUserRow(t, g)
-	pack := model.CreditPackage{ID: "odd", Name: "奇异价", PriceMicros: 12_345, EntitlementDays: 30, Currency: "CNY", Enabled: true}
+	pack := model.CreditPackage{ID: "odd", Name: "奇异价", PriceMicros: 12_345, Currency: "CNY", Enabled: true}
 	if err := g.Create(&pack).Error; err != nil {
 		t.Fatalf("写入档位失败: %v", err)
 	}
-	if _, err := orders.CreateOrder(context.Background(), user, "odd", "alipay"); err == nil {
+	if _, err := orders.CreateOrder(context.Background(), user, "odd", "", "alipay"); err == nil {
 		t.Fatalf("非整分价格应被拒绝")
 	}
 }

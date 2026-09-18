@@ -9,20 +9,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/cursor"
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
 // CreditHandler 提供余额、流水与充值档位查询。流水只读，没有任何写接口。
 type CreditHandler struct {
 	db       *gorm.DB
-	credits  *service.CreditService
+	credits  *billing.Service
 	registry *service.PaymentRegistry
 }
 
 func NewCreditHandler(db *gorm.DB, registry *service.PaymentRegistry) *CreditHandler {
-	return &CreditHandler{db: db, credits: service.NewCreditService(db), registry: registry}
+	return &CreditHandler{db: db, credits: billing.NewService(db, model.ProductCanvas), registry: registry}
 }
 
 func (h *CreditHandler) GetBalance(c *gin.Context) {
@@ -32,7 +34,7 @@ func (h *CreditHandler) GetBalance(c *gin.Context) {
 	}
 	balance, err := h.credits.Balance(c.Request.Context(), uid)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		balance = model.Credit{UserID: uid}
+		balance = model.CreditAccount{UserID: uid}
 	} else if err != nil {
 		slog.Error("读取点数余额失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -48,7 +50,7 @@ func (h *CreditHandler) GetBalance(c *gin.Context) {
 		"purchasedMicros": balance.PurchasedMicros,
 		"grantedMicros":   balance.GrantedMicros,
 		"totalMicros":     balance.PurchasedMicros + balance.GrantedMicros,
-		"paidUntil":       formatTimePtr(balance.PaidUntil),
+		"paidUntil":       formatTimePtr(latestPaidUntil(h.db, uid)),
 		"recent":          transactionPayloads(recent),
 	})
 }
@@ -65,7 +67,7 @@ func (h *CreditHandler) ListTransactions(c *gin.Context) {
 	}
 	items, nextCursor, err := h.credits.ListTransactions(c.Request.Context(), uid, c.Query("cursor"), size, c.Query("type"))
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidCursor) {
+		if errors.Is(err, cursor.ErrInvalidCursor) {
 			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"cursor": "游标或筛选参数不合法"}))
 			return
 		}
@@ -105,8 +107,9 @@ func transactionPayloads(items []model.CreditTransaction) []gin.H {
 	return payloads
 }
 
-// ListPackages 返回已上架的充值档位，按 sort 升序；同时返回当前已配置的支付渠道，
+// ListPackages 返回已上架的点数包，按 sort 升序；同时返回当前已配置的支付渠道，
 // 前端据此只展示可用渠道，而不是让用户点进去才失败。
+// 点数包不再携带会员时长（D5 拆分）：entitlementDays 键保留形状、固定输出 0。
 func (h *CreditHandler) ListPackages(c *gin.Context) {
 	var packs []model.CreditPackage
 	if err := h.db.Where("enabled = ?", true).Order("sort ASC, id ASC").Find(&packs).Error; err != nil {
@@ -122,30 +125,36 @@ func (h *CreditHandler) ListPackages(c *gin.Context) {
 			"priceMicros":     pack.PriceMicros,
 			"purchasedMicros": pack.PriceMicros,
 			"bonusMicros":     pack.BonusMicros,
-			"entitlementDays": pack.EntitlementDays,
+			"entitlementDays": 0,
 			"currency":        pack.Currency,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "providers": h.registry.Names()})
 }
 
-// ListPlans 返回档位定义，供定价页展示三档存储与保留期。
+// ListPlans 返回会员档位定义，供定价页展示三档存储与保留期。
+// 可购买的档位（DurationDays>0）追加 priceMicros/durationDays 两个加法键。
 func (h *CreditHandler) ListPlans(c *gin.Context) {
-	var plans []model.Plan
-	if err := h.db.Order("id ASC").Find(&plans).Error; err != nil {
+	var plans []model.MembershipPlan
+	if err := h.db.Where("enabled = ?", true).Order("sort ASC, id ASC").Find(&plans).Error; err != nil {
 		slog.Error("读取档位失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
 	items := make([]gin.H, 0, len(plans))
 	for _, plan := range plans {
-		items = append(items, gin.H{
+		item := gin.H{
 			"id":            plan.ID,
 			"name":          plan.Name,
 			"storageBytes":  plan.StorageBytes,
 			"maxFileBytes":  plan.MaxFileBytes,
 			"retentionDays": plan.RetentionDays,
-		})
+		}
+		if plan.DurationDays > 0 {
+			item["priceMicros"] = plan.PriceMicros
+			item["durationDays"] = plan.DurationDays
+		}
+		items = append(items, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/infinite-canvas/server/internal/model"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/storage"
 )
 
@@ -22,11 +23,11 @@ import (
 type MediaWriteService struct {
 	db      *gorm.DB
 	storage storage.Storage
-	quota   *QuotaService
+	usage   *platformstorage.Service
 }
 
 func NewMediaWriteService(db *gorm.DB, stor storage.Storage) *MediaWriteService {
-	return &MediaWriteService{db: db, storage: stor, quota: NewQuotaService(db)}
+	return &MediaWriteService{db: db, storage: stor, usage: platformstorage.NewService(db, model.ProductCanvas)}
 }
 
 // SaveGeneratedMedia 写入产物并返回 media_files 行。
@@ -79,7 +80,7 @@ func (s *MediaWriteService) Save(ctx context.Context, input SaveGeneratedMediaIn
 			return err
 		}
 		if delta != 0 {
-			if _, err := s.quota.AddUsage(tx, input.UserID, MetricStorageBytes, delta); err != nil {
+			if err := s.usage.Commit(tx, input.UserID, delta); err != nil {
 				return err
 			}
 		}

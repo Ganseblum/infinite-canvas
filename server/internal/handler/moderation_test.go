@@ -14,6 +14,8 @@ import (
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
+	"github.com/infinite-canvas/server/internal/platform/billing"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 )
@@ -80,12 +82,12 @@ func TestModerationRejectsPromptBeforeReserve(t *testing.T) {
 		t.Fatalf("违规提示词应 422 CONTENT_REJECTED, got %d %s", w.Code, w.Body.String())
 	}
 	// 不扣点、无消费流水、没有生成记录。
-	balance, _ := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 1_000_000 {
 		t.Fatalf("被拒输入不应扣点, 余额=%d", balance.PurchasedMicros)
 	}
 	var consumes int64
-	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, service.TxTypeConsume).Count(&consumes)
+	g.Model(&model.CreditTransaction{}).Where("user_id = ? AND type = ?", user.ID, billing.TxTypeConsume).Count(&consumes)
 	if consumes != 0 {
 		t.Fatalf("被拒输入不应产生消费流水")
 	}
@@ -127,7 +129,10 @@ func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("被拒上传不应写媒体记录")
 	}
-	used, _ := service.NewQuotaService(g).StorageBytes(context.Background(), user.ID)
+	used, _, err := platformstorage.NewService(g, model.ProductCanvas).Snapshot(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("读取存储用量失败: %v", err)
+	}
 	if used != 0 {
 		t.Fatalf("被拒上传不应占用配额, used=%d", used)
 	}
@@ -154,7 +159,10 @@ func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("同一 storageKey 只应有一条正式记录, got %d", count)
 	}
-	used, _ = service.NewQuotaService(g).StorageBytes(context.Background(), user.ID)
+	used, _, err = platformstorage.NewService(g, model.ProductCanvas).Snapshot(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("读取存储用量失败: %v", err)
+	}
 	if used != int64(len(testPNG)) {
 		t.Fatalf("用量应只计正式对象, got %d", used)
 	}
@@ -183,7 +191,7 @@ func TestModerationFailModeRejectAndAllow(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable || errorCode(t, w) != "MODERATION_UNAVAILABLE" {
 		t.Fatalf("reject 模式下审核故障应 503, got %d %s", w.Code, w.Body.String())
 	}
-	balance, _ := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 1_000_000 {
 		t.Fatalf("审核故障不应预扣, 余额=%d", balance.PurchasedMicros)
 	}
@@ -231,7 +239,7 @@ func TestModerationArtifactRejectedKeepsCredits(t *testing.T) {
 		t.Fatalf("违规产物应 422, got %d %s", w.Code, w.Body.String())
 	}
 	// 产物拒绝不退点：上游成本已经发生。
-	balance, _ := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.PurchasedMicros != 900_000 {
 		t.Fatalf("产物拒绝不应退点, 余额=%d", balance.PurchasedMicros)
 	}
@@ -304,7 +312,7 @@ func TestModerationReviewConflictAndCompensation(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("补偿应成功: %d %s", w.Code, w.Body.String())
 	}
-	balance, _ := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balance.GrantedMicros != 100000 || balance.PurchasedMicros != 1_000_000 {
 		t.Fatalf("补偿应进入赠送桶且不改变付费身份: %+v", balance)
 	}
@@ -314,7 +322,7 @@ func TestModerationReviewConflictAndCompensation(t *testing.T) {
 	if w.Code == http.StatusOK {
 		t.Fatalf("同一记录重复补偿应被拒绝")
 	}
-	balanceAfter, _ := service.NewCreditService(g).Balance(context.Background(), user.ID)
+	balanceAfter, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
 	if balanceAfter.GrantedMicros != 100000 {
 		t.Fatalf("重复补偿不应重复到账, granted=%d", balanceAfter.GrantedMicros)
 	}
