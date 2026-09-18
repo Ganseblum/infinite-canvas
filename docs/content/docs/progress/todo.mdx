@@ -5,7 +5,24 @@ description: Planned follow-up work
 
 # TODO
 
-- 隔离件人工放行的水印归属语义（媒体水印评审 E-4 登记）：admin「释放隔离件」（`releaseQuarantined`）以隔离区原始字节直接落正式对象、不经生成链路的水印挂钩，免费用户被拒生成件经人工放行后为无水印版。需独立设计「按素材来源区分应否烧录」的归属判定与用例后再修（admin 侧代码当时处于保护区未动）。
+## 媒体水印与干净原件下发：未完成与将要完成（本版本新增）
+
+### 未完成（已实现但未闭环，按发布顺序）
+
+- **浏览器级端到端验收**：`pending-test.mdx` 「媒体水印」节全部条目——flag=false 回归、免费链路展示/下载均水印、付费链路与升级后历史自动变干净、申请下载两步流、防盗链（过期/篡改/转借 404）、社区语义、orig 清理、限流。需真实 AI 上游与部署环境，代码层已由 HTTP 集成测试覆盖（14 包全绿、三个泄漏面与 fail-closed 均有注入测试锁死）。
+- **灰度发布（阶段②③④）**：测试环境开 `WATERMARK_ENABLED=true` + `WATERMARK_FONT_PATH` 验证新产物水印与申请下载全链路 → 真实 MySQL 跑一次启动/迁移确认（本 feature 无 schema 变更，仍按纪律执行）→ 灰度观察 `watermark_failed` 结构化日志与下载端点 4xx 比例一周。回滚点全程是关 flag。
+- **部署前提落地**：api 镜像确认 PATH 内有 ffmpeg/ffprobe（ffmpeg 需含 libx264，视频水印重编码用）；`WATERMARK_FONT_PATH` 指向可读 CJK 字体（建议 Noto Sans SC，缺失时 flag=true 拒绝启动）；`WATERMARK_ENABLED` / `WATERMARK_FONT_PATH` / `WATERMARK_TEXT` 三个 env 进部署模板与 `.env.example`。
+- **隔离件人工放行的水印归属语义（评审 E-4）**：admin「释放隔离件」（`releaseQuarantined`）以隔离区原始字节直接落正式对象、不经生成链路的水印挂钩，免费用户被拒生成件经人工放行后为无水印版（无跨用户泄漏，操作者 gated）。需独立设计「生成件应烧录 / 上传件不应烧录」的按素材来源归属判定与用例后再修（admin 侧代码当时处于保护区未动）。
+
+### 将要完成（后续 backlog）
+
+- **orig 孤儿对象长期回收**：当前删除素材、注销、清理三个入口均为 best-effort 补删 + 写失败补偿，残余孤儿无自动回收；后续加定期扫描 `{uid}/orig/` 对账或存储生命周期策略。
+- **scale2ref 弃用观察**：ffmpeg 8.1 已标记 deprecated（仍可用）；未来 ffmpeg 移除该滤镜时视频水印转码会 fail-closed 失败（不泄漏干净件），需改用其它 overlay 方案。
+- **S3 真桶端到端**：302 预签名链路、360s TTL、负缓存 HeadObject 开销实测（local 驱动已全覆盖）——可与既有「S3 存储」待办合并执行。
+- **免费档历史干净素材回填**：上线前的存量干净件不做追溯烧录（免费档保留期仅 7 天，暴露窗口极短，默认接受）；如需覆盖另立任务。
+- **三页下载失败提示统一**：素材页为固定 i18n 文案、图片/视频页走 `getApiErrorMessage` 三级文案，语义不完全一致；统一需补 locales key。
+- **下载按钮 loading/防重**：当前连点会并发重复申请，后端限流 60 次/小时/用户兜底；可加按钮级防重。
+
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.
 - Account system and backend services: build the MySQL 8.4 LTS + Go backend per the master plan and phase 1–5 documents under `我的规划/` at the repo root; all features require login and all AI channels are server-configured. Phase 1 (accounts, email, free-grant risk control), phase 2 (resource storage and object storage), phase 3 (double-bucket credits, packages and orders, plan derivation and storage quota, model catalog with promotions, retention cleanup, account deletion, and the admin console), and phase 4 (server-side AI routing with quote, reserve, and failure refund, encrypted platform channels with failover, async video tasks, SSE chat, and the removal of browser-direct channels and scripts) are delivered.
