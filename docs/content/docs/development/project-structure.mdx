@@ -1,0 +1,296 @@
+---
+title: Project Structure
+description: Repository layout, tech stack per subproject, core modules, and data flow
+---
+
+# Project Structure
+
+This document describes how the repository is organized, what each subproject is built with, and how the core modules relate to each other.
+
+For end-user feature descriptions see [Features](/docs/overview/features); for the local canvas data format see [Canvas Data Structure](/docs/development/canvas-data-structure).
+
+## Repository overview
+
+The repository holds four subprojects. Each installs its own dependencies; there is no shared workspace configuration.
+
+| Directory | Purpose | How it runs |
+| --- | --- | --- |
+| `web/` | Main application, the browser-side infinite canvas | Vite dev server / static site |
+| `canvas-agent/` | Local agent service bridging Codex and Claude Code | Node process on the user machine |
+| `docs/` | Documentation site (this site) | Next.js server |
+| `plugins/` | Canvas node plugins, plugin SDK, and the Codex app plugin | Build artifacts consumed by the two above |
+
+Other top-level entries:
+
+| Path | Purpose |
+| --- | --- |
+| `AGENTS.md` | Rules for AI and automated development; read before changing code |
+| `CHANGELOG.md` | Change log; `Unreleased` collects unshipped changes |
+| `VERSION` | Current version, injected into the frontend as `__APP_VERSION__` |
+| `Dockerfile`, `docker-compose*.yml`, `nginx.conf` | Frontend container deployment |
+| `vercel.json`, `render.yaml` | Vercel and Render deployment configuration |
+| `.github/workflows/` | CI: Pages, Docker image, docs image, official plugin publishing |
+| `.agents/` | Codex plugin marketplace config and local skills, pinned by `skills-lock.json` |
+| `assets/` | Images used by the README |
+
+## Architecture
+
+The browser is where everything runs. There is no first-party backend: canvas data lives locally, AI requests go directly from the browser to the endpoint you configure, and the local agent only starts when you want Codex to operate the canvas.
+
+```text
+                    ┌──────────────────────────────┐
+                    │  Browser (web/)               │
+                    │  canvas / workbench / prompts │
+                    └───┬───────────┬──────────┬───┘
+                        │           │          │
+        IndexedDB       │      direct HTTPS    │  HTTP + SSE
+      localStorage ◄────┘           │          └─────────────┐
+                                    ▼                        ▼
+                       OpenAI-compatible APIs      canvas-agent (127.0.0.1)
+                       GitHub prompt repos                   │ stdio JSON-RPC
+                       WebDAV (optional sync)                ▼
+                                                    Codex app-server / Claude CLI
+                                                             │ MCP
+                                                             └──► canvas tool calls
+```
+
+## web/: frontend application
+
+### Tech stack
+
+| Area | Choice |
+| --- | --- |
+| Build | Vite 7, `@vitejs/plugin-react`, TypeScript 5 |
+| Framework | React 19.2.5 |
+| Routing | React Router 7 |
+| State | Zustand 5, TanStack Query 5 |
+| UI | Ant Design 6, Pro Components, Radix UI, shadcn, lucide-react, motion |
+| Styling | Tailwind CSS 4 (CSS-first, no `tailwind.config.js`) |
+| Storage | localforage (IndexedDB) |
+| Network | axios |
+| Editors | `@uiw/react-codemirror`, `streamdown` |
+| i18n | i18next, react-i18next (zh-CN / en-US) |
+| Formatting | Prettier |
+
+The package manager is bun. There is no ESLint setup and no test framework under `web/`.
+
+Scripts: `dev` (port 3000), `build`, `start` (preview), `typecheck`, `format`, `format:check`.
+
+Beyond the usual setup, `vite.config.ts` adds the `@` path alias, compiles the root `VERSION` and `CHANGELOG.md` into `__APP_VERSION__` and `__APP_RELEASES__`, and exposes `public/plugins/*.js` as `/plugins/index.json` for local plugin discovery.
+
+### Directory responsibilities
+
+```text
+web/src/
+├── main.tsx            application entry
+├── router.tsx          route table
+├── pages/              route pages
+├── layouts/            route shell (top nav + agent panel)
+├── components/         UI (canvas / agent / layout / prompts / ui)
+├── stores/             Zustand global state
+├── services/           local storage and external APIs
+├── lib/                pure helpers (themes, canvas ops, plugin runtime)
+├── hooks/              cross-page hooks
+├── constant/           constants and environment variables
+├── i18n/               locale packs
+├── types/              shared types
+└── styles/             global CSS
+```
+
+### Routes
+
+Every page except the 404 shares `layouts/user-layout.tsx` (top navigation, agent side panel, analytics).
+
+| Path | Page | File |
+| --- | --- | --- |
+| `/` | Home | `pages/home/index.tsx` |
+| `/canvas` | Canvas project list | `pages/canvas/index.tsx` |
+| `/canvas/:id` | Canvas editor | `pages/canvas/project.tsx` |
+| `/image` | Image workbench | `pages/image/index.tsx` |
+| `/video` | Video workbench | `pages/video/index.tsx` |
+| `/prompts` | Prompt library | `pages/prompts/index.tsx` |
+| `/assets` | My Assets | `pages/assets/index.tsx` |
+| `/config` | Settings | `pages/config/index.tsx` |
+| `*` | Not found | `pages/not-found/index.tsx` |
+
+### State management
+
+| Store | File | Owns | Persistence |
+| --- | --- | --- | --- |
+| `useCanvasStore` | `stores/canvas/use-canvas-store.ts` | Projects, nodes, connections, assistant sessions, viewport | localForage |
+| `usePluginStore` | `stores/canvas/use-plugin-store.ts` | Installed node plugins | localForage |
+| `useCanvasUiStore` | `stores/canvas/use-canvas-ui-store.ts` | Project list interaction state | none |
+| `useConfigStore` | `stores/use-config-store.ts` | AI channels, keys, generation preferences, WebDAV | localStorage |
+| `useAssetStore` | `stores/use-asset-store.ts` | My Assets | localForage |
+| `usePromptSourceStore` | `stores/use-prompt-source-store.ts` | Prompt sources and fetch schedule | localStorage |
+| `useThemeStore` | `stores/use-theme-store.ts` | Light / dark theme | localStorage |
+| `useAgentStore` | `stores/use-agent-store.ts` | Local agent connection, SSE, messages | partial localStorage keys |
+| `useAgentSkillStore` | `stores/use-agent-skill-store.ts` | Codex skill list and drafts | none |
+| `useWorkbenchAgentStore` | `stores/use-workbench-agent-store.ts` | Workbench commands issued by the agent | none |
+| `useCanvasSidePanelStore` | `stores/use-canvas-side-panel-store.ts` | Side panel width and open state | localStorage |
+| `useUserStore` | `stores/use-user-store.ts` | Local user placeholder | none |
+
+### Canvas core
+
+The canvas is custom-built rather than based on a graph library such as React Flow. `components/canvas/infinite-canvas.tsx` handles pan and zoom through CSS `transform`, `canvas-node.tsx` renders nodes, and `canvas-connections.tsx` draws edges.
+
+Built-in node types are declared as `CanvasNodeType` in `types/canvas.ts` and registered into `lib/canvas/node-registry.ts` by `components/canvas/nodes/builtin-nodes.tsx`:
+
+| Type | Purpose |
+| --- | --- |
+| `text` | Text and prompts |
+| `image` | Image generation and display, aspect ratio locked by default |
+| `video` | Video generation and display |
+| `audio` | Audio generation and display |
+| `config` | Generation parameters |
+| `group` | Group container |
+
+Node types are open strings; plugin nodes use the form `<pluginId>:<name>`. `lib/canvas/` also holds the node factory, geometry and sizing rules, generation helpers, export, event bus, and resource references.
+
+### Service layer
+
+`services/api/` handles outbound requests; the rest of `services/` handles local storage and sync.
+
+| File | Purpose |
+| --- | --- |
+| `api/image.ts` | Image generation and editing across OpenAI, Gemini, and Ark formats |
+| `api/video.ts` | Video generation and polling |
+| `api/audio.ts` | Audio generation |
+| `api/model-plugin.ts` | Runs user-defined model call scripts |
+| `api/prompts.ts`, `api/prompt-source-*.ts` | Prompt source aggregation, presets, and fetching |
+| `api/canvas-agent.ts` | HTTP interface to the local agent |
+| `image-storage.ts`, `file-storage.ts` | Image and media blob access |
+| `webdav-sync.ts`, `app-sync.ts` | WebDAV protocol and domain-level sync |
+| `config-file.ts` | Configuration import and export |
+| `local-storage-usage.ts` | Local storage usage statistics |
+
+AI channel settings (`baseUrl`, `apiKey`, `apiFormat`) live in `useConfigStore`. Requests go straight from the browser; the project proxies no traffic.
+
+### Local storage
+
+IndexedDB database `infinite-canvas`:
+
+| storeName | Contents |
+| --- | --- |
+| `app_state` | Persisted Zustand data for canvas, assets, and plugins |
+| `image_files` | Image blobs |
+| `media_files` | Video and audio blobs |
+| `image_generation_logs`, `video_generation_logs` | Workbench generation history |
+| `prompt_cache` | Prompt source cache |
+
+A second database, `infinite-canvas-plugins`, gives each `pluginId` its own store for plugin-private data. localStorage holds only small configuration values such as AI settings, prompt sources, theme, locale, agent URL and token, and panel width.
+
+Cross-device sync requires configuring WebDAV. The synced domains are `canvas`, `assets`, `image-workbench`, and `video-workbench`.
+
+### Plugin system
+
+Plugins run as ES modules on the main page; there is no iframe sandbox.
+
+1. `lib/canvas/plugin-loader.ts` fetches the script, converts it to a blob URL, and imports it dynamically.
+2. `lib/canvas/plugin-runtime.ts` injects the host React, a CSS injector, and an event bus through `window.InfiniteCanvasRuntime`, so plugins never bundle their own React.
+3. `lib/canvas/node-registry.ts` registers contributed node definitions; `plugin-node-context.ts` builds each node's context.
+4. `pages/canvas/hooks/use-plugin-host.tsx` exposes AI generation and canvas operations to plugins.
+
+Plugins come from three sources: installation by remote URL (source cached for offline use), local discovery from `web/public/plugins/` (disabled by default), and `VITE_DEV_PLUGINS` for development. The official registry URL is `PLUGIN_REGISTRY_URL` in `constant/env.ts`, served by jsDelivr from the `plugins-dist` branch.
+
+Both plugins and model call scripts execute on the main thread with full page privileges, so verify the source before installing third-party scripts.
+
+### Theming
+
+`lib/app-theme.ts` supplies Ant Design tokens, `lib/canvas-theme.ts` defines the light and dark canvas themes, and `components/layout/app-providers.tsx` toggles the `dark` class on `documentElement` based on `useThemeStore`. Per `AGENTS.md`, canvas UI must use theme tokens instead of hard-coded colors.
+
+## canvas-agent/: local agent
+
+Published to npm as `@basketikun/canvas-agent` and startable with `npx -y @basketikun/canvas-agent`.
+
+### Tech stack
+
+ESM and TypeScript 5.8, requiring Node 18 or newer. It uses `@modelcontextprotocol/sdk` for MCP, `express` 5 for HTTP, a pinned `@openai/codex` as the bundled Codex, `zod` for input validation, `winston` for logging, and `gray-matter` plus `yaml` for skill parsing. Tests run on the built-in `node:test` runner via `tsx`.
+
+### Directory responsibilities
+
+```text
+canvas-agent/src/
+├── index.ts              CLI entry: HTTP mode vs. mcp stdio mode
+├── config.ts             config paths, port, token, workspace
+├── server/http.ts        Express routes, SSE, auth, CORS
+├── server/mcp.ts         stdio MCP server forwarding to the HTTP API
+├── canvas/session.ts     SSE clients, tool RPC, session state
+├── canvas/schemas.ts     MCP tool names, input schemas, descriptions
+├── canvas/operations.ts  expands high-level tools into canvas_apply_ops
+├── agent/codex*.ts       Codex process, protocol, history, event store
+├── agent/claude.ts       Claude Code CLI adapter
+├── agent/message-metadata.ts  message metadata on disk
+├── skills/store.ts       workspace skill CRUD
+└── utils/                logging, dates, value helpers
+```
+
+### How it runs
+
+The default mode starts an HTTP server bound to `127.0.0.1` on port `17371`. The browser opens an SSE stream at `GET /events`; when the agent needs to read or write the canvas it emits a `tool_call` event, and the browser replies with `POST /canvas/result`. Each call times out after 30 seconds.
+
+Passing the `mcp` argument skips the HTTP listener and starts a stdio MCP server that forwards tool calls to `/api/tools`. On the Codex side, `agent/codex-client.ts` spawns the bundled `codex app-server --stdio` and injects an MCP server named `infinite-canvas`.
+
+There are 35 MCP tools covering site navigation, canvas reads and writes (nodes, connections, viewport, selection), generation flow orchestration, generation status queries, the image and video workbenches, prompt search, and asset management. The full list lives in `canvas/schemas.ts`.
+
+### Protocol and storage versions
+
+`AGENT_PROTOCOL_VERSION` in `canvas/session.ts` versions the browser-to-agent protocol and is exposed through `/health`, `/config`, and the first SSE `hello` frame. It is independent of the npm package version.
+
+`STORAGE_VERSION` in `agent/message-metadata.ts` versions message metadata storage. An unknown version or a missing manifest raises an error rather than overwriting the file, and writes go through an atomic temp-file rename. Messages are attributed by `threadId`, `turnId`, and `itemId`; once a history snapshot becomes authoritative, realtime events are no longer merged again.
+
+Everything is written under `~/.infinite-canvas/`: connection config, the Codex workspace and skills, message metadata, supplemental Codex event history, and debug logs.
+
+### Security
+
+The service listens only on the loopback address and generates a random connect token at startup. Every route except `/health` and `/config` requires that token. The first Origin that makes a successful authenticated request is added to an allowlist, and other origins are rejected afterwards until `origins` is cleared from the config. Debug logs redact tokens, API keys, and data URLs.
+
+## plugins/
+
+### plugins/canvas/
+
+Canvas node plugins and the SDK. Every package is `private` and is not published to npm.
+
+- `sdk/` — `@infinite-canvas/plugin-sdk`, exporting type definitions, an automatic JSX runtime, hooks forwarded to the host React, and an esbuild-based `buildPlugin`.
+- `template/` — starter for new plugins.
+- `markdown/`, `svg/`, `html/`, `panorama/`, `sticky-note/` — official plugins.
+- `registry/` — CI build script that force-pushes artifacts to the orphan `plugins-dist` branch for jsDelivr delivery.
+
+The workflow is to copy the template, change the `id` and node `type`, then run `npm run dev` to build in watch mode and sync into `web/public/plugins/`. Alternatively, host the artifact anywhere and install it by URL from the canvas UI.
+
+### plugins/infinite-canvas/
+
+The Codex app plugin, which contains only plugin descriptors and no `package.json`. `.mcp.json` declares an MCP server running `npx -y @basketikun/canvas-agent mcp`, and `skills/` provides two skills for operating and opening the canvas. Install it by adding the repository root through `codex plugin marketplace add`.
+
+## docs/
+
+Next.js 16 with Fumadocs 16. MDX content lives in `docs/content/docs/` across six sections: `overview`, `canvas`, `development`, `progress`, `business`, and `support`. Each page has an English version and a `.zh-CN.mdx` Chinese counterpart, with ordering controlled by `meta.json` and `meta.zh-CN.json` in each directory.
+
+`docs/index.md` and `docs/index.zh-CN.md` are documentation indexes intended for AI use and are not part of the content directory.
+
+## Deployment and CI
+
+The frontend `Dockerfile` builds with bun and serves through nginx on port 3000, with SPA `try_files` fallback and no-store caching for `/config.js`. `vercel.json` and `render.yaml` cover the two hosting platforms.
+
+All four workflows in `.github/workflows/` are triggered by a `v*` tag push or manually: publish GitHub Pages, build the multi-architecture frontend image, build the docs image, and build and publish official plugins to `plugins-dist`.
+
+## Features and where they live
+
+| Feature | Main location |
+| --- | --- |
+| Canvas editing | `pages/canvas/`, `components/canvas/`, `stores/canvas/`, `lib/canvas/` |
+| AI generation | `services/api/image.ts`, `video.ts`, `audio.ts`, `model-plugin.ts` |
+| Canvas assistant | `components/canvas/canvas-side-panel.tsx` and the node generation path |
+| Local agent | `components/agent/`, `stores/use-agent-store.ts`, `services/api/canvas-agent.ts`, `canvas-agent/` |
+| Node plugins | `lib/canvas/plugin-*.ts`, `stores/canvas/use-plugin-store.ts`, `plugins/canvas/` |
+| Prompt library | `pages/prompts/`, `services/api/prompts.ts` |
+| My Assets | `pages/assets/`, `stores/use-asset-store.ts` |
+| Image / video workbench | `pages/image/`, `pages/video/` |
+| Settings and sync | `pages/config/`, `stores/use-config-store.ts`, `services/webdav-sync.ts` |
+
+## Development conventions
+
+- Read `AGENTS.md` before changing code. It defines where files belong, how components are split, how themes are used, and when documentation must be updated.
+- The project is not yet released, so local storage structures can change directly without backward-compatibility shims.
+- Global state goes in `stores/`, cross-page UI side effects in `hooks/`, canvas helpers in `lib/canvas/`, and outbound requests in `services/api/`.
+- After a significant change, add an entry to `Unreleased` in `CHANGELOG.md`. Open work and items awaiting verification are tracked in `progress/todo` and `progress/pending-test`.

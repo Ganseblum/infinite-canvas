@@ -14,6 +14,7 @@
 
 ## Development and Data
 
+- [Project Structure](/docs/development/project-structure)
 - [Local Development](/docs/development/local-development)
 - [Fork Deployment and Shared Test Data](../deploy/README.md)
 - [Canvas Data Structure](/docs/development/canvas-data-structure)
