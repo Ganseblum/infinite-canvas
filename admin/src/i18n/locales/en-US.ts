@@ -146,7 +146,11 @@ i18n.addResourceBundle(
     "translation",
     {
         admin: {
-            tabs: { analytics: "Usage analytics" },
+            tabs: {
+                analytics: "Usage analytics",
+                // Capability shortcuts under the sidebar "Models" submenu.
+                modelCapabilities: { image: "Image models", video: "Video models", audio: "Audio models", text: "Text models" },
+            },
             analytics: {
                 loadFailed: "Failed to load usage analytics",
                 range: { d7: "Last 7 days", d30: "Last 30 days", d90: "Last 90 days" },
@@ -158,7 +162,7 @@ i18n.addResourceBundle(
                 topUsers: { title: "Top consumers", user: "User", requests: "Requests", cost: "Credits spent" },
             },
             models: {
-                // Capability filter Segmented: option label = name + count.
+                // Count labels shared by the models page Segmented and the sidebar capability shortcuts: label + count.
                 filters: { all: "All", labeled: "{{label}} ({{count}})" },
                 // Constraint keys used by the capability groups that the web packs lack;
                 // size/quality/resolution/ratio/duration reuse the existing constraintKeys.

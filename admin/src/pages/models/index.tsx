@@ -4,6 +4,7 @@ import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { getApiErrorMessage } from "@/lib/api-error";
 import { formatMoney, formatPoints } from "@/lib/credits-format";
@@ -138,8 +139,15 @@ export default function AdminModelsPage() {
         queryFn: ({ signal }) => listAdminChannels(signal),
     });
 
-    // 表格上方的能力筛选：全部/图片/视频/音频/文本，选项上带各能力的模型数量。
-    const [capabilityFilter, setCapabilityFilter] = useState<"all" | ModelCapability>("all");
+    // 能力筛选与 URL 参数双向同步：侧边栏的能力子项带 ?capability= 进来直接预选，
+    // 页内切换 Segmented 用 replace 写回参数（不留历史记录），菜单选中态也跟着参数走。
+    const [searchParams, setSearchParams] = useSearchParams();
+    const capabilityParam = searchParams.get("capability");
+    const capabilityFilter: "all" | ModelCapability =
+        capabilityParam !== null && CAPABILITIES.includes(capabilityParam as ModelCapability) ? (capabilityParam as ModelCapability) : "all";
+    const setCapabilityFilter = (value: "all" | ModelCapability) => {
+        setSearchParams(value === "all" ? {} : { capability: value }, { replace: true });
+    };
     const allModels = modelsQuery.data?.items ?? [];
     const capabilityCounts = useMemo(() => {
         const counts: Record<"all" | ModelCapability, number> = { all: allModels.length, image: 0, video: 0, text: 0, audio: 0 };

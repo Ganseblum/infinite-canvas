@@ -148,7 +148,11 @@ i18n.addResourceBundle(
     "translation",
     {
         admin: {
-            tabs: { analytics: "用量分析" },
+            tabs: {
+                analytics: "用量分析",
+                // 侧边栏「模型」下的能力子菜单文案。
+                modelCapabilities: { image: "图片模型", video: "视频模型", audio: "音频模型", text: "文本模型" },
+            },
             analytics: {
                 loadFailed: "用量分析数据加载失败",
                 range: { d7: "近 7 天", d30: "近 30 天", d90: "近 90 天" },
@@ -160,7 +164,7 @@ i18n.addResourceBundle(
                 topUsers: { title: "消费用户排行", user: "用户", requests: "请求数", cost: "消费点数" },
             },
             models: {
-                // 能力筛选 Segmented：选项文案 = 标签 + 数量。
+                // 能力筛选 Segmented 与侧边栏「模型」能力子菜单的数量文案：选项文案 = 标签 + 数量。
                 filters: { all: "全部", labeled: "{{label}} ({{count}})" },
                 // 按能力分组的约束键里 web 语言包没有的键；size/quality/resolution/ratio/duration 沿用已有 constraintKeys。
                 groups: { background: "背景 background", format: "格式 format", voice: "音色 voice", speed: "语速 speed" },
