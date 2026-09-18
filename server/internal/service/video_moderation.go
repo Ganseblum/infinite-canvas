@@ -14,10 +14,32 @@ import (
 	"github.com/infinite-canvas/server/internal/moderation"
 )
 
+// videoSampleFPS 读取 MODERATION_VIDEO_SAMPLE_FPS（默认 1 fps）。
+// 该配置此前是死配置（差异清单 #24），现在真正生效。
+func videoSampleFPS() float64 {
+	if raw := os.Getenv("MODERATION_VIDEO_SAMPLE_FPS"); raw != "" {
+		if fps, err := strconv.ParseFloat(raw, 64); err == nil && fps > 0 {
+			return fps
+		}
+	}
+	return 1
+}
+
+// videoMaxFrames 读取 MODERATION_VIDEO_MAX_FRAMES（默认 100）。
+// 原实现写死 24 帧，长视频只审前约 24 秒，存在漏检窗口。
+func videoMaxFrames() int {
+	if raw := os.Getenv("MODERATION_VIDEO_MAX_FRAMES"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 100
+}
+
 // moderateVideo 对视频抽帧后逐帧送审。v1 不做端到端视频模型：
 // 按固定间隔抽帧，任一帧超阈值即整条拒绝。
 func moderateVideo(ctx context.Context, moderationService *ModerationService, userID uuid.UUID, data []byte, mimeType string) (Verdict, error) {
-	frames, err := extractVideoFrames(ctx, data, 1)
+	frames, err := extractVideoFrames(ctx, data, videoSampleFPS())
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -52,7 +74,7 @@ func extractVideoFrames(ctx context.Context, data []byte, fps float64) ([][]byte
 	}
 	pattern := filepath.Join(dir, "frame-%03d.jpg")
 	command := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", input,
-		"-vf", "fps="+strconv.FormatFloat(fps, 'f', -1, 64), "-frames:v", "24", pattern)
+		"-vf", "fps="+strconv.FormatFloat(fps, 'f', -1, 64), "-frames:v", strconv.Itoa(videoMaxFrames()), pattern)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {

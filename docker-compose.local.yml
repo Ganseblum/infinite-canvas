@@ -77,6 +77,10 @@ services:
     # 与 docker-compose.yml 保持同一版本，避免本地与测试/正式环境出现版本差异
     image: mysql:8.4.11
     restart: unless-stopped
+    # 本机 go run / DBeaver 直连本地库用；docker-compose.yml（测试/正式）不映射该端口，
+    # 测试环境的映射在 deploy/compose.test.yml 里
+    ports:
+      - "127.0.0.1:13306:3306"
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}

@@ -117,7 +117,7 @@ func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
 	user := createUser(t, g, "modupload@example.com", "modupload", "password123", true)
 	token := accessToken(t, cfg, &user)
 
-	w := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", []byte("bad-image"), "image/png", token, nil)
+	w := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"), "image/png", token, nil)
 	if w.Code != http.StatusUnprocessableEntity || errorCode(t, w) != "CONTENT_REJECTED" {
 		t.Fatalf("违规上传应 422 CONTENT_REJECTED, got %d %s", w.Code, w.Body.String())
 	}
@@ -142,11 +142,11 @@ func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
 
 	// 审核通过后正常上传，同 storageKey 重试幂等。
 	provider.RejectLabels = nil
-	ok := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", []byte("good-image"), "image/png", token, nil)
+	ok := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", testPNG, "image/png", token, nil)
 	if ok.Code != http.StatusCreated {
 		t.Fatalf("通过审核的上传应 201, got %d %s", ok.Code, ok.Body.String())
 	}
-	okAgain := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", []byte("good-image"), "image/png", token, nil)
+	okAgain := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", testPNG, "image/png", token, nil)
 	if okAgain.Code != http.StatusCreated {
 		t.Fatalf("重复上传应 201, got %d", okAgain.Code)
 	}
@@ -155,7 +155,7 @@ func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
 		t.Fatalf("同一 storageKey 只应有一条正式记录, got %d", count)
 	}
 	used, _ = service.NewQuotaService(g).StorageBytes(context.Background(), user.ID)
-	if used != int64(len("good-image")) {
+	if used != int64(len(testPNG)) {
 		t.Fatalf("用量应只计正式对象, got %d", used)
 	}
 }

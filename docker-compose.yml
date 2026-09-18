@@ -1,3 +1,7 @@
+# 顶层项目名：跳过 deploy.sh 直接执行 docker compose 时的兜底隔离；
+# deploy.sh 的 -p 参数与 env 文件里的 COMPOSE_PROJECT_NAME 会覆盖它。
+name: ${COMPOSE_PROJECT_NAME:-infinite-canvas}
+
 services:
   app:
     # 镜像 tag 按环境区分（测试 :test / 正式 :prod，由 env 文件提供），
@@ -111,6 +115,8 @@ services:
       # 内容审核（第五期）：开启时 MODERATION_FAIL_MODE 必填
       MODERATION_ENABLED: "${MODERATION_ENABLED:-false}"
       MODERATION_PROVIDER: "${MODERATION_PROVIDER:-fake}"
+      # 仅 fake provider 生效：命中即触发拒绝的文本片段，逗号分隔，供 fake 拒绝链路联调
+      MODERATION_FAKE_REJECT_TEXTS: "${MODERATION_FAKE_REJECT_TEXTS:-}"
       MODERATION_NSFWJS_ENDPOINT: "${MODERATION_NSFWJS_ENDPOINT:-}"
       MODERATION_DETOXIFY_ENDPOINT: "${MODERATION_DETOXIFY_ENDPOINT:-}"
       MODERATION_IMAGE_THRESHOLD: "${MODERATION_IMAGE_THRESHOLD:-0.6}"
@@ -167,3 +173,23 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+
+  # ===== 内容审核推理 sidecar（可选，默认不启动）=====
+  # image 为占位：按《我的规划/后续功能备忘》的 sidecar 契约实现真实镜像后填入再启用
+  # （NSFWJS: POST /classify {mimeType, data(base64)} → predictions[]；Detoxify: POST /classify {text} → scores{}）。
+  # 启用方式见 deploy/README.md「内容审核」一节：docker compose --profile moderation up -d，
+  # 并把 MODERATION_PROVIDER 切到 nsfwjs+detoxify，ENDPOINT 填下方两个服务名地址。
+  # 两个 sidecar 只在 compose 内网互相可达（expose 不映射宿主机端口），api 通过服务名访问。
+  nsfwjs:
+    image: nsfwjs-sidecar:placeholder # 占位镜像，实现真实 sidecar 前勿启用本 profile
+    profiles: ["moderation"]
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  detoxify:
+    image: detoxify-sidecar:placeholder # 占位镜像，实现真实 sidecar 前勿启用本 profile
+    profiles: ["moderation"]
+    expose:
+      - "8000"
+    restart: unless-stopped

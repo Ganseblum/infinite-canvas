@@ -42,6 +42,7 @@ type AIRequest struct {
 	ConsumeTransactionIDs datatypes.JSON `gorm:"type:json;comment:本次预扣写下的消费流水 id 数组，失败退款按这些 id 原桶退回"`
 	Status                string         `gorm:"type:varchar(16);not null;index;comment:请求状态，running 进行中、succeeded 成功、failed 失败"` // running | succeeded | failed
 	RefundPending         bool           `gorm:"not null;default:false;comment:退款待重试标记，为真表示预扣尚未退还，由补偿任务按该标记重试"`
+	UsedFreeTrial         bool           `gorm:"not null;default:false;comment:本次请求是否占用了一次免费试用，失败退还按该标记递减试用计数"`
 	UpstreamStatus        int            `gorm:"comment:上游返回的 HTTP 状态码，未拿到响应时为 0"`
 	DurationMs            int            `gorm:"comment:上游调用耗时，单位毫秒"`
 	// 以下四个是用量分析维度，只在请求创建时写入一次，幂等命中既有请求时不回写。

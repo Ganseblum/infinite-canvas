@@ -168,7 +168,9 @@ func MediaAuth(secret []byte) gin.HandlerFunc {
 	}
 }
 
-// VerifyExistingUser 加载当前用户并拒绝已封禁或已注销的账号。
+// RequireActiveUser 加载当前用户并拒绝已封禁（disabled）的账号。
+// 注销冷静期（pending_deletion）允许登录后的读操作，生成、下单等写操作
+// 由 RequireNotPendingDeletion 按路由口径拦截。
 // 第一期签发的 access token 在封禁后 15 分钟内仍有效，这里按库里的最新状态拦截，
 // 撤销 refresh token 负责让会话在那之后彻底失效。
 func RequireActiveUser(db *gorm.DB) gin.HandlerFunc {

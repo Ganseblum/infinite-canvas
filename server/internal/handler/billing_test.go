@@ -190,6 +190,67 @@ func TestAccountDeletionLifecycle(t *testing.T) {
 	}
 }
 
+// TestPendingDeletionCanLoginRefreshAndCancel 冷静期全链路：
+// 申请注销后登录与刷新不再被 403 拦截（撤销入口必须可达），撤销后账号恢复 active。
+func TestPendingDeletionCanLoginRefreshAndCancel(t *testing.T) {
+	g := newTestDB(t)
+	cfg := testConfig()
+	h := NewAuthHandler(g, cfg, testMailer())
+	r := newAuthRouter(t, cfg, h)
+	// 同一引擎上补挂注销申请/撤销，中间件与 main.go 的 me 分组一致
+	accountH := NewAccountHandler(g, cfg, service.NewFreeGrantService(g), h)
+	me := r.Group("/api/me", middleware.Auth([]byte(cfg.JWTSecret)), middleware.RequireActiveUser(g))
+	me.POST("/deletion", accountH.RequestDeletion)
+	me.POST("/deletion/cancel", accountH.CancelDeletion)
+
+	user := createUser(t, g, "cooling@example.com", "coolinguser", "password123", true)
+	token := accessToken(t, cfg, &user)
+
+	w := doAuthJSON(r, http.MethodPost, "/api/me/deletion", token, map[string]string{"password": "password123"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("申请注销失败: code=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// 冷静期内登录仍成功（旧实现一律 403 ACCOUNT_DISABLED，撤销入口不可达）
+	w = doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "cooling@example.com", "password": "password123"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("冷静期登录应成功: code=%d body=%s", w.Code, w.Body.String())
+	}
+	cookie := findCookie(w, RefreshCookieName)
+	if cookie == nil {
+		t.Fatal("冷静期登录未下发 refresh cookie")
+	}
+
+	// 冷静期内刷新仍成功
+	w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("冷静期刷新应成功: code=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// 撤销注销，账号恢复 active
+	w = doAuthJSON(r, http.MethodPost, "/api/me/deletion/cancel", token, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("撤销注销失败: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var fresh model.User
+	if err := g.First(&fresh, "id = ?", user.ID).Error; err != nil {
+		t.Fatalf("读取用户失败: %v", err)
+	}
+	if fresh.Status != "active" {
+		t.Fatalf("撤销后账号应恢复 active, got %s", fresh.Status)
+	}
+
+	// 封禁账号仍拒绝登录
+	banned := createUser(t, g, "banned@example.com", "banneduser", "password123", true)
+	if err := g.Model(&model.User{}).Where("id = ?", banned.ID).Update("status", "disabled").Error; err != nil {
+		t.Fatalf("置为封禁失败: %v", err)
+	}
+	w = doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "banned@example.com", "password": "password123"})
+	if w.Code != http.StatusForbidden || errorCode(t, w) != "ACCOUNT_DISABLED" {
+		t.Fatalf("封禁账号登录应 403 ACCOUNT_DISABLED, got %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAdminRoutesRejectNonAdmin(t *testing.T) {
 	g := newTestDB(t)
 	cfg := testConfig()

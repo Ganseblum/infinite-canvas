@@ -228,8 +228,7 @@ func (s *QuoteService) BuildQuote(ctx context.Context, userID uuid.UUID, catalog
 	baseCost := unitCost * int64(n)
 
 	// 免费额度优先于折扣：命中时按 0 元报价，不解析活动。
-	if free, remaining := s.FreeTrialFor(userID, catalogItem, capability); free {
-		_ = free
+	if free, remaining := s.FreeTrialFor(userID, catalogItem, capability, params, n); free {
 		payload := quoteTokenPayload{
 			Model:            catalogItem.Name,
 			Capability:       capability,
@@ -342,7 +341,7 @@ func (s *QuoteService) VerifyQuote(ctx context.Context, userID uuid.UUID, token 
 	}
 	if payload.BillingMode == BillingModeFreeTrial {
 		// 免费额度仍然适用才放行；已被并发请求占用时由预扣阶段改判为 QUOTE_STALE。
-		if free, _ := s.FreeTrialFor(userID, catalogItem, capability); !free {
+		if free, _ := s.FreeTrialFor(userID, catalogItem, capability, params, n); !free {
 			return payload, ErrQuoteStale
 		}
 		return payload, nil
@@ -382,8 +381,11 @@ func (s *QuoteService) VerifyQuote(ctx context.Context, userID uuid.UUID, token 
 }
 
 // FreeTrialFor 判断本次请求是否走免费额度，并返回剩余次数。
-// 免费额度优先于折扣，且只对标记了 free_trial_eligible 的模型生效。
-func (s *QuoteService) FreeTrialFor(userID uuid.UUID, catalogItem model.ModelCatalog, capability string) (bool, int64) {
+// 免费额度优先于折扣，且只对标记了 free_trial_eligible 的模型生效，同时满足：
+// ① 存在已批准的领取记录（差异清单 #5，风控拒绝或未领取的账号不享受）；
+// ② n == 1 且参数组合落在锁定组合内（差异清单 #4，免费只覆盖最便宜组合，
+//    超出锁定组合的请求改走点数分支），防止任意参数按 0 元放行。
+func (s *QuoteService) FreeTrialFor(userID uuid.UUID, catalogItem model.ModelCatalog, capability string, params QuoteParams, n int) (bool, int64) {
 	if !catalogItem.FreeTrialEligible {
 		return false, 0
 	}
@@ -391,11 +393,45 @@ func (s *QuoteService) FreeTrialFor(userID uuid.UUID, catalogItem model.ModelCat
 	if !ok {
 		return false, 0
 	}
+	if capability == "image" && n != 1 {
+		return false, 0
+	}
+	if !freeTrialParamsLocked(catalogItem, params) {
+		return false, 0
+	}
+	granted, err := s.quota.HasGrantedFreeClaim(userID)
+	if err != nil || !granted {
+		return false, 0
+	}
 	remaining, err := s.quota.FreeTrialRemaining(userID, metric)
 	if err != nil || remaining <= 0 {
 		return false, 0
 	}
 	return true, remaining
+}
+
+// freeTrialParamsLocked 判断请求参数是否为该模型价格矩阵里的最低价组合：
+// 免费额度只覆盖被锁定的最便宜参数组合（总规划口径），逐维一致且不携带维度外参数。
+func freeTrialParamsLocked(catalogItem model.ModelCatalog, params QuoteParams) bool {
+	cost, err := ParseCreditCost(catalogItem.CreditCost)
+	if err != nil || len(cost.Prices) == 0 {
+		return false
+	}
+	minEntry := cost.Prices[0]
+	for _, entry := range cost.Prices[1:] {
+		if entry.CostMicros < minEntry.CostMicros {
+			minEntry = entry
+		}
+	}
+	if len(params) != len(minEntry.Params) {
+		return false
+	}
+	for key, want := range minEntry.Params {
+		if got, ok := params[key]; !ok || got != want {
+			return false
+		}
+	}
+	return true
 }
 
 // QuotePayload 暴露给 handler 校验后的计费信息。

@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/storage"
 )
 
 // DeletionCoolingDays 是注销冷静期天数。余额不退，写进确认文案。
@@ -22,9 +23,18 @@ var ErrNotPendingDeletion = errors.New("账号未处于注销冷静期")
 // DeletionService 负责账号注销申请、撤销与到期匿名化。
 type DeletionService struct {
 	db *gorm.DB
+	// storage 用于匿名化提交后删除用户的媒体对象本体；未注入时只清索引
+	// （后台任务接线时传入，与媒体接口共用同一驱动）。
+	storage storage.Storage
 }
 
-func NewDeletionService(db *gorm.DB) *DeletionService { return &DeletionService{db: db} }
+func NewDeletionService(db *gorm.DB, stor ...storage.Storage) *DeletionService {
+	s := &DeletionService{db: db}
+	if len(stor) > 0 {
+		s.storage = stor[0]
+	}
+	return s
+}
 
 // Request 把账号置为 pending_deletion 并预约到期匿名化。重复申请幂等，不重置倒计时。
 func (s *DeletionService) Request(ctx context.Context, userID uuid.UUID, now time.Time) (time.Time, error) {
@@ -81,7 +91,11 @@ func (s *DeletionService) AnonymizeExpired(ctx context.Context, now time.Time) (
 func (s *DeletionService) anonymizeOne(ctx context.Context, user *model.User, now time.Time) error {
 	placeholderEmail := fmt.Sprintf("deleted-%s@invalid", user.ID.String())
 	placeholderUsername := fmt.Sprintf("deleted-%s", user.ID.String()[:12])
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	// 媒体记录硬删除并同步扣减存储计数；对象路径在事务内收集，提交后再逐个删除
+	// （行删掉后保留期清理任务按 media_files 扫描，永远扫不到这些对象）。
+	objectPaths := make([]string, 0, 8)
+	var mediaBytes int64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.User{}).Where("id = ?", user.ID).Updates(map[string]any{
 			"status":                "disabled",
 			"display_name":          "",
@@ -107,14 +121,20 @@ func (s *DeletionService) anonymizeOne(ctx context.Context, user *model.User, no
 		if err := tx.Where("user_id = ?", user.ID).Delete(&model.Generation{}).Error; err != nil {
 			return err
 		}
-		// 媒体记录硬删除并同步扣减存储计数，磁盘对象由保留期清理任务回收。
+		// 注销时下架该用户全部社区作品，公开流不再展示其内容。
+		if err := tx.Model(&model.CommunityWork{}).Where("user_id = ?", user.ID).
+			Update("status", "removed").Error; err != nil {
+			return err
+		}
 		var mediaFiles []model.MediaFile
 		if err := tx.Where("user_id = ?", user.ID).Find(&mediaFiles).Error; err != nil {
 			return err
 		}
-		var mediaBytes int64
+		objectPaths = objectPaths[:0]
+		mediaBytes = 0
 		for _, file := range mediaFiles {
 			mediaBytes += file.Bytes
+			objectPaths = append(objectPaths, file.ObjectPath)
 		}
 		if err := tx.Where("user_id = ?", user.ID).Delete(&model.MediaFile{}).Error; err != nil {
 			return err
@@ -130,4 +150,17 @@ func (s *DeletionService) anonymizeOne(ctx context.Context, user *model.User, no
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// 事务提交后再删对象。单个对象删除失败只记日志、不阻塞匿名化：
+	// 失败回滚会把用户重新拉回注销流程，对象残留好过误删或中断。
+	if s.storage != nil {
+		for _, p := range objectPaths {
+			if err := s.storage.Delete(ctx, p); err != nil {
+				slog.Error("注销清理媒体对象失败", "userId", user.ID, "path", p, "err", err)
+			}
+		}
+	}
+	return nil
 }

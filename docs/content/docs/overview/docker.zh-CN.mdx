@@ -7,6 +7,12 @@ description: 测试、正式双环境部署与本地联调
 
 本 Fork 的账号后端版本使用 Docker Compose 同时部署 Vite 静态前端、Go API 和 MySQL，自建当前源码的 app / api 镜像。不要用上游发布镜像代替这一版本，也不要直接执行未配置 env 的 `docker compose up -d`。
 
+三个服务的职责与数据落点：
+
+- `app`：Vite 构建的静态站点由容器内 nginx 托管，并把 `/api` 反代到 api 容器；它只是静态文件加反代，不保存任何业务数据。
+- `api`：Go 后端，负责账号、画布、素材、生成记录、AI 转发、支付回调与管理接口；画布、素材与生成记录全部写入 MySQL，图片、视频等媒体文件写入 `data/media` 绑挂载（或私有 S3 桶），MySQL 数据落在 `data/mysql`。两个目录都在部署目录下的 `./data`，升级前直接打包即可备份。
+- `db`：MySQL 8.4，仅 compose 内网可达；测试环境由 `deploy/compose.test.yml` 额外映射 `127.0.0.1:13306`，正式环境不映射宿主机端口。
+
 ## 先部署测试环境
 
 从你的 Fork 获取指定测试提交，分别准备测试、正式代码目录。测试目录执行：

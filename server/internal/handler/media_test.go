@@ -47,7 +47,7 @@ func TestMediaLocalUploadHeadGetDelete(t *testing.T) {
 	user := createUser(t, g, "media@example.com", "mediauser", "password123", true)
 	token := accessToken(t, cfg, &user)
 
-	payload := []byte("hello media")
+	payload := testPNG
 	w := doRaw(r, http.MethodPut, "/api/media/image:Abc123", payload, "image/png", token, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("上传失败: code=%d body=%s", w.Code, w.Body.String())
@@ -93,7 +93,7 @@ func TestMediaLocalUploadHeadGetDelete(t *testing.T) {
 	}
 
 	// 重复 PUT 是覆盖语义：唯一约束更新原行
-	w = doRaw(r, http.MethodPut, "/api/media/image:Abc123", []byte("hello media 2"), "image/png", token, nil)
+	w = doRaw(r, http.MethodPut, "/api/media/image:Abc123", testPNG2, "image/png", token, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("覆盖上传失败: %d", w.Code)
 	}
@@ -129,7 +129,7 @@ func TestMediaStorageKeyAndPathTraversalRejected(t *testing.T) {
 	token := accessToken(t, cfg, &user)
 
 	for _, key := range []string{"image:bad.dot", "image:", "unknown:abc", "image:abc%20def"} {
-		w := doRaw(r, http.MethodPut, "/api/media/"+key, []byte("x"), "image/png", token, nil)
+		w := doRaw(r, http.MethodPut, "/api/media/"+key, testPNG, "image/png", token, nil)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("非法 key %q PUT 应 400, got %d body=%s", key, w.Code, w.Body.String())
 		}
@@ -164,7 +164,7 @@ func TestMediaEmailNotVerifiedBlocksUploadOnly(t *testing.T) {
 	user := createUser(t, g, "unverified@example.com", "unverified", "password123", false)
 	token := accessToken(t, cfg, &user)
 
-	w := doRaw(r, http.MethodPut, "/api/media/image:Abc123", []byte("x"), "image/png", token, nil)
+	w := doRaw(r, http.MethodPut, "/api/media/image:Abc123", testPNG, "image/png", token, nil)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("未验证邮箱上传应 403, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -195,13 +195,13 @@ func TestMediaFileTooLargeBoundary(t *testing.T) {
 		t.Fatalf("调整档位失败: %v", err)
 	}
 
-	// 恰好等于上限：允许
-	w := doRaw(r, http.MethodPut, "/api/media/file:Exact16", []byte("1234567890abcdef"), "text/plain", token, nil)
+	// 恰好等于上限：允许（用 PNG 头的前 16 字节，text/plain 已不在允许类型清单内）
+	w := doRaw(r, http.MethodPut, "/api/media/image:Exact16", testPNG[:16], "image/png", token, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("等于上限应允许: %d body=%s", w.Code, w.Body.String())
 	}
 	// 超过一个字节：413，且不留记录与文件
-	w = doRaw(r, http.MethodPut, "/api/media/file:Over17", []byte("1234567890abcdefg"), "text/plain", token, nil)
+	w = doRaw(r, http.MethodPut, "/api/media/image:Over17", testPNG[:17], "image/png", token, nil)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("超过上限应 413, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -228,7 +228,7 @@ func TestMediaChecksumMismatchLeavesNothing(t *testing.T) {
 	user := createUser(t, g, "checksum@example.com", "checksum", "password123", true)
 	token := accessToken(t, cfg, &user)
 
-	w := doRaw(r, http.MethodPut, "/api/media/image:Sum1", []byte("data"), "image/png", token,
+	w := doRaw(r, http.MethodPut, "/api/media/image:Sum1", testPNG, "image/png", token,
 		map[string]string{"X-Checksum": "deadbeef"})
 	if w.Code != http.StatusConflict {
 		t.Fatalf("校验和不一致应 409, got %d body=%s", w.Code, w.Body.String())
@@ -248,8 +248,8 @@ func TestMediaChecksumMismatchLeavesNothing(t *testing.T) {
 	}
 
 	// 正确的 X-Checksum 可以上传
-	sum := sha256.Sum256([]byte("data"))
-	w = doRaw(r, http.MethodPut, "/api/media/image:Sum1", []byte("data"), "image/png", token,
+	sum := sha256.Sum256(testPNG)
+	w = doRaw(r, http.MethodPut, "/api/media/image:Sum1", testPNG, "image/png", token,
 		map[string]string{"X-Checksum": hex.EncodeToString(sum[:])})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("正确校验和应上传成功: %d body=%s", w.Code, w.Body.String())
@@ -271,7 +271,7 @@ func TestMediaReadAuthBearerAndCookie(t *testing.T) {
 	token := accessToken(t, cfg, &user)
 	otherToken := accessToken(t, cfg, &other)
 
-	if w := doRaw(r, http.MethodPut, "/api/media/image:Auth1", []byte("secret"), "image/png", token, nil); w.Code != http.StatusCreated {
+	if w := doRaw(r, http.MethodPut, "/api/media/image:Auth1", testPNG, "image/png", token, nil); w.Code != http.StatusCreated {
 		t.Fatalf("上传失败: %d", w.Code)
 	}
 
@@ -311,11 +311,11 @@ func TestMediaReadAuthBearerAndCookie(t *testing.T) {
 		t.Fatalf("损坏 cookie 应 401, got %d", w.Code)
 	}
 	// 媒体 token 当 Bearer 用应 401（access token 解析拒绝 scope=media）
-	if w := doRaw(r, http.MethodPut, "/api/media/image:Auth1", []byte("x"), "image/png", mediaToken, nil); w.Code != http.StatusUnauthorized {
+	if w := doRaw(r, http.MethodPut, "/api/media/image:Auth1", testPNG, "image/png", mediaToken, nil); w.Code != http.StatusUnauthorized {
 		t.Fatalf("媒体 token 当 Bearer 应 401, got %d body=%s", w.Code, w.Body.String())
 	}
 	// PUT / DELETE 不认 cookie
-	if w := doRaw(r, http.MethodPut, "/api/media/image:Auth2", []byte("x"), "image/png", "", nil, cookie); w.Code != http.StatusUnauthorized {
+	if w := doRaw(r, http.MethodPut, "/api/media/image:Auth2", testPNG, "image/png", "", nil, cookie); w.Code != http.StatusUnauthorized {
 		t.Fatalf("PUT 只认 Bearer, cookie 应 401, got %d", w.Code)
 	}
 	if w := doRaw(r, http.MethodDelete, "/api/media/image:Auth1", nil, "", "", nil, cookie); w.Code != http.StatusUnauthorized {
@@ -346,7 +346,7 @@ func TestMediaS3RedirectAndCacheHeaders(t *testing.T) {
 	token := accessToken(t, cfg, &user)
 
 	// 用假驱动走完 PUT（不发网络请求），再断言 GET 的 302 与缓存头
-	if w := doRaw(r, http.MethodPut, "/api/media/image:S3Key1", []byte("abc"), "image/png", token, nil); w.Code != http.StatusCreated {
+	if w := doRaw(r, http.MethodPut, "/api/media/image:S3Key1", testPNG, "image/png", token, nil); w.Code != http.StatusCreated {
 		t.Fatalf("假驱动上传失败: %d body=%s", w.Code, w.Body.String())
 	}
 	if len(fake.objects) != 1 {

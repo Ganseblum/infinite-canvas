@@ -13,12 +13,24 @@ Everything requires signing in. Canvases, assets, generations, and media are sto
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
-docker compose up -d
+docker compose up -d --build
 ```
 
-Open `http://localhost:3000`.
+The first start builds the app / admin / api images locally (upstream images are not used). Then open:
 
-Fill in the database, `JWT_SECRET`, `CREDENTIAL_MASTER_KEY`, admin account, and mail settings in `.env`; the full list is documented in `.env.example`.
+```text
+http://localhost:3000
+```
+
+The following `.env` values are mandatory; otherwise the api refuses to start and the stack stays down:
+
+- Database credentials and `DATABASE_URL` (keep the `db` host for the full-stack path). `MYSQL_*` only applies on first volume initialization.
+- `JWT_SECRET` (at least 32 characters) and `CREDENTIAL_MASTER_KEY` (exactly 32 bytes).
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD` for the initial admin account.
+- When `FREE_GRANT_ENABLED=true`, `FREE_GRANT_CAMPAIGN_ID`, `FREE_GRANT_DAILY_BUDGET_MICROS`, and `FREE_GRANT_RISK_THRESHOLD` are required and must be greater than 0; set `FREE_GRANT_ENABLED=false` if you do not want free grants.
+- Without SMTP, set `MAIL_DRIVER=log` so verification emails print to the api container log.
+
+The full list is documented in `.env.example`.
 
 ## Run locally
 
@@ -26,10 +38,12 @@ Fill in the database, `JWT_SECRET`, `CREDENTIAL_MASTER_KEY`, admin account, and 
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
-docker compose up -d db
+docker compose -f docker-compose.local.yml up -d db
 cd server && go run ./cmd/server
 cd web && bun install && bun run dev
 ```
+
+`docker-compose.local.yml` maps MySQL to host `127.0.0.1:13306`; for `go run`, change the `DATABASE_URL` host in `.env` from `db:3306` to `127.0.0.1:13306`. The Go server loads `.env` automatically on startup (exported environment variables win), so no manual `export` is needed.
 
 ## First-time setup
 

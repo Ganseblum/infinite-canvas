@@ -208,17 +208,22 @@ func (h *AuthHandler) Register(c *gin.Context) {
 }
 
 // createEmailToken 生成邮件令牌并写入库，返回只在下发瞬间存在的明文。
+// 重置密码令牌 1 小时有效，验证邮件 24 小时（总规划口径，按 purpose 区分）。
 func createEmailToken(tx *gorm.DB, userID uuid.UUID, purpose string) (string, error) {
 	plain, tokenHash, err := auth.NewEmailToken()
 	if err != nil {
 		return "", err
+	}
+	ttl := auth.EmailTokenTTL
+	if purpose == "reset_password" {
+		ttl = auth.ResetPasswordTokenTTL
 	}
 	et := model.EmailToken{
 		ID:        uuid.New(),
 		UserID:    userID,
 		TokenHash: tokenHash,
 		Purpose:   purpose,
-		ExpiresAt: time.Now().Add(auth.EmailTokenTTL),
+		ExpiresAt: time.Now().Add(ttl),
 	}
 	if err := tx.Create(&et).Error; err != nil {
 		return "", err
@@ -269,7 +274,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	if user.Status != "active" {
+	// 注销冷静期（pending_deletion）允许登录浏览与导出，生成/下单由 RequireNotPendingDeletion 拦截；
+	// 只有 disabled（封禁）拒绝登录，否则用户申请注销后无法撤销。
+	if user.Status == "disabled" {
 		errs.Abort(c, errs.ErrAccountDisabled)
 		return
 	}
@@ -324,7 +331,8 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		errs.Abort(c, errs.ErrUnauthorized)
 		return
 	}
-	if user.Status != "active" {
+	// 与登录同口径：只拦 disabled，冷静期账号可刷新以维持浏览与导出。
+	if user.Status == "disabled" {
 		h.clearSessionCookies(c)
 		errs.Abort(c, errs.ErrAccountDisabled)
 		return
@@ -433,14 +441,15 @@ func userPayload(user *model.User) gin.H {
 	return payload
 }
 
-// isDuplicateKey 判断是否为唯一约束冲突（MySQL 与测试用 SQLite 两种报错文案）。
+// isDuplicateKey / isUniqueViolation 统一委托 errs 实现：
+// MySQL 按 1062 错误码并从报文取索引名映射列，SQLite 解析报错文案里的列名；
+// 不再拿报错文本去匹配「重复值」（用户名含 email 字样时会把 USERNAME_TAKEN 误判成 EMAIL_TAKEN）。
 func isDuplicateKey(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "Duplicate entry") || strings.Contains(msg, "UNIQUE constraint failed")
+	return errs.IsDuplicateKey(err)
 }
 
 func isUniqueViolation(err error, column string) bool {
-	return isDuplicateKey(err) && strings.Contains(err.Error(), column)
+	return errs.UniqueViolationColumn(err) == column
 }
 
 // VerifyEmailSend 重发验证邮件（需登录）。
@@ -485,12 +494,21 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 		return
 	}
 	now := time.Now()
-	err := h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&et).Update("used_at", now).Error; err != nil {
-			return err
-		}
-		return tx.Model(&model.User{}).Where("id = ?", et.UserID).Update("email_verified_at", now).Error
-	})
+	// 条件更新保证「一次性」：并发使用同一令牌时只有一个请求能把 used_at 置位
+	// （写法与 refresh 轮换一致），避免先读后写的竞态让令牌被消费两次。
+	res := h.db.Model(&model.EmailToken{}).
+		Where("id = ? AND used_at IS NULL", et.ID).
+		Update("used_at", now)
+	if res.Error != nil {
+		slog.Error("验证邮箱失败", "err", res.Error)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	if res.RowsAffected == 0 {
+		errs.Abort(c, errs.ErrTokenInvalid)
+		return
+	}
+	err := h.db.Model(&model.User{}).Where("id = ?", et.UserID).Update("email_verified_at", now).Error
 	if err != nil {
 		slog.Error("验证邮箱失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -561,10 +579,20 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 	now := time.Now()
+	// 与 Verify 同一口径：条件更新保证重置令牌只被消费一次。
+	res := h.db.Model(&model.EmailToken{}).
+		Where("id = ? AND used_at IS NULL", et.ID).
+		Update("used_at", now)
+	if res.Error != nil {
+		slog.Error("重置密码失败", "err", res.Error)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	if res.RowsAffected == 0 {
+		errs.Abort(c, errs.ErrTokenInvalid)
+		return
+	}
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&et).Update("used_at", now).Error; err != nil {
-			return err
-		}
 		if err := tx.Model(&model.User{}).Where("id = ?", et.UserID).Update("password_hash", hash).Error; err != nil {
 			return err
 		}

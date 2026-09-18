@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -200,4 +202,85 @@ func TestLoadCORSAllowedOrigins(t *testing.T) {
 			t.Fatalf("非法来源应报 CORS_ALLOWED_ORIGINS 错误, got=%v", err)
 		}
 	})
+}
+
+func TestLoadRegistrationAndSiteEnvDefaults(t *testing.T) {
+	setBaseEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("DATABASE_URL", "dsn")
+		t.Setenv("JWT_SECRET", strings.Repeat("s", 32))
+		t.Setenv("CREDENTIAL_MASTER_KEY", strings.Repeat("k", 32))
+		t.Setenv("APP_BASE_URL", "http://localhost:3000")
+		t.Setenv("LOG_LEVEL", "info")
+		t.Setenv("MAIL_DRIVER", "log")
+		t.Setenv("ADMIN_EMAIL", "admin@example.com")
+		t.Setenv("ADMIN_PASSWORD", "password")
+		t.Setenv("FREE_GRANT_ENABLED", "false")
+		t.Setenv("STORAGE_DRIVER", "local")
+		t.Setenv("MODERATION_ENABLED", "false")
+		// 显式清空，避免继承宿主机环境导致断言漂移
+		t.Setenv("REGISTRATION_ENABLED", "")
+		t.Setenv("SITE_ENV", "")
+	}
+
+	t.Run("未配置时默认关闭注册", func(t *testing.T) {
+		setBaseEnv(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("基础配置应加载成功: %v", err)
+		}
+		if cfg.RegistrationEnabled {
+			t.Fatal("REGISTRATION_ENABLED 未设置时默认应关闭注册（合规门禁）")
+		}
+		if cfg.SiteEnv != "development" {
+			t.Fatalf("SITE_ENV 默认应为 development, got %q", cfg.SiteEnv)
+		}
+	})
+
+	t.Run("显式打开注册", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("REGISTRATION_ENABLED", "true")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("基础配置应加载成功: %v", err)
+		}
+		if !cfg.RegistrationEnabled {
+			t.Fatal("REGISTRATION_ENABLED=true 应打开注册")
+		}
+	})
+}
+
+func TestModerationFakeProviderGate(t *testing.T) {
+	base := func() *Config {
+		c := storageBase()
+		c.ModerationEnabled = true
+		c.ModerationProvider = "fake"
+		c.ModerationFailMode = "reject"
+		c.ModerationImageThreshold = 0.5
+		c.ModerationTextThreshold = 0.5
+		c.ModerationTimeout = 5 * time.Second
+		c.ModerationQuarantineTTL = 24 * time.Hour
+		return c
+	}
+
+	// 非正式环境：允许启动，但必须输出明确告警
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	c := base()
+	c.SiteEnv = "development"
+	if err := c.validate(); err != nil {
+		t.Fatalf("非正式环境 provider=fake 应允许启动: %v", err)
+	}
+	if !strings.Contains(buf.String(), "provider=fake") {
+		t.Fatalf("启用 fake provider 应输出告警: %s", buf.String())
+	}
+
+	// 正式环境：直接拒绝启动
+	c = base()
+	c.SiteEnv = "production"
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "fake") {
+		t.Fatalf("SITE_ENV=production 且 provider=fake 应拒绝启动, got %v", err)
+	}
 }

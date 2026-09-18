@@ -18,6 +18,11 @@ import (
 	"github.com/infinite-canvas/server/internal/service"
 )
 
+// listablePublic 素材未被软删的已发布作品才进公开流：源素材删除后反查到零值
+// asset 会渲染出空 src 的卡片（差异清单 #96），列表、热门、详情、主页共用该口径。
+const listablePublic = `status = 'published' AND EXISTS (
+	SELECT 1 FROM assets a WHERE a.id = community_works.asset_id AND a.deleted_at IS NULL)`
+
 // CommunityHandler 提供社区的发布、浏览、点赞与举报。
 // 内容本体复用用户素材（assets），媒体与审核复用第二、五期链路。
 type CommunityHandler struct {
@@ -47,7 +52,7 @@ func (h *CommunityHandler) List(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"size": "size 必须是 1-100 的整数"}))
 		return
 	}
-	query := h.db.Model(&model.CommunityWork{}).Where("status = ?", "published")
+	query := h.db.Model(&model.CommunityWork{}).Where(listablePublic)
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		pattern := searchPattern(q)
 		query = query.Where("LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(tags) LIKE ?", pattern, pattern, pattern)
@@ -108,6 +113,18 @@ func (h *CommunityHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 详情对公众只展示源素材仍存在的作品；loadWork 不加该条件是为了
+	// 保留作者删除自己作品与管理下架的入口（软删素材后作品已不可见）。
+	var alive int64
+	if err := h.db.Model(&model.Asset{}).Where("id = ?", work.AssetID).Count(&alive).Error; err != nil {
+		slog.Error("读取社区作品素材失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	if alive == 0 {
+		errs.Abort(c, errs.ErrNotFound)
+		return
+	}
 	payload := h.payloads([]model.CommunityWork{*work})[0]
 	if uid, err := uuid.Parse(c.GetString("user_id")); err == nil {
 		var count int64
@@ -127,6 +144,10 @@ func (h *CommunityHandler) MyWorks(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"items": h.payloads(works)})
 }
+
+// communityDailyPublishLimit 是每用户每日发布上限：公开流是共享资源，
+// 防止刷屏灌水（差异清单 #38）。路由级 RateLimit 由 main.go 另行挂载，管的是瞬时频率。
+const communityDailyPublishLimit = 20
 
 type publishReq struct {
 	AssetID      string `json:"assetId"`
@@ -153,6 +174,20 @@ func (h *CommunityHandler) Publish(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"assetId": "assetId 不合法"}))
 		return
 	}
+	// 每用户每日发布上限，按自然日统计（含已删除/下架作品，防删除重发绕过）。
+	now := time.Now()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	var publishedToday int64
+	if err := h.db.Model(&model.CommunityWork{}).
+		Where("user_id = ? AND created_at >= ?", uid, dayStart).Count(&publishedToday).Error; err != nil {
+		slog.Error("统计今日发布数失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	if publishedToday >= communityDailyPublishLimit {
+		errs.Abort(c, errs.ErrRateLimited)
+		return
+	}
 	var asset model.Asset
 	if err := h.db.Where("id = ? AND user_id = ?", assetID, uid).First(&asset).Error; err != nil {
 		errs.Abort(c, errs.ErrNotFound)
@@ -162,11 +197,25 @@ func (h *CommunityHandler) Publish(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"assetId": "只有图片或视频素材可以发布到社区"}))
 		return
 	}
+	// 内容去重：同一素材同一天重复发布同一标题返回 409。
+	title := strings.TrimSpace(req.Title)
+	var dup int64
+	if err := h.db.Model(&model.CommunityWork{}).
+		Where("user_id = ? AND asset_id = ? AND title = ? AND created_at >= ?", uid, assetID, title, dayStart).
+		Count(&dup).Error; err != nil {
+		slog.Error("检查重复发布失败", "err", err)
+		errs.Abort(c, errs.ErrInternal)
+		return
+	}
+	if dup > 0 {
+		errs.Abort(c, errs.AddConflict("该素材今日已发布过同标题的作品"))
+		return
+	}
 	work := &model.CommunityWork{
 		ID:           uuid.New(),
 		UserID:       uid,
 		AssetID:      assetID,
-		Title:        strings.TrimSpace(req.Title),
+		Title:        title,
 		Description:  strings.TrimSpace(req.Description),
 		Tags:         normalizeCommunityTags(req.Tags),
 		CoverKey:     asset.StorageKey,
@@ -320,7 +369,7 @@ func (h *CommunityHandler) UserProfile(c *gin.Context) {
 		return
 	}
 	var works []model.CommunityWork
-	if err := h.db.Where("user_id = ? AND status = ?", userID, "published").
+	if err := h.db.Where("user_id = ?", userID).Where(listablePublic).
 		Order("created_at DESC").Limit(60).Find(&works).Error; err != nil {
 		errs.Abort(c, errs.ErrInternal)
 		return
@@ -349,7 +398,7 @@ func (h *CommunityHandler) queryHot(c *gin.Context) ([]model.CommunityWork, erro
 	hours, _ := strconv.Atoi(c.DefaultQuery("hours", "168"))
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	var works []model.CommunityWork
-	err := h.db.Where("status = ? AND created_at >= ?", "published", since).
+	err := h.db.Where(listablePublic+" AND created_at >= ?", since).
 		Order("like_count DESC, created_at DESC").Limit(50).Find(&works).Error
 	return works, err
 }

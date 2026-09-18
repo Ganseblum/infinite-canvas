@@ -20,6 +20,9 @@ const (
 	AccessTokenTTL  = 15 * time.Minute
 	RefreshTokenTTL = 30 * 24 * time.Hour
 	EmailTokenTTL   = 24 * time.Hour
+	// ResetPasswordTokenTTL 是重置密码令牌的专用有效期：账号接管路径上的凭据
+	// 可用窗口要压到 1 小时（总规划），不能与验证邮件共用 24 小时。
+	ResetPasswordTokenTTL = 1 * time.Hour
 
 	// MediaTokenTTL 与 refresh token 同周期：媒体 cookie 在每次刷新时轮换。
 	MediaTokenTTL = 30 * 24 * time.Hour

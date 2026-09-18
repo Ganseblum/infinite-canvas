@@ -258,8 +258,8 @@ func (h *AccountHandler) ClaimFreeGrant(c *gin.Context) {
 		errs.Abort(c, errs.ErrFreeGrantUnav)
 		return
 	}
-	// 每日预算
-	if !h.grant.WithinDailyBudget(h.cfg.FreeGrantDailyBudgetMicros) {
+	// 每日预算：按当日已发放领取数 × 单次估算成本与配置预算比较
+	if !h.grant.WithinDailyBudget(h.cfg.FreeGrantDailyBudgetMicros, h.grant.EstimatePerClaimMicros()) {
 		h.recordDenied(uid, "daily_budget")
 		errs.Abort(c, errs.ErrFreeGrantUnav)
 		return

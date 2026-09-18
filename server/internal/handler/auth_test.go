@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/infinite-canvas/server/internal/model"
 )
@@ -251,6 +253,103 @@ func TestLoginSuccessResetsFailureCount(t *testing.T) {
 		wrong()
 	}
 	right()
+}
+
+// TestConcurrentEmailVerifyOnlyOneSucceeds 并发验证邮箱：同一令牌只能被消费一次，
+// 竞争失败方返回 410 TOKEN_INVALID，且不影响胜者完成验证。
+func TestConcurrentEmailVerifyOnlyOneSucceeds(t *testing.T) {
+	g := newTestDB(t)
+	cfg := testConfig()
+	logs := captureLogs(t)
+	h := NewAuthHandler(g, cfg, testMailer())
+	r := newAuthRouter(t, cfg, h)
+
+	_, _, _ = registerUser(t, r, "racetoken@example.com", "racetoken", "password123")
+	token := lastEmailToken(t, logs)
+
+	// 保证所有请求都读完令牌后再竞争写入
+	const n = 3
+	tableReadBarrier(g, "email_tokens", n)
+	responses := make([]*httptest.ResponseRecorder, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			responses[i] = doJSON(r, http.MethodPost, "/api/auth/verify-email", map[string]string{"token": token})
+		}(i)
+	}
+	wg.Wait()
+
+	winner := -1
+	for _, w := range responses {
+		switch w.Code {
+		case http.StatusOK:
+			if winner >= 0 {
+				t.Fatal("同一验证令牌并发消费应只成功一次")
+			}
+			winner = 1
+		case http.StatusGone:
+			if code := errorCode(t, w); code != "TOKEN_INVALID" {
+				t.Fatalf("竞争失败应返回 TOKEN_INVALID, got %s", code)
+			}
+		default:
+			t.Fatalf("并发验证出现意外状态码: %d body=%s", w.Code, w.Body.String())
+		}
+	}
+	if winner < 0 {
+		t.Fatal("并发验证没有任何请求成功")
+	}
+	var verified model.User
+	if err := g.Where("username = ?", "racetoken").First(&verified).Error; err != nil {
+		t.Fatalf("读取用户失败: %v", err)
+	}
+	if verified.EmailVerifiedAt == nil {
+		t.Fatal("胜者应完成邮箱验证")
+	}
+}
+
+// TestEmailTokenTTLByPurpose 重置密码令牌 1 小时、验证邮件 24 小时，邮件文案与之一致。
+func TestEmailTokenTTLByPurpose(t *testing.T) {
+	g := newTestDB(t)
+	cfg := testConfig()
+	logs := captureLogs(t)
+	h := NewAuthHandler(g, cfg, testMailer())
+	r := newAuthRouter(t, cfg, h)
+
+	user := createUser(t, g, "ttl@example.com", "ttluser", "password123", false)
+
+	// 重置密码令牌 1 小时
+	w := doJSON(r, http.MethodPost, "/api/auth/password/forgot", map[string]string{"email": "ttl@example.com"})
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("找回密码应返回 204, got %d", w.Code)
+	}
+	var reset model.EmailToken
+	if err := g.Where("purpose = ?", "reset_password").First(&reset).Error; err != nil {
+		t.Fatalf("读取重置令牌失败: %v", err)
+	}
+	if d := time.Until(reset.ExpiresAt); d < 55*time.Minute || d > 65*time.Minute {
+		t.Fatalf("重置令牌应约 1 小时有效, got %s", d)
+	}
+	if !strings.Contains(logs.String(), "1 小时内有效") {
+		t.Fatalf("重置邮件文案应写 1 小时: %s", logs.String())
+	}
+
+	// 验证邮件令牌 24 小时
+	w = doAuthJSON(r, http.MethodPost, "/api/auth/verify-email/send", accessToken(t, cfg, &user), nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("重发验证邮件应返回 204, got %d body=%s", w.Code, w.Body.String())
+	}
+	var verify model.EmailToken
+	if err := g.Where("purpose = ?", "verify_email").First(&verify).Error; err != nil {
+		t.Fatalf("读取验证令牌失败: %v", err)
+	}
+	if d := time.Until(verify.ExpiresAt); d < 23*time.Hour || d > 25*time.Hour {
+		t.Fatalf("验证令牌应约 24 小时有效, got %s", d)
+	}
+	if !strings.Contains(logs.String(), "24 小时内有效") {
+		t.Fatalf("验证邮件文案应写 24 小时: %s", logs.String())
+	}
 }
 
 func TestRegisterRateLimitByIP(t *testing.T) {

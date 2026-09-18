@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -29,6 +30,10 @@ type Config struct {
 
 	CookieSecure bool
 	LogLevel     string
+
+	// SiteEnv 是部署环境标识（与前端 runtime config 的同名变量对齐）：
+	// 只有 production 算正式环境，test / development 等其它值仅作提示。
+	SiteEnv string
 
 	// TrustedProxies 是可信反向代理网段（CIDR）。为空表示不信任任何代理头，
 	// ClientIP 直接使用 RemoteAddr；仅当来源命中这些网段时才解析 X-Real-IP / X-Forwarded-For。
@@ -120,6 +125,7 @@ func Load() (*Config, error) {
 		AdminPassword:              os.Getenv("ADMIN_PASSWORD"),
 		CookieSecure:               getenvBool("COOKIE_SECURE", true),
 		LogLevel:                   getenv("LOG_LEVEL", "info"),
+		SiteEnv:                    getenv("SITE_ENV", "development"),
 		MailDriver:                 getenv("MAIL_DRIVER", "smtp"),
 		SMTPHost:                   os.Getenv("SMTP_HOST"),
 		SMTPPort:                   os.Getenv("SMTP_PORT"),
@@ -127,7 +133,9 @@ func Load() (*Config, error) {
 		SMTPPassword:               os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:                   os.Getenv("SMTP_FROM"),
 		SMTPSecurity:               getenv("SMTP_SECURITY", "ssl"),
-		RegistrationEnabled:        getenvBool("REGISTRATION_ENABLED", true),
+		// 合规门禁：备案、条款法务与人工复核值守确认前不得公开注册。
+		// 默认关闭，环境变量显式打开；按模板部署不再是「开注册 + 关审核」。
+		RegistrationEnabled:        getenvBool("REGISTRATION_ENABLED", false),
 		FreeGrantEnabled:           getenvBool("FREE_GRANT_ENABLED", true),
 		FreeGrantCampaignID:        os.Getenv("FREE_GRANT_CAMPAIGN_ID"),
 		FreeGrantDailyBudgetMicros: getenvInt64("FREE_GRANT_DAILY_BUDGET_MICROS", 0),
@@ -321,6 +329,13 @@ func (c *Config) validateModeration() error {
 		if c.ModerationNSFWJSEndpoint == "" || c.ModerationDetoxifyEndpoint == "" {
 			return errors.New("MODERATION_PROVIDER=nsfwjs+detoxify 时 MODERATION_NSFWJS_ENDPOINT 与 MODERATION_DETOXIFY_ENDPOINT 不能为空")
 		}
+	}
+	if c.ModerationProvider == "fake" {
+		// fake provider 会放行全部内容：正式环境直接拒绝启动，其余环境至少给出明确告警。
+		if c.SiteEnv == "production" {
+			return errors.New("SITE_ENV=production 时 MODERATION_PROVIDER=fake 不允许启用审核（所有内容将直接放行）")
+		}
+		slog.Warn("审核已启用但 provider=fake，所有内容将直接放行")
 	}
 	if c.ModerationImageThreshold <= 0 || c.ModerationImageThreshold > 1 {
 		return errors.New("MODERATION_IMAGE_THRESHOLD 必须在 (0,1] 之间")

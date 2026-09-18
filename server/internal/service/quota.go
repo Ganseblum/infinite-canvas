@@ -178,6 +178,27 @@ func (s *QuotaService) FreeTrialRemaining(userID uuid.UUID, metric string) (int6
 	return remaining, nil
 }
 
+// HasGrantedFreeClaim 判断用户是否存在已批准的免费额度领取记录（差异清单 #5）。
+// 消费免费次数必须同时满足「已批准领取记录 + 一次性用量计数未达上限」，
+// 被风控拒绝（status=denied）或从未领取的账号不能直接享受试用。
+func (s *QuotaService) HasGrantedFreeClaim(userID uuid.UUID) (bool, error) {
+	var count int64
+	err := s.db.Model(&model.FreeGrantClaim{}).
+		Where("user_id = ? AND status = ?", userID, "granted").
+		Count(&count).Error
+	return count > 0, err
+}
+
+// RefundFreeTrial 条件递减一次免费试用计数：value > 0 才 -1，行不存在或已为 0 不动作。
+// 生成失败时退还试用次数用（差异清单 #124），配合请求行的状态条件更新保证只退一次。
+func (s *QuotaService) RefundFreeTrial(tx *gorm.DB, userID uuid.UUID, metric string) error {
+	res := tx.Exec(
+		`UPDATE usage_records SET value = value - 1, updated_at = ? WHERE user_id = ? AND metric = ? AND period = ? AND value > 0`,
+		time.Now(), userID, metric, PeriodTotal,
+	)
+	return res.Error
+}
+
 // RecalculateStorage 用 media_files 的 SUM(bytes) 覆盖存储计数，用于修正人为改坏或异常中断导致的漂移。
 func (s *QuotaService) RecalculateStorage(ctx context.Context, userID uuid.UUID) (int64, error) {
 	var total int64

@@ -33,6 +33,13 @@ import (
 	"github.com/infinite-canvas/server/internal/storage"
 )
 
+// testPNG 是带真实 PNG 魔数的最小上传夹具（33 字节）：上传侧会嗅探文件头，
+// 声明 image/* 而内容不是图片会被 400 拒绝，测试夹具必须用真图片字节。
+var testPNG = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89")
+
+// testPNG2 是内容不同的第二份 PNG 夹具（34 字节），供覆盖上传断言内容变化。
+var testPNG2 = append(append([]byte(nil), testPNG...), 'x')
+
 func newTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -217,14 +224,14 @@ func errorCode(t *testing.T, w *httptest.ResponseRecorder) string {
 	return body.Error.Code
 }
 
-// refreshReadBarrier 让 n 个并发刷新请求都查完令牌后再继续，
-// 确保测试稳定命中「并发轮换竞争失败」分支，而不是读到已撤销令牌的复用检测分支。
-func refreshReadBarrier(g *gorm.DB, n int) {
+// tableReadBarrier 让 n 个并发请求都完成对指定表的读取后再继续，
+// 用于稳定构造「都读到同一行、再竞争写入」的并发场景（如令牌一次性消费）。
+func tableReadBarrier(g *gorm.DB, table string, n int) {
 	var mu sync.Mutex
 	arrived := 0
 	release := make(chan struct{})
-	g.Callback().Query().After("gorm:query").Register("test:refresh_read_barrier", func(tx *gorm.DB) {
-		if tx.Statement.Table != "refresh_tokens" {
+	g.Callback().Query().After("gorm:query").Register("test:"+table+"_read_barrier", func(tx *gorm.DB) {
+		if tx.Statement.Table != table {
 			return
 		}
 		mu.Lock()
@@ -235,6 +242,12 @@ func refreshReadBarrier(g *gorm.DB, n int) {
 		mu.Unlock()
 		<-release
 	})
+}
+
+// refreshReadBarrier 让 n 个并发刷新请求都查完令牌后再继续，
+// 确保测试稳定命中「并发轮换竞争失败」分支，而不是读到已撤销令牌的复用检测分支。
+func refreshReadBarrier(g *gorm.DB, n int) {
+	tableReadBarrier(g, "refresh_tokens", n)
 }
 
 type sessionResp struct {

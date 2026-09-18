@@ -193,6 +193,32 @@ func (s *ModerationService) CheckArtifact(ctx context.Context, userID uuid.UUID,
 	return s.CheckQuarantined(ctx, userID, moderation.StageArtifact, contentType, quarantineKey, data, mimeType)
 }
 
+// CheckAudioArtifactPlaceholder 是音频产物的占位审核：当前没有音频审核模型，
+// 与图片/视频链路一致先落隔离区并写产物记录（provider=none），结论按通过处理，
+// 不阻塞音频发放；接入音频审核模型后把此方法替换为真实送审（差异清单 #29 占位）。
+func (s *ModerationService) CheckAudioArtifactPlaceholder(ctx context.Context, userID uuid.UUID, quarantineKey string, data []byte, mimeType string) (Verdict, error) {
+	if !s.Enabled() {
+		if s.quarantine != nil && quarantineKey != "" {
+			_ = s.quarantine.Delete(ctx, userID, quarantineKey)
+		}
+		return Verdict{Decision: moderation.DecisionPassed}, nil
+	}
+	expiresAt := time.Now().Add(s.quarantine.ttl)
+	record, err := s.record(ctx, userID, moderation.StageArtifact, moderation.ContentAudio,
+		moderation.HashContent(data), moderation.Result{
+			Decision: moderation.DecisionPassed,
+			Summary:  map[string]any{"provider": "none", "note": "音频审核占位：暂无音频审核模型，产物经隔离区转正"},
+		}, quarantineKey, &expiresAt)
+	if err != nil {
+		slog.Error("写入音频占位审核记录失败", "err", err)
+	}
+	var recordID uuid.UUID
+	if record != nil {
+		recordID = record.ID
+	}
+	return Verdict{Decision: moderation.DecisionPassed, RecordID: recordID}, nil
+}
+
 // handleUnavailable 按 fail mode 处理审核服务故障。
 func (s *ModerationService) handleUnavailable(ctx context.Context, userID uuid.UUID, stage moderation.Stage, contentType moderation.ContentType, hash string, err error) (Verdict, error) {
 	slog.Error("审核服务不可用", "stage", stage, "failMode", s.failMode, "err", err)
@@ -251,8 +277,20 @@ func (s *ModerationService) ClearQuarantineKey(ctx context.Context, recordID uui
 		return
 	}
 	if err := s.db.WithContext(ctx).Model(&model.ModerationRecord{}).Where("id = ?", recordID).
-		Update("quarantine_key", "").Error; err != nil {
+		Updates(map[string]any{"quarantine_key": "", "quarantine_bytes": 0}).Error; err != nil {
 		slog.Error("清空隔离 key 失败", "record", recordID, "err", err)
+	}
+}
+
+// SetQuarantineBytes 回填隔离原件的加密字节数，供隔离区容量统计使用
+// （差异清单 #25：原先用 SUM(LENGTH(quarantine_key)) 估字节数，恒为「条数 × 键长」）。
+func (s *ModerationService) SetQuarantineBytes(ctx context.Context, recordID uuid.UUID, bytes int64) {
+	if recordID == uuid.Nil || bytes <= 0 {
+		return
+	}
+	if err := s.db.WithContext(ctx).Model(&model.ModerationRecord{}).Where("id = ?", recordID).
+		Update("quarantine_bytes", bytes).Error; err != nil {
+		slog.Error("回填隔离字节数失败", "record", recordID, "err", err)
 	}
 }
 

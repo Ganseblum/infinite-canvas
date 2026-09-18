@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -23,7 +24,7 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 		t.Fatalf("加载站点设置失败: %v", err)
 	}
 	community := NewCommunityHandler(g, settings)
-	activity := NewActivityHandler(g, settings)
+	activity := NewActivityHandler(g, settings, service.NewFreeGrantService(g), cfg)
 	adminHandler := NewAdminHandler(g, cfg, newFakeStorage("local"))
 	adminHandler.SetSettings(settings)
 
@@ -201,6 +202,11 @@ func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
 	inviter := createUser(t, g, "inviter@example.com", "inviter", "password123", true)
 	inviterToken := accessToken(t, cfg, &inviter)
 	invitee := createUser(t, g, "invitee@example.com", "invitee", "password123", true)
+	// 邀请防刷要求被邀请人注册满 inviteMinAccountAge，测试账号回拨注册时间。
+	if err := g.Model(&model.User{}).Where("id = ?", invitee.ID).
+		Update("created_at", time.Now().Add(-2*time.Hour)).Error; err != nil {
+		t.Fatalf("回拨邀请账号注册时间失败: %v", err)
+	}
 	inviteeToken := accessToken(t, cfg, &invitee)
 
 	// 签到：首次发放，重复幂等。

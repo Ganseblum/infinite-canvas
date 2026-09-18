@@ -13,16 +13,24 @@ description: 用最少步骤把无限画布跑起来
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
-docker compose up -d
+docker compose up -d --build
 ```
 
-启动后访问：
+首次启动会本地构建 app / admin / api 镜像（不使用上游发布镜像），构建完成后访问：
 
 ```text
 http://localhost:3000
 ```
 
-`.env` 中必须填写数据库、`JWT_SECRET`、`CREDENTIAL_MASTER_KEY`、管理员账号与邮件配置；完整变量说明见仓库根目录 `.env.example`。
+`.env` 中必须填写以下内容，否则 api 会拒绝启动、整栈起不来：
+
+- 数据库密码与 `DATABASE_URL`（全栈部署 host 保持 `db`），`MYSQL_*` 仅在数据卷首次初始化时生效。
+- `JWT_SECRET`（至少 32 字符）与 `CREDENTIAL_MASTER_KEY`（正好 32 字节）。
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD` 管理员账号。
+- `FREE_GRANT_ENABLED=true` 时 `FREE_GRANT_CAMPAIGN_ID`、`FREE_GRANT_DAILY_BUDGET_MICROS`、`FREE_GRANT_RISK_THRESHOLD` 必填且大于 0；不需要免费额度就直接设 `FREE_GRANT_ENABLED=false`。
+- 本地无 SMTP 时把 `MAIL_DRIVER` 设为 `log`，验证邮件内容会打进 api 容器日志。
+
+完整变量说明见仓库根目录 `.env.example`。
 
 ## 本地启动
 
@@ -30,10 +38,12 @@ http://localhost:3000
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
-docker compose up -d db
+docker compose -f docker-compose.local.yml up -d db
 cd server && go run ./cmd/server
 cd web && bun install && bun run dev
 ```
+
+数据库端口映射在 `docker-compose.local.yml` 里（`127.0.0.1:13306`）；本机 `go run` 时把 `.env` 里 `DATABASE_URL` 的 host 从 `db:3306` 改成 `127.0.0.1:13306`。Go 服务启动时会自动加载 `.env`（已导出的环境变量优先），不需要手动 `export`。
 
 ## 首次使用建议
 

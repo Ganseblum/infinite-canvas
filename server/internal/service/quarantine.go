@@ -149,7 +149,7 @@ func (s *QuarantineService) Stats(ctx context.Context, now time.Time) (count int
 	var result row
 	err = s.db.WithContext(ctx).Model(&model.ModerationRecord{}).
 		Where("quarantine_key <> '' AND (quarantine_expires_at IS NULL OR quarantine_expires_at > ?)", now).
-		Select("COUNT(*) AS count, COALESCE(SUM(LENGTH(quarantine_key)), 0) AS bytes").
+		Select("COUNT(*) AS count, COALESCE(SUM(quarantine_bytes), 0) AS bytes").
 		Scan(&result).Error
 	return result.Count, result.Bytes, err
 }

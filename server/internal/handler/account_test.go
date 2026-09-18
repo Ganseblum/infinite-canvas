@@ -6,13 +6,34 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/infinite-canvas/server/internal/model"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
+
+// seedFreeTrialCatalog 播种一个可领取的免费试用目录（1 图 + 1 视频，单价 20 微元）。
+// 新版每日预算按「当日已发放领取数 × 单次估算成本」闸门，估算依赖目录里存在
+// 免费试用模型；目录为空时估算为 0，闸门按拒绝处理（FREE_GRANT_UNAVAILABLE）。
+// 预算用例预算=100：3 图 + 1 视频 × 20 = 80，首个可领、第二个超预算被拒。
+func seedFreeTrialCatalog(t *testing.T, g *gorm.DB) {
+	t.Helper()
+	prices := `{"version":1,"dimensions":[],"prices":[{"params":{},"costMicros":20}]}`
+	for _, item := range []model.ModelCatalog{
+		{ID: uuid.New(), Name: "trial-image", DisplayName: "试用图片", Capability: "image", Provider: "openai", CreditCost: datatypes.JSON([]byte(prices)), FreeTrialEligible: true, Enabled: true},
+		{ID: uuid.New(), Name: "trial-video", DisplayName: "试用视频", Capability: "video", Provider: "openai", CreditCost: datatypes.JSON([]byte(prices)), FreeTrialEligible: true, Enabled: true},
+	} {
+		if err := g.Create(&item).Error; err != nil {
+			t.Fatalf("播种免费试用目录失败: %v", err)
+		}
+	}
+}
 
 func TestFreeGrantClaimIsIdempotent(t *testing.T) {
 	g := newTestDB(t)
 	cfg := testConfig()
 	r := newAccountRouter(t, g, cfg)
+	seedFreeTrialCatalog(t, g)
 	user := createUser(t, g, "grant@example.com", "grantuser", "password123", true)
 	token := accessToken(t, cfg, &user)
 
@@ -53,6 +74,7 @@ func TestFreeGrantRiskThresholdDenies(t *testing.T) {
 	g := newTestDB(t)
 	cfg := testConfig()
 	r := newAccountRouter(t, g, cfg)
+	seedFreeTrialCatalog(t, g)
 
 	first := createUser(t, g, "risk-first@example.com", "riskfirst", "password123", true)
 	second := createUser(t, g, "risk-second@example.com", "risksecond", "password123", true)
@@ -85,6 +107,7 @@ func TestFreeGrantDailyBudgetDenies(t *testing.T) {
 	cfg := testConfig()
 	cfg.FreeGrantDailyBudgetMicros = 100
 	r := newAccountRouter(t, g, cfg)
+	seedFreeTrialCatalog(t, g)
 
 	first := createUser(t, g, "budget-first@example.com", "budgetfirst", "password123", true)
 	second := createUser(t, g, "budget-second@example.com", "budgetsecond", "password123", true)
@@ -115,6 +138,7 @@ func TestFreeGrantClaimConcurrentUniqueConstraint(t *testing.T) {
 	g := newTestDB(t)
 	cfg := testConfig()
 	r := newAccountRouter(t, g, cfg)
+	seedFreeTrialCatalog(t, g)
 	user := createUser(t, g, "grant-race@example.com", "grantrace", "password123", true)
 	token := accessToken(t, cfg, &user)
 

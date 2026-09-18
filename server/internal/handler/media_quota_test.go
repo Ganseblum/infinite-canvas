@@ -20,26 +20,26 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	token := accessToken(t, cfg, &user)
 
 	// 把免费档的存储上限调小，便于触达 507。
-	if err := g.Model(&model.Plan{}).Where("id = ?", "free").Update("storage_bytes", 10).Error; err != nil {
+	if err := g.Model(&model.Plan{}).Where("id = ?", "free").Update("storage_bytes", 40).Error; err != nil {
 		t.Fatalf("调整档位失败: %v", err)
 	}
-	w := doRaw(r, http.MethodPut, "/api/media/image:Quota1", []byte("123456"), "image/png", token, nil)
+	w := doRaw(r, http.MethodPut, "/api/media/image:Quota1", testPNG, "image/png", token, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("首次上传失败: code=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doRaw(r, http.MethodPut, "/api/media/image:Quota2", []byte("123456"), "image/png", token, nil)
+	w = doRaw(r, http.MethodPut, "/api/media/image:Quota2", testPNG, "image/png", token, nil)
 	if w.Code != http.StatusInsufficientStorage || errorCode(t, w) != "STORAGE_QUOTA_EXCEEDED" {
 		t.Fatalf("超额上传应 507 STORAGE_QUOTA_EXCEEDED, got %d %s", w.Code, w.Body.String())
 	}
 	body := decodeBody(t, w)
 	errObj, _ := body["error"].(map[string]any)
-	if errObj["limit"] != float64(10) || errObj["used"] != float64(12) {
+	if errObj["limit"] != float64(40) || errObj["used"] != float64(66) {
 		t.Fatalf("507 响应应带 used 与 limit: %v", body)
 	}
 
 	// 覆盖上传只按增量计数，且删除后计数回退。
-	w = doRaw(r, http.MethodPut, "/api/media/image:Quota1", []byte("12345"), "image/png", token, nil)
+	w = doRaw(r, http.MethodPut, "/api/media/image:Quota1", testPNG2, "image/png", token, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("覆盖上传失败: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -48,7 +48,7 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取用量失败: %v", err)
 	}
-	if used != 5 {
+	if used != 34 {
 		t.Fatalf("覆盖上传后用量应为 5, got %d", used)
 	}
 	w = doRaw(r, http.MethodDelete, "/api/media/image:Quota1", nil, "", token, nil)
@@ -76,7 +76,7 @@ func TestMediaUploadReadOnlyReturns402(t *testing.T) {
 	if err := g.Create(&record).Error; err != nil {
 		t.Fatalf("写入用量失败: %v", err)
 	}
-	w := doRaw(r, http.MethodPut, "/api/media/image:ReadOnly1", []byte("x"), "image/png", token, nil)
+	w := doRaw(r, http.MethodPut, "/api/media/image:ReadOnly1", testPNG, "image/png", token, nil)
 	// READ_ONLY 是 403：与 402「没余额」分开，前端才能区分该充值还是该清理。
 	if w.Code != http.StatusForbidden || errorCode(t, w) != "READ_ONLY" {
 		t.Fatalf("只读态上传应 403 READ_ONLY, got %d %s", w.Code, w.Body.String())

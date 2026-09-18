@@ -7,6 +7,12 @@ description: Test/production deployment and local development
 
 This fork's account-backend version deploys the Vite static frontend, Go API and MySQL together using Compose and locally built app/API images. An upstream image does not include this version. Configure environment files before starting services.
 
+What each service does and where data lands:
+
+- `app`: the Vite-built static site is served by the container's nginx, which also proxies `/api` to the api container. It holds no business data — static files plus a reverse proxy.
+- `api`: the Go backend serves accounts, canvases, assets, generations, AI forwarding, payment webhooks, and admin endpoints. Canvas, asset, and generation records go to MySQL; media binaries (images, videos) go to the `data/media` bind mount (or a private S3 bucket), and MySQL data lives in `data/mysql`. Both directories sit under `./data` in the deployment directory, so backing up before an upgrade is a plain directory copy.
+- `db`: MySQL 8.4, reachable only inside the compose network. The test environment publishes `127.0.0.1:13306` through `deploy/compose.test.yml`; production publishes no host port.
+
 ## Start with test
 
 Use the fork's selected test commit and separate test/production checkouts. From the test checkout:

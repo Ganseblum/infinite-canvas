@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/provider"
 )
 
@@ -134,22 +135,52 @@ func (s *AITaskService) succeedTask(ctx context.Context, task *model.AITask, sta
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		mimeType = "video/mp4"
 	}
-	// 视频产物审核：抽帧后逐帧送审，任一帧超阈值整条拒绝。
+	// 视频产物审核：先落隔离区再抽帧送审，任一帧超阈值整条拒绝。
+	// 隔离原件在被拒后保留 24 小时供人工复核释放，与图片链路同口径（差异清单 #8）。
+	var videoQuarantineKey string
+	var videoRecordID uuid.UUID
+	videoModerationStatus := "skipped"
 	if s.moderation != nil && s.moderation.Enabled() {
+		quarantine, err := s.moderation.Quarantine().Put(ctx, task.UserID, data, mimeType)
+		if err != nil {
+			return err
+		}
+		videoQuarantineKey = quarantine.Key
 		if err := s.db.Model(&model.AITask{}).Where("id = ?", task.ID).Update("status", "moderating").Error; err != nil {
 			return err
 		}
 		verdict, err := moderateVideo(ctx, s.moderation, task.UserID, data, mimeType)
-		if err != nil {
-			if errors.Is(err, ErrContentRejected) {
-				return s.failTask(ctx, task, "视频内容未通过审核")
-			}
-			if errors.Is(err, ErrModerationUnavailable) {
-				return s.failTask(ctx, task, "内容审核服务暂不可用")
-			}
+		decision := verdict.Decision
+		if err != nil && !errors.Is(err, ErrContentRejected) && !errors.Is(err, ErrModerationUnavailable) {
+			decision = moderation.DecisionError
+		}
+		if decision == "" {
+			decision = moderation.DecisionError
+		}
+		// 最终结论写成绑定隔离原件的产物记录，管理端复核与释放以它为准；
+		// 帧级记录仅作过程留痕。
+		expiresAt := time.Now().Add(s.moderation.quarantine.ttl)
+		record, recordErr := s.moderation.record(ctx, task.UserID, moderation.StageArtifact, moderation.ContentVideo,
+			moderation.HashContent(data), moderation.Result{
+				Decision:   decision,
+				RiskLabels: verdict.RiskLabels,
+			}, quarantine.Key, &expiresAt)
+		if recordErr != nil {
+			slog.Error("写入视频审核记录失败", "task", task.ID, "err", recordErr)
+		} else if record != nil {
+			videoRecordID = record.ID
+			s.moderation.SetQuarantineBytes(ctx, record.ID, quarantine.Bytes)
+		}
+		switch {
+		case errors.Is(err, ErrContentRejected):
+			// 原件留在隔离区供人工复核，failTask 收敛生成记录与退款。
+			return s.failTask(ctx, task, "视频内容未通过审核")
+		case errors.Is(err, ErrModerationUnavailable):
+			return s.failTask(ctx, task, "内容审核服务暂不可用")
+		case err != nil:
 			return s.failTask(ctx, task, "视频审核失败")
 		}
-		_ = verdict
+		videoModerationStatus = decision
 	}
 	storageKey := "video:" + randomStorageKey()
 	file, err := s.media.Save(ctx, SaveGeneratedMediaInput{
@@ -158,13 +189,24 @@ func (s *AITaskService) succeedTask(ctx context.Context, task *model.AITask, sta
 		MimeType:   mimeType,
 		Data:       data,
 		MaxBytes:   maxFile,
+		Moderation: videoModerationStatus,
 	})
+	if err != nil {
+		return s.failTask(ctx, task, "视频落盘失败")
+	}
+	if videoQuarantineKey != "" {
+		// 已转正式存储：删除隔离原件并清空审核记录上的 key，避免管理端残留可预览项。
+		_ = s.moderation.Quarantine().Delete(ctx, task.UserID, videoQuarantineKey)
+		s.moderation.ClearQuarantineKey(ctx, videoRecordID)
+	}
 	if err != nil {
 		return s.failTask(ctx, task, "视频落盘失败")
 	}
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.AITask{}).Where("id = ? AND status = ?", task.ID, "pending").Updates(map[string]any{
+		// 审核开启时任务会先被置为 moderating，收敛条件必须同时匹配两种中间态，
+		// 否则条件更新匹配 0 行且不报错，任务永远停在 moderating（差异清单 #3）。
+		if err := tx.Model(&model.AITask{}).Where("id = ? AND status IN ?", task.ID, []string{"pending", "moderating"}).Updates(map[string]any{
 			"status":      "succeeded",
 			"storage_key": file.StorageKey,
 			"error":       "",
@@ -202,7 +244,8 @@ func (s *AITaskService) failTask(ctx context.Context, task *model.AITask, messag
 		return err
 	}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.AITask{}).Where("id = ? AND status = ?", task.ID, "pending").
+		// 与成功收敛同口径：moderating 也要能落到 failed，退款与前端终态才成立。
+		if err := tx.Model(&model.AITask{}).Where("id = ? AND status IN ?", task.ID, []string{"pending", "moderating"}).
 			Updates(map[string]any{"status": "failed", "error": message}).Error; err != nil {
 			return err
 		}

@@ -4,7 +4,6 @@
 
 - [快速开始](/zh-CN/docs/overview/quick-start)
 - [功能介绍](/zh-CN/docs/overview/features)
-- [Render 部署](/zh-CN/docs/overview/render)
 - [Docker 部署](/zh-CN/docs/overview/docker)
 - [第三方提示词来源](/zh-CN/docs/overview/third-party-prompt-repositories)
 
@@ -16,7 +15,9 @@
 ## 开发与数据
 
 - [本地开发](/zh-CN/docs/development/local-development)
+- [Fork 部署与共享测试数据](../deploy/README.md)
 - [画布数据结构](/zh-CN/docs/development/canvas-data-structure)
+- [本地 Codex 连接画布原理](/zh-CN/docs/development/local-codex-canvas)
 
 ## 商务合作
 
@@ -36,9 +37,5 @@
 
 ## 说明
 
-- 当前画布项目和“我的素材”主要保存在浏览器本地，跨设备可自行配置 WebDAV 同步。
-- AI API Key 保存在浏览器本地，并由前端直接请求 OpenAI 兼容接口。
-
-## 原理说明
-
-- [本地 Codex 连接画布原理](/zh-CN/docs/development/local-codex-canvas)
+- 画布、素材、生成记录与媒体由服务端保存（MySQL 与媒体卷 / S3），浏览器只保留界面状态、Agent 会话与提示词缓存。
+- AI 渠道与模型在服务端配置，渠道密钥加密存库，浏览器不持有任何 API Key。

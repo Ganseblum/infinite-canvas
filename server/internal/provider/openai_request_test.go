@@ -446,6 +446,48 @@ func TestOpenAISpeechRequestPayload(t *testing.T) {
 	}
 }
 
+// TestOpenAISpeechRequestClipsWhitelist 走真实 HTTP 录制验证白名单裁剪：
+// 白名单外的 voice 回落 alloy，speed 裁剪到 0.25..4；缺省语速回落 1 是对原版的
+// 刻意修正（原版空值会被钳到 0.25），见 params.go 注释。
+func TestOpenAISpeechRequestClipsWhitelist(t *testing.T) {
+	cases := []struct {
+		name      string
+		voice     string
+		speed     float64
+		wantVoice string
+		wantSpeed float64
+	}{
+		{"白名单外 voice 回落", "gpt-voice", 1.5, "alloy", 1.5},
+		{"speed 裁到上界", "alloy", 9, "alloy", 4},
+		{"speed 裁到下界", "alloy", 0.05, "alloy", 0.25},
+		{"缺省语速回落 1", "alloy", 0, "alloy", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, captured := captureServer(t, staticResponder(http.StatusOK, "audio/mpeg", []byte("mp3-bytes")))
+			if _, err := NewOpenAI(server.URL, "test-key", server.Client()).Speech(context.Background(), SpeechRequest{
+				Model: "tts-1", Input: "你好", Voice: tc.voice, Format: "mp3", Speed: tc.speed,
+			}); err != nil {
+				t.Fatalf("Speech 返回错误: %v", err)
+			}
+			requests := captured()
+			if len(requests) != 1 {
+				t.Fatalf("应只发出 1 次请求, got %d", len(requests))
+			}
+			var decoded map[string]any
+			if err := json.Unmarshal(requests[0].Body, &decoded); err != nil {
+				t.Fatalf("请求体不是合法 JSON: %v", err)
+			}
+			if decoded["voice"] != tc.wantVoice {
+				t.Fatalf("voice = %v, want %q", decoded["voice"], tc.wantVoice)
+			}
+			if decoded["speed"] != tc.wantSpeed {
+				t.Fatalf("speed = %v, want %v", decoded["speed"], tc.wantSpeed)
+			}
+		})
+	}
+}
+
 // TestOpenAISpeechRejectsJSONErrorBody 上游 200 却回 JSON 错误体时必须报错，
 // 不能把错误体当音频字节返回（用户会拿到损坏音频且点数已扣）。
 func TestOpenAISpeechRejectsJSONErrorBody(t *testing.T) {

@@ -4,11 +4,20 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
 // ErrObjectNotFound 表示对象在存储侧不存在。业务层据此决定 404 还是 500。
 var ErrObjectNotFound = errors.New("storage: object not found")
+
+// ObjectPath 把 storageKey 解析成对象路径：{用户 id}/{类型段}/{对象 id}。
+// 服务端生成的 storageKey 必为「类型:对象id」；无冒号的异常输入按「id 为空」处理，
+// 与媒体接口既有落盘布局保持一致。key 内容不直接进入路径，杜绝路径穿越。
+func ObjectPath(userID, storageKey string) string {
+	prefix, id, _ := strings.Cut(storageKey, ":")
+	return userID + "/" + prefix + "/" + id
+}
 
 // Presigned 是一次预签名读取的结果。local 驱动没有签名问题，URL 为空，
 // ExpiresAt 为零值，调用方（media handler）据此直接回流二进制。

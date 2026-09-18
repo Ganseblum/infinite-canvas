@@ -97,6 +97,9 @@ func (s *S3) Put(ctx context.Context, path string, r io.Reader, contentType stri
 		Key:         aws.String(path),
 		Body:        cr,
 		ContentType: aws.String(contentType),
+		// 媒体读取走带鉴权的 API 响应头，对象元数据只服务 302 预签名直读场景的缓存兜底。
+		// 同一 key 可被覆盖上传（PUT 覆盖语义），不能 immutable，保守缓存一天。
+		CacheControl: aws.String("private, max-age=86400"),
 	})
 	if err != nil {
 		// 返回已读字节数：handler 据此判断是否为超过单文件上限的中断。

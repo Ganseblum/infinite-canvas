@@ -18,6 +18,7 @@ import (
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/db"
 	"github.com/infinite-canvas/server/internal/handler"
+	"github.com/infinite-canvas/server/internal/envload"
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/moderation"
@@ -26,6 +27,11 @@ import (
 )
 
 func main() {
+	// 本地 go run 直启时加载仓库根目录的 .env（已存在的环境变量不被覆盖）；
+	// 容器内该文件不存在，静默跳过（差异清单 #69）。
+	if err := envload.Load(".env"); err != nil {
+		slog.Warn("加载 .env 失败，忽略", "err", err)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("配置加载失败", "err", err)
@@ -54,6 +60,10 @@ func main() {
 	if err := db.Migrate(gormDB); err != nil {
 		slog.Error("AutoMigrate 失败", "err", err)
 		os.Exit(1)
+	}
+	// 结构版本留痕：AutoMigrate 无回滚，先记录「哪个版本建出了当前结构」。
+	if err := db.RecordSchemaVersion(gormDB); err != nil {
+		slog.Warn("记录 schema 版本失败（不阻断启动）", "err", err)
 	}
 	if err := db.SeedPlans(gormDB); err != nil {
 		slog.Error("写入默认档位失败", "err", err)
@@ -202,7 +212,7 @@ func main() {
 	adminHandler.SetModeration(moderationService)
 	adminHandler.SetSettings(siteSettings)
 	communityHandler := handler.NewCommunityHandler(gormDB, siteSettings)
-	activityHandler := handler.NewActivityHandler(gormDB, siteSettings)
+	activityHandler := handler.NewActivityHandler(gormDB, siteSettings, grantService, cfg)
 
 	router := gin.New()
 	router.Use(middleware.RequestID(), middleware.Logger(level.Level()), middleware.Recovery())
@@ -240,6 +250,8 @@ func main() {
 	loginLimiter := middleware.NewLimiter(10*time.Minute, 20)
 	mailLimiter := middleware.NewLimiter(time.Hour, 10)
 	orderLimiter := middleware.NewLimiter(time.Hour, 10)
+	// 社区发布限流：与 handler 内的每日上限双保险（差异清单 #38）。
+	publishLimiter := middleware.NewLimiter(time.Hour, 12)
 
 	api := router.Group("/api")
 
@@ -267,7 +279,7 @@ func main() {
 		me.GET("", accountHandler.GetMe)
 		me.PATCH("", accountHandler.UpdateMe)
 		me.POST("/password", accountHandler.ChangePassword)
-		me.POST("/free-grant/claim", accountHandler.ClaimFreeGrant)
+		me.POST("/free-grant/claim", middleware.RequireNotPendingDeletion(), accountHandler.ClaimFreeGrant)
 		me.POST("/deletion", accountHandler.RequestDeletion)
 		me.POST("/deletion/cancel", accountHandler.CancelDeletion)
 	}
@@ -303,7 +315,7 @@ func main() {
 	{
 		community.GET("/works", communityHandler.List)
 		community.GET("/works/mine", communityHandler.MyWorks)
-		community.POST("/works", communityHandler.Publish)
+		community.POST("/works", middleware.RateLimit(publishLimiter, func(c *gin.Context) string { return "publish:" + c.GetString("user_id") }), communityHandler.Publish)
 		community.GET("/works/:id", communityHandler.Get)
 		community.DELETE("/works/:id", communityHandler.Delete)
 		community.POST("/works/:id/like", communityHandler.Like)
@@ -325,7 +337,8 @@ func main() {
 	api.GET("/settings/public", adminHandler.PublicSettings)
 
 	// AI 报价与生成：全部走平台目录与服务端托管的渠道。
-	ai := api.Group("/ai", middleware.Auth(secret), active, passwordGate)
+	// 注销冷静期允许浏览与导出，但生成属写操作，与下单同口径拦截。
+	ai := api.Group("/ai", middleware.Auth(secret), active, passwordGate, middleware.RequireNotPendingDeletion())
 	{
 		ai.POST("/quote", aiHandler.Quote)
 		ai.POST("/images/generations", aiHandler.Images)

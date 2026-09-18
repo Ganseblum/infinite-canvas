@@ -121,7 +121,8 @@ func seedModels() []model.ModelCatalog {
 			Provider:          "openai",
 			Constraints:       datatypes.JSON([]byte(videoConstraints)),
 			CreditCost:        datatypes.JSON([]byte(videoPrices)),
-			FreeTrialEligible: false,
+			// 注册文案承诺「1 次免费视频」：默认目录里必须有可领取的免费视频模型（#100）。
+			FreeTrialEligible: true,
 			Enabled:           true,
 			Sort:              20,
 		},

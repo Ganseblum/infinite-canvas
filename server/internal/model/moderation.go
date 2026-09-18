@@ -24,6 +24,7 @@ type ModerationRecord struct {
 	Decision            string         `gorm:"type:varchar(16);not null;index:idx_moderation_decision_created,priority:1;comment:机器审核结论，pending 审核中、passed 通过、rejected 拒绝、error 调用异常"` // pending | passed | rejected | error
 	RiskLabels          datatypes.JSON `gorm:"type:json;comment:命中的风险标签数组 JSON"`
 	QuarantineKey       string         `gorm:"type:varchar(120);comment:隔离区对象的存储键，短期保留原件供人工复核，空串表示已清空"`
+	QuarantineBytes     int64          `gorm:"not null;default:0;comment:隔离原件的加密字节数，用于隔离区容量统计与告警"`
 	QuarantineExpiresAt *time.Time     `gorm:"index;comment:隔离原件的过期时间，过期后无法取回"`
 	ReviewStatus        string         `gorm:"type:varchar(16);not null;default:not_required;index:idx_moderation_review_created,priority:1;comment:人工复核状态，not_required 无需复核、pending 待复核、approved 通过、rejected 驳回"` // not_required | pending | approved | rejected
 	ReviewRevision      int            `gorm:"not null;default:0;comment:复核版本号，每次人工改判递增，提交时比对以防并发覆盖"`

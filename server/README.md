@@ -22,13 +22,16 @@
 ## 本地启动
 
 ```bash
-# 只起数据库（数据库在 compose 里监听 db:3306）
-docker compose up -d db
+# 只起数据库。docker-compose.local.yml 把库映射到宿主机 127.0.0.1:13306
+# （根目录 docker-compose.yml 是测试/正式部署用的，不映射数据库端口）
+docker compose -f docker-compose.local.yml up -d db
 
 cd server
-cp .env.example .env   # 按需修改，DATABASE_URL 的 host 改为 127.0.0.1
+cp ../.env.example .env   # 按需修改；本机 go run 时 DATABASE_URL 的 host 改为 127.0.0.1:13306
 go run ./cmd/server
 ```
+
+服务启动时会自动加载 `.env`（`server/internal/envload`）：依次尝试工作目录与上级目录，文件不存在时静默跳过，已导出的环境变量优先、不会被文件覆盖；容器部署没有 `.env`，行为不变。数据库 host 记住一句话：**容器内用 `db`，本机 `go run` 用 `127.0.0.1:13306`**。
 
 本地没有 SMTP 时把 `MAIL_DRIVER` 置为 `log`，验证/重置链接会打到日志，可复制到浏览器完成流程。
 
@@ -62,7 +65,12 @@ docker build -t infinite-canvas-api:local .
 | `COOKIE_SECURE` | `true` | refresh cookie 的 `Secure` 属性；无 TLS 环境置 `false` |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `TRUSTED_PROXIES` | 空 | 逗号分隔 CIDR；仅命中网段的来源才采用 `X-Real-IP` / `X-Forwarded-For`，默认不信任任何代理头 |
+| `CORS_ALLOWED_ORIGINS` | 空 | 逗号分隔完整来源白名单（管理后台独立域名时填写）；留空即完全不启用 CORS |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 无 | 首个管理员，仅在用户不存在时创建，不重置已有密码 |
+| `SITE_ENV` | `production` | 前端环境标识：由 app 容器入口脚本写进 `config.js`，非 `production` 会在页面顶栏显示环境标识；Go 不读取该变量 |
+| `SEED_TEST_DATA` | `false` | 启动时幂等写入测试账号与示例数据；只在测试/预发布环境开启，正式环境必须保持 false |
+| `SEED_TEST_DATA_EMAIL` / `SEED_TEST_DATA_PASSWORD` | `test@example.com` / `test123456` | 测试账号邮箱与密码 |
+| `ENTITLEMENT_DAYS` | `30` | 充值默认延长的付费权益天数，档位上的 `entitlement_days` 可覆盖 |
 | `MAIL_DRIVER` | `smtp` | `smtp` 走真实邮件服务，`log` 只打日志 |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` | 无 | `MAIL_DRIVER=smtp` 时必填，QQ 邮箱用授权码 |
 | `SMTP_SECURITY` | `ssl` | `ssl` 或 `starttls` |
@@ -80,6 +88,19 @@ docker build -t infinite-canvas-api:local .
 | `S3_FORCE_PATH_STYLE` | `false` | 路径风格寻址，MinIO 与部分自建服务设 `true` |
 | `S3_PRESIGN_ALIGN` | `1h` | 预签名签发时间的对齐粒度 |
 | `S3_PRESIGN_TTL` | `2h` | 预签名有效期，必须等于 2 × `S3_PRESIGN_ALIGN`，否则启动失败 |
+| `AI_IMAGE_TIMEOUT` / `AI_AUDIO_TIMEOUT` / `AI_STREAM_TIMEOUT` / `AI_STREAM_IDLE_TIMEOUT` / `AI_VIDEO_TASK_TIMEOUT` | `180s` / `120s` / `600s` / `60s` / `20m` | 各能力转发上游的超时 |
+| `AI_ALLOW_PRIVATE_UPSTREAM` | `false` | 允许上游指向内网地址；仅本地调试开启，正式环境必须为 false |
+| `MODERATION_ENABLED` | `false` | 内容审核总开关；开启时 `MODERATION_FAIL_MODE` 必填，缺失启动失败 |
+| `MODERATION_PROVIDER` | `fake` | `fake`（本地联调）或 `nsfwjs+detoxify`（真实推理 sidecar） |
+| `MODERATION_NSFWJS_ENDPOINT` / `MODERATION_DETOXIFY_ENDPOINT` | 无 | 两个推理 sidecar 的地址；`nsfwjs+detoxify` 时必填，compose 内填服务名地址 |
+| `MODERATION_FAKE_REJECT_TEXTS` | 无 | 仅 `fake` 生效：命中即触发拒绝的文本片段，逗号分隔，用于拒绝链路联调 |
+| `MODERATION_IMAGE_THRESHOLD` / `MODERATION_TEXT_THRESHOLD` | `0.6` / `0.8` | 违规判定阈值，取值 (0,1] |
+| `MODERATION_VIDEO_SAMPLE_FPS` | `1` | 视频抽帧频率 |
+| `MODERATION_FAIL_MODE` | 无 | `reject` 或 `allow`，无默认值；审核开启时必填，上游故障按它拒绝或放行 |
+| `MODERATION_TIMEOUT` | `5s` | 单次审核请求超时 |
+| `MODERATION_POLICY_VERSION` | `v1` | 审核策略版本号，写入审核记录 |
+| `MODERATION_QUARANTINE_TTL` | `24h` | 隔离区保留时长，过期物理删除原件 |
+| `MODERATION_CACHE_TTL` | `10m` | 审核结论缓存时长 |
 
 ## 媒体存储说明
 

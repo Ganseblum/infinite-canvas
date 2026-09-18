@@ -47,7 +47,7 @@ func (s *MediaWriteService) Save(ctx context.Context, input SaveGeneratedMediaIn
 	if input.MaxBytes > 0 && int64(len(input.Data)) > input.MaxBytes {
 		return nil, ErrMediaQuotaExceeded
 	}
-	objectPath := mediaObjectPath(input.UserID, input.StorageKey)
+	objectPath := storage.ObjectPath(input.UserID.String(), input.StorageKey)
 	body := bytes.NewReader(input.Data)
 	written, checksum, err := s.storage.Put(ctx, objectPath, body, input.MimeType)
 	if err != nil {
@@ -131,21 +131,6 @@ func (s *MediaWriteService) UpdateGeneration(ctx context.Context, id uuid.UUID, 
 		updates["result"] = raw
 	}
 	return s.db.WithContext(ctx).Model(&model.Generation{}).Where("id = ?", id).Updates(updates).Error
-}
-
-// mediaObjectPath 与媒体接口保持一致：用户 id/类型段/对象 id。
-func mediaObjectPath(uid uuid.UUID, key string) string {
-	prefix, id := splitStorageKey(key)
-	return uid.String() + "/" + prefix + "/" + id
-}
-
-func splitStorageKey(key string) (string, string) {
-	for i := 0; i < len(key); i++ {
-		if key[i] == ':' {
-			return key[:i], key[i+1:]
-		}
-	}
-	return "file", key
 }
 
 func defaultString(value, fallback string) string {

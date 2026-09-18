@@ -190,6 +190,10 @@ func (h *AIHandler) Images(c *gin.Context) {
 		return
 	}
 	// 并发槽位在进入上游前占用，defer 释放，避免任何提前返回泄漏槽位。
+	if !h.slots.allowRate(user.ID.String()) {
+		h.abortConcurrency(c)
+		return
+	}
 	if !h.slots.acquire("image", user.ID.String(), 3) {
 		h.abortConcurrency(c)
 		return
@@ -410,11 +414,12 @@ func (h *AIHandler) moderateAndStoreArtifact(c *gin.Context, user model.User, pr
 		return nil, err
 	}
 	verdict, err := h.moderation.CheckArtifact(c.Request.Context(), user.ID, moderation.ContentType(prefix), quarantine.Key, data, mimeType)
+	h.moderation.SetQuarantineBytes(c.Request.Context(), verdict.RecordID, quarantine.Bytes)
 	if err != nil {
 		return nil, err
 	}
-	_ = verdict
-	// 审核通过：先写正式存储，再删除隔离原件。
+	// 审核通过：先写正式存储，再删除隔离原件。媒体行的审核状态与生成记录同口径，
+	// 不再恒为 skipped（差异清单 #12）。
 	objectID := randomKey()
 	file, err := h.media.Save(c.Request.Context(), service.SaveGeneratedMediaInput{
 		UserID:     user.ID,
@@ -422,11 +427,14 @@ func (h *AIHandler) moderateAndStoreArtifact(c *gin.Context, user model.User, pr
 		MimeType:   mimeType,
 		Data:       data,
 		MaxBytes:   maxBytes,
+		Moderation: artifactModerationStatus(h.moderation, verdict),
 	})
 	if err != nil {
 		return nil, err
 	}
 	_ = h.moderation.Quarantine().Delete(c.Request.Context(), user.ID, quarantine.Key)
+	// 隔离原件已删除，同步清空审核记录上的 key，管理端不再显示点开 404 的残留项（差异清单 #26）。
+	h.moderation.ClearQuarantineKey(c.Request.Context(), verdict.RecordID)
 	return gin.H{
 		"storageKey": file.StorageKey,
 		"bytes":      file.Bytes,
@@ -441,9 +449,89 @@ func moderationStatusOf(moderating bool) string {
 	return "skipped"
 }
 
+// artifactModerationStatus 把产物审核结论同步进 media_files：审核开启用实际结论，
+// 未启用保持 skipped（「这条数据产生时审核链路未覆盖」），失败放行记 error 侧的结论。
+func artifactModerationStatus(m *service.ModerationService, verdict service.Verdict) string {
+	if m == nil || !m.Enabled() || verdict.Decision == "" {
+		return "skipped"
+	}
+	return verdict.Decision
+}
+
+// nonEmptyRefs 过滤 trim 后为空的引用，保证按长度切片不会越界（差异清单 #41）。
+func nonEmptyRefs(refs []string) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if strings.TrimSpace(ref) != "" {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+// storeAudioArtifact 音频产物占位审核：当前没有音频审核模型，与图片/视频链路一致
+// 先落隔离区并写产物审核记录（provider=none），不阻塞发放；接入音频审核模型后
+// 在此替换为真实送审（差异清单 #29 占位）。审核未启用时保持旧行为直接落盘。
+func (h *AIHandler) storeAudioArtifact(ctx context.Context, userID uuid.UUID, data []byte, mimeType string, url string, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {
+	if len(data) == 0 && url != "" {
+		downloaded, contentType, err := h.upstream.Download(ctx, url, maxBytes, downloadTimeout)
+		if err != nil {
+			return nil, err
+		}
+		data = downloaded
+		if contentType != "" {
+			mimeType = contentType
+		}
+	}
+	if len(data) == 0 {
+		return nil, errors.New("上游产物为空")
+	}
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = "audio/mpeg"
+	}
+	if h.moderation == nil || !h.moderation.Enabled() {
+		storageKey := "audio:" + randomKey()
+		file, err := h.media.Save(ctx, service.SaveGeneratedMediaInput{
+			UserID:     userID,
+			StorageKey: storageKey,
+			MimeType:   mimeType,
+			Data:       data,
+			MaxBytes:   maxBytes,
+			Moderation: "skipped",
+		})
+		if err != nil {
+			return nil, err
+		}
+		return gin.H{"storageKey": file.StorageKey, "bytes": file.Bytes, "mimeType": file.MimeType}, nil
+	}
+	quarantine, err := h.moderation.Quarantine().Put(ctx, userID, data, mimeType)
+	if err != nil {
+		return nil, err
+	}
+	verdict, err := h.moderation.CheckAudioArtifactPlaceholder(ctx, userID, quarantine.Key, data, mimeType)
+	h.moderation.SetQuarantineBytes(ctx, verdict.RecordID, quarantine.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	storageKey := "audio:" + randomKey()
+	file, err := h.media.Save(ctx, service.SaveGeneratedMediaInput{
+		UserID:     userID,
+		StorageKey: storageKey,
+		MimeType:   mimeType,
+		Data:       data,
+		MaxBytes:   maxBytes,
+		Moderation: verdict.Decision,
+	})
+	if err != nil {
+		return nil, err
+	}
+	_ = h.moderation.Quarantine().Delete(ctx, userID, quarantine.Key)
+	h.moderation.ClearQuarantineKey(ctx, verdict.RecordID)
+	return gin.H{"storageKey": file.StorageKey, "bytes": file.Bytes, "mimeType": file.MimeType}, nil
+}
+
 // materialize 把上游产物（base64 或 URL）转成 storageKey 并落盘。
-func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {
-	data := image.Data
+func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {	data := image.Data
 	mimeType := image.MimeType
 	if len(data) == 0 && image.URL != "" {
 		downloaded, contentType, err := h.upstream.Download(ctx, image.URL, maxBytes, downloadTimeout)
@@ -520,6 +608,10 @@ func (h *AIHandler) Speech(c *gin.Context) {
 	if !h.precheck(c, user) {
 		return
 	}
+	if !h.slots.allowRate(user.ID.String()) {
+		h.abortConcurrency(c)
+		return
+	}
 	if !h.slots.acquire("audio", user.ID.String(), 2) {
 		h.abortConcurrency(c)
 		return
@@ -560,7 +652,7 @@ func (h *AIHandler) Speech(c *gin.Context) {
 		h.failRequest(c, request, reserved, err, 0)
 		return
 	}
-	media, err := h.materialize(c.Request.Context(), user.ID, "audio", provider.GeneratedImage{Data: result.Data, MimeType: result.MimeType, URL: result.URL}, maxFile, 120*time.Second)
+	media, err := h.storeAudioArtifact(c.Request.Context(), user.ID, result.Data, result.MimeType, result.URL, maxFile, 120*time.Second)
 	if err != nil {
 		h.failRequest(c, request, reserved, err, 0)
 		return
@@ -661,14 +753,19 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 	if !ok {
 		return
 	}
-	media, err := h.loadInlineMedia(user.ID, append(append(append([]string{}, req.References...), req.VideoReferences...), req.AudioReferences...))
+	// loadInlineMedia 会跳过空串引用，这里先过滤再切片，
+	// 否则 references:[""] 会让下面的按长度切片越界（差异清单 #41）。
+	refs := nonEmptyRefs(req.References)
+	videoRefs := nonEmptyRefs(req.VideoReferences)
+	audioRefs := nonEmptyRefs(req.AudioReferences)
+	media, err := h.loadInlineMedia(user.ID, append(append(append([]string{}, refs...), videoRefs...), audioRefs...))
 	if err != nil {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"references": err.Error()}))
 		return
 	}
-	images := media[:len(req.References)]
-	videos := media[len(req.References) : len(req.References)+len(req.VideoReferences)]
-	audios := media[len(req.References)+len(req.VideoReferences):]
+	images := media[:len(refs)]
+	videos := media[len(refs) : len(refs)+len(videoRefs)]
+	audios := media[len(refs)+len(videoRefs):]
 	if !h.moderateInput(c, user, req.Prompt, images) {
 		return
 	}
@@ -676,6 +773,17 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 		return
 	}
 	// 视频任务的并发单独计算，不占 HTTP 连接。
+	// 每分钟限流与全局并发与其它能力同口径（差异清单 #16）：
+	// 限流直接判；全局并发用请求期槽位兜底（pending 上限 3 仍然独立生效）。
+	if !h.slots.allowRate(user.ID.String()) {
+		h.abortConcurrency(c)
+		return
+	}
+	if !h.slots.acquire("video", user.ID.String(), 3) {
+		h.abortConcurrency(c)
+		return
+	}
+	defer h.slots.release("video", user.ID.String())
 	pending, err := h.pendingVideoTasks(user.ID)
 	if err != nil {
 		errs.Abort(c, errs.ErrInternal)
@@ -896,6 +1004,10 @@ func (h *AIHandler) Chat(c *gin.Context) {
 		return
 	}
 	if !h.precheck(c, user) {
+		return
+	}
+	if !h.slots.allowRate(user.ID.String()) {
+		h.abortConcurrency(c)
 		return
 	}
 	if !h.slots.acquire("text", user.ID.String(), 2) {
@@ -1242,6 +1354,7 @@ func (h *AIHandler) beginRequest(c *gin.Context, user model.User, catalogItem mo
 		ParamSpec:        clipRunes(dims.Spec, 64),
 		StatDate:         time.Now().In(statZone).Format(statDateFormat),
 		Status:           "running",
+		UsedFreeTrial:    reserved != nil && reserved.UsedFreeTrial,
 	}
 	if reserved != nil && len(reserved.Transactions) > 0 {
 		ids := make([]uuid.UUID, 0, len(reserved.Transactions))
@@ -1262,8 +1375,10 @@ func (h *AIHandler) beginRequest(c *gin.Context, user model.User, catalogItem mo
 		return nil, nil, false
 	}
 	if !created {
-		// 重复提交：退掉这次预扣，直接返回既有请求的状态。
-		if reserved != nil && len(reserved.Transactions) > 0 {
+		// 重复提交：退掉这次预扣（含免费试用占用），直接返回既有请求的状态。
+		if reserved != nil && reserved.UsedFreeTrial {
+			_ = h.requests.Refund(c.Request.Context(), request)
+		} else if reserved != nil && len(reserved.Transactions) > 0 {
 			_ = service.NewCreditService(h.db).Refund(c.Request.Context(), user.ID, transactionIDs(reserved.Transactions), "重复请求退还")
 		}
 		switch existing.Status {

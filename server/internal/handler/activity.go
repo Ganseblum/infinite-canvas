@@ -10,20 +10,28 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/service"
 )
+
+// inviteMinAccountAge 是被邀请人注册后允许绑定邀请的最短时长：
+// 给批量注册-立刻绑定的小号留一道时间门槛，与邮箱验证叠加抬高刷号成本。
+const inviteMinAccountAge = time.Hour
 
 // ActivityHandler 提供签到与邀请返利。两种奖励都只进 granted 桶，不改变付费身份。
 type ActivityHandler struct {
 	db       *gorm.DB
 	settings *service.SiteSettingService
 	credits  *service.CreditService
+	grant    *service.FreeGrantService
+	cfg      *config.Config
 }
 
-func NewActivityHandler(db *gorm.DB, settings *service.SiteSettingService) *ActivityHandler {
-	return &ActivityHandler{db: db, settings: settings, credits: service.NewCreditService(db)}
+func NewActivityHandler(db *gorm.DB, settings *service.SiteSettingService, grant *service.FreeGrantService, cfg *config.Config) *ActivityHandler {
+	return &ActivityHandler{db: db, settings: settings, credits: service.NewCreditService(db), grant: grant, cfg: cfg}
 }
 
 func (h *ActivityHandler) checkinEnabled() bool {
@@ -210,6 +218,28 @@ func (h *ActivityHandler) BindInvite(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"code": "不能使用自己的邀请码"}))
 		return
 	}
+	// 防刷（差异清单 #35）：被邀请人必须邮箱已验证且注册满最短时长，
+	// 并与免费领取共用同一套风控评分与每日预算，补前端入口前先补风控。
+	var invitee model.User
+	if err := h.db.First(&invitee, "id = ?", uid).Error; err != nil {
+		errs.Abort(c, errs.ErrUnauthorized)
+		return
+	}
+	if invitee.EmailVerifiedAt == nil {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"invite": "请先验证邮箱再绑定邀请码"}))
+		return
+	}
+	if time.Since(invitee.CreatedAt) < inviteMinAccountAge {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"invite": "注册时间过短，暂时不能绑定邀请码"}))
+		return
+	}
+	if h.grant != nil && h.cfg != nil {
+		risk := h.grant.RiskScore(uid, middleware.ClientIP(c), c.Request.UserAgent())
+		if risk >= h.cfg.FreeGrantRiskThreshold {
+			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"invite": "暂时无法绑定邀请码，请稍后再试"}))
+			return
+		}
+	}
 	var existing model.UserInvite
 	if err := h.db.Where("invitee_id = ?", uid).First(&existing).Error; err == nil {
 		errs.Abort(c, errs.AddConflict("你已经绑定过邀请关系"))
@@ -223,6 +253,10 @@ func (h *ActivityHandler) BindInvite(c *gin.Context) {
 	if h.settings != nil {
 		inviterReward = h.settings.InviteRewardMicros()
 		inviteeReward = h.settings.InviteeRewardMicros()
+	}
+	if h.cfg != nil && !h.withinInviteDailyBudget(inviterReward+inviteeReward) {
+		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"invite": "今日邀请名额已用完，请明天再试"}))
+		return
 	}
 	invite := model.UserInvite{
 		Code:                *inviter.InviteCode,
@@ -261,4 +295,40 @@ func (h *ActivityHandler) BindInvite(c *gin.Context) {
 		"inviterRewardMicros": inviterReward,
 		"inviteeRewardMicros": inviteeReward,
 	})
+}
+
+// withinInviteDailyBudget 与免费领取共用 FREE_GRANT_DAILY_BUDGET_MICROS：
+// 当日已发出的邀请奖励与免费领取估算成本合并计入，超出则拒绝本次绑定。
+// 统计落库（而非进程内存），重启与多实例口径一致，日界按 UTC+8。
+func (h *ActivityHandler) withinInviteDailyBudget(bindCostMicros int64) bool {
+	if h.cfg.FreeGrantDailyBudgetMicros <= 0 {
+		return false
+	}
+	if bindCostMicros <= 0 {
+		return true
+	}
+	now := time.Now().In(statZone)
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, statZone)
+	dayEnd := dayStart.Add(24 * time.Hour)
+	var invites int64
+	if err := h.db.Model(&model.UserInvite{}).
+		Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).
+		Count(&invites).Error; err != nil {
+		slog.Error("统计当日邀请数失败，预算闸门按拒绝处理", "err", err)
+		return false
+	}
+	spent := invites * bindCostMicros
+	if h.grant != nil {
+		if estimate := h.grant.EstimatePerClaimMicros(); estimate > 0 {
+			var grantedClaims int64
+			if err := h.db.Model(&model.FreeGrantClaim{}).
+				Where("status = ? AND created_at >= ? AND created_at < ?", "granted", dayStart, dayEnd).
+				Count(&grantedClaims).Error; err != nil {
+				slog.Error("统计当日领取数失败，预算闸门按拒绝处理", "err", err)
+				return false
+			}
+			spent += grantedClaims * estimate
+		}
+	}
+	return spent+bindCostMicros <= h.cfg.FreeGrantDailyBudgetMicros
 }

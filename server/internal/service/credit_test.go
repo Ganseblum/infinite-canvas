@@ -424,6 +424,12 @@ func TestFreeTrialTakesPriorityOverDiscount(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("写入活动失败: %v", err)
 	}
+	// 免费额度现在要求先有 granted 领取记录（差异清单 #5），先补一条再验证优先于折扣。
+	if err := g.Create(&model.FreeGrantClaim{
+		ID: uuid.New(), UserID: user.ID, CampaignID: "test-campaign", Status: "granted",
+	}).Error; err != nil {
+		t.Fatalf("写入领取记录失败: %v", err)
+	}
 	quote, err := quotes.BuildQuote(context.Background(), user.ID, item, "image", QuoteParams{"size": "1024x1024"}, 1, now)
 	if err != nil {
 		t.Fatalf("报价失败: %v", err)

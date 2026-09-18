@@ -111,22 +111,24 @@
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
-cp .env.example .env          # 填写数据库、JWT、管理员与邮件配置
-docker compose up -d db       # 或用本机 MySQL 8.4
-cd server && go run ./cmd/server
+cp .env.example .env
+# 本机 go run 用：DATABASE_URL 的 host 改为 127.0.0.1:13306，并填好 JWT_SECRET（≥32 字符）、
+# CREDENTIAL_MASTER_KEY（32 字节）、管理员账号；FREE_GRANT_ENABLED=true 时 FREE_GRANT_* 三项必填
+docker compose -f docker-compose.local.yml up -d db   # 或用本机 MySQL 8.4
+cd server && go run ./cmd/server                      # 启动时自动加载 .env，不需要手动 export
 cd web && bun install && bun run dev
 ```
 
-### Docker 运行
+### Docker 运行（全栈）
 
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
-cp .env.example .env          # 填写数据库、JWT、管理员与邮件配置
-docker compose up -d
+cp .env.example .env          # 至少填好数据库密码、JWT_SECRET、CREDENTIAL_MASTER_KEY、管理员与 FREE_GRANT_*（或关掉 FREE_GRANT_ENABLED）
+docker compose up -d --build  # 首次启动本地构建 app / admin / api 镜像，DATABASE_URL 保持 host=db
 ```
 
-运行后默认端口 3000，可访问 `http://localhost:3000`，使用 `.env` 中配置的管理员账号登录。
+运行后默认端口 3000，可访问 `http://localhost:3000`，使用 `.env` 中配置的管理员账号登录；本地无 SMTP 时把 `MAIL_DRIVER` 设为 `log`，验证邮件内容会打进 api 容器日志。测试/正式服务器的分环境部署走 `deploy.sh` 与 `deploy/env.*`，见 [Docker 部署](docs/content/docs/overview/docker.mdx) 与 `deploy/README.md`。
 
 ## 效果展示
 

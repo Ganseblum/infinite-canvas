@@ -692,7 +692,12 @@ func TestCallChatCanceledContextMakesNoSecondUpstreamRequest(t *testing.T) {
 		atomic.AddInt32(&hits, 1)
 		started <- struct{}{}
 		// 挂住直到客户端取消，确保取消发生在第一次请求进行中。
-		<-r.Context().Done()
+		// 兜底 10 秒：个别 transport 版本取消后不立即断开 TCP，上游永远看不到
+		// 连接关闭，会让 defer upstream.Close() 无限等待。
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
 	}))
 	defer upstream.Close()
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")

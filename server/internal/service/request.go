@@ -23,26 +23,58 @@ type ReserveResult struct {
 	Transactions   []model.CreditTransaction
 }
 
-// ConsumeFreeTrial 原子占用一次免费额度。计数只增不减，删除生成历史不返还。
+// ConsumeFreeTrial 原子占用一次免费额度。
+// 计数用「条件自增 + 判 RowsAffected」实现：先查后加在并发下会全部读到未满
+// 再各自 +1（差异清单 #32，真环境实测超发）。计数只增不减，删除生成历史不返还；
+// 生成失败的退还走 RefundFreeTrial。
 func (s *QuotaService) ConsumeFreeTrial(tx *gorm.DB, userID uuid.UUID, metric string) error {
-	limit := int64(0)
-	switch metric {
-	case MetricFreeImageTrial:
-		limit = FreeImageTrialLimit
-	case MetricFreeVideoTrial:
-		limit = FreeVideoTrialLimit
-	default:
+	limit := freeTrialLimit(metric)
+	if limit == 0 {
 		return errors.New("未知的免费额度类型")
 	}
-	current, err := s.usageWithin(tx, userID, metric)
-	if err != nil {
+	updatedAt := time.Now()
+	if err := s.ensureUsageRow(tx, userID, metric, updatedAt); err != nil {
 		return err
 	}
-	if current >= limit {
+	res := tx.Exec(
+		`UPDATE usage_records SET value = value + 1, updated_at = ?
+		 WHERE user_id = ? AND metric = ? AND period = ? AND value < ?`,
+		updatedAt, userID, metric, PeriodTotal, limit,
+	)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
 		return ErrFreeTrialTaken
 	}
-	_, err = s.AddUsage(tx, userID, metric, 1)
-	return err
+	return nil
+}
+
+func freeTrialLimit(metric string) int64 {
+	switch metric {
+	case MetricFreeImageTrial:
+		return FreeImageTrialLimit
+	case MetricFreeVideoTrial:
+		return FreeVideoTrialLimit
+	default:
+		return 0
+	}
+}
+
+// ensureUsageRow 保证计数行存在（0 值幂等写入），MySQL 与 SQLite 各用一条 upsert。
+func (s *QuotaService) ensureUsageRow(tx *gorm.DB, userID uuid.UUID, metric string, updatedAt time.Time) error {
+	if err := tx.Exec(
+		`INSERT INTO usage_records (user_id, metric, period, value, updated_at) VALUES (?, ?, ?, 0, ?)
+		 ON DUPLICATE KEY UPDATE value = value`,
+		userID, metric, PeriodTotal, updatedAt,
+	).Error; err == nil {
+		return nil
+	}
+	return tx.Exec(
+		`INSERT INTO usage_records (user_id, metric, period, value, updated_at) VALUES (?, ?, ?, 0, ?)
+		 ON CONFLICT(user_id, metric, period) DO UPDATE SET value = value`,
+		userID, metric, PeriodTotal, updatedAt,
+	).Error
 }
 
 // Reserve 按报价预扣点数：先扣 granted 再扣 purchased，返回消费流水供失败退还。
@@ -95,19 +127,29 @@ func (s *AIRequestService) MarkSucceeded(tx *gorm.DB, requestID uuid.UUID, durat
 }
 
 // MarkFailed 收敛请求为失败；需要退还时按原消费流水逐条退回。
+// 状态收敛是条件更新：只在 running → failed 执行一次，并发收敛/多实例不会重复退款。
 func (s *AIRequestService) MarkFailed(ctx context.Context, request *model.AIRequest, upstreamStatus int) error {
 	updates := map[string]any{"status": "failed"}
 	if upstreamStatus > 0 {
 		updates["upstream_status"] = upstreamStatus
 	}
-	if err := s.db.Model(&model.AIRequest{}).Where("id = ?", request.ID).Updates(updates).Error; err != nil {
-		return err
+	res := s.db.Model(&model.AIRequest{}).Where("id = ? AND status = ?", request.ID, "running").Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil
 	}
 	return s.Refund(ctx, request)
 }
 
 // Refund 按请求里记录的消费流水退款。唯一索引保证重复退还只生效一次。
+// 免费试用请求没有点数流水：按同一计数器条件递减一次（差异清单 #124，
+// 失败不应永久消耗试用——点数退了，试用也要退）。
 func (s *AIRequestService) Refund(ctx context.Context, request *model.AIRequest) error {
+	if request.UsedFreeTrial {
+		return s.refundFreeTrial(ctx, request)
+	}
 	consumeIDs := s.consumeIDs(request)
 	if len(consumeIDs) == 0 {
 		return nil
@@ -119,6 +161,30 @@ func (s *AIRequestService) Refund(ctx context.Context, request *model.AIRequest)
 		return err
 	}
 	return s.db.Model(&model.AIRequest{}).Where("id = ?", request.ID).Update("refund_pending", false).Error
+}
+
+func (s *AIRequestService) refundFreeTrial(ctx context.Context, request *model.AIRequest) error {
+	metric := trialMetricFor(request.Capability)
+	if metric == "" {
+		return nil
+	}
+	if err := s.quota.RefundFreeTrial(s.db, request.UserID, metric); err != nil {
+		slog.Error("生成失败退还免费试用失败", "request", request.ID, "err", err)
+		_ = s.db.Model(&model.AIRequest{}).Where("id = ?", request.ID).Update("refund_pending", true).Error
+		return err
+	}
+	return s.db.Model(&model.AIRequest{}).Where("id = ?", request.ID).Update("refund_pending", false).Error
+}
+
+func trialMetricFor(capability string) string {
+	switch capability {
+	case "image":
+		return MetricFreeImageTrial
+	case "video":
+		return MetricFreeVideoTrial
+	default:
+		return ""
+	}
 }
 
 func (s *AIRequestService) consumeIDs(request *model.AIRequest) []uuid.UUID {
