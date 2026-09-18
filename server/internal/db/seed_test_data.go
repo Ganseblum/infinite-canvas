@@ -48,6 +48,10 @@ func SeedTestData(gormDB *gorm.DB, email, password string) error {
 	} else if err != nil {
 		return fmt.Errorf("查询测试账号失败: %w", err)
 	}
+	// 平台权益账户与注册同口径补齐（点数账户 + 当前档位存储配额），幂等。
+	if err := ensurePlatformAccounts(gormDB, user.ID); err != nil {
+		return fmt.Errorf("补齐测试账号平台权益账户失败: %w", err)
+	}
 
 	var canvasCount int64
 	if err := gormDB.Model(&model.Canvas{}).Where("user_id = ?", user.ID).Count(&canvasCount).Error; err != nil {

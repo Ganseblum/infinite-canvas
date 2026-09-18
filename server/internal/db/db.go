@@ -16,7 +16,23 @@ import (
 
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/platform/billing"
+	"github.com/infinite-canvas/server/internal/platform/membership"
 )
+
+// ensurePlatformAccounts 按「注册事务」同口径为账号补齐平台权益账户：
+// 点数账户（credit_accounts）与按当前档位的存储配额（storage_accounts）。
+// 全部建号路径（注册 / 管理员建号 / EnsureAdmin / 测试 seed）都必须保证这两行存在，
+// 否则 /api/me 等读取配额的接口会因行缺失 500。
+func ensurePlatformAccounts(gormDB *gorm.DB, userID uuid.UUID) error {
+	if err := billing.NewService(gormDB, model.ProductCanvas).EnsureAccount(gormDB, userID); err != nil {
+		return fmt.Errorf("建立点数账户失败: %w", err)
+	}
+	if err := membership.NewService(gormDB).SyncQuotaWithin(gormDB, userID, time.Now()); err != nil {
+		return fmt.Errorf("建立存储配额失败: %w", err)
+	}
+	return nil
+}
 
 // Connect 打开数据库连接。DATABASE_URL 以 sqlite: 前缀时使用 SQLite 文件，
 // 便于本地快速起一个不依赖 MySQL 的验证实例；其余情况一律走 MySQL。
@@ -139,10 +155,13 @@ func EnsureAdmin(gormDB *gorm.DB, email, password string) error {
 			return fmt.Errorf("创建管理员失败: %w", err)
 		}
 		slog.Info("已创建首个管理员", "email", email)
-		return nil
+		return ensurePlatformAccounts(gormDB, admin.ID)
 	}
 	if err != nil {
 		return fmt.Errorf("查询管理员失败: %w", err)
+	}
+	if err := ensurePlatformAccounts(gormDB, user.ID); err != nil {
+		return err
 	}
 	if user.RoleKey == nil || *user.RoleKey != authz.SystemRoleKey {
 		if err := authz.AssignRole(gormDB, user.ID, &roleKey); err != nil {
