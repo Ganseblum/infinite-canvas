@@ -847,6 +847,7 @@ export default {
             columns: { name: "Name", format: "Format", baseUrl: "URL", key: "Key", priority: "Priority", enabled: "Status", actions: "Actions" },
         },
         models: {
+            columns: { model: "Model", capability: "Capability", provider: "Provider", prices: "Prices", freeTrial: "Free trial", enabled: "Enabled", actions: "Actions" },
             hint: "The catalog is the only model source for the frontend; constraints and the price matrix are consumed on both sides, so key renames must be synced.",
             create: "New model",
             createTitle: "New model",

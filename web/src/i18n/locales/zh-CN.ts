@@ -847,6 +847,7 @@ export default {
             columns: { name: "名称", format: "格式", baseUrl: "地址", key: "Key", priority: "优先级", enabled: "状态", actions: "操作" },
         },
         models: {
+            columns: { model: "模型", capability: "能力", provider: "渠道", prices: "价格", freeTrial: "免费试用", enabled: "启用", actions: "操作" },
             hint: "模型目录是前端唯一的模型来源；constraints 与价格矩阵由服务端与前端共同消费，改键名必须两侧同步。",
             create: "新增模型",
             createTitle: "新增模型",
