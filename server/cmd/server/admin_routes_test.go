@@ -10,9 +10,10 @@ import (
 	"github.com/infinite-canvas/server/internal/handler"
 )
 
-// expectedAdminRouteCount 是管理后台的路由总数：41 条既有路由 + 7 条 RBAC 路由 + 管理员建号 + 用量分析。 // +1 条 /admin/meta（多产品后台引导，免权限点）。
+// expectedAdminRouteCount 是管理后台的路由总数：41 条既有路由 + 7 条 RBAC 路由 + 管理员建号 + 用量分析。
+// +1 条 /admin/meta（多产品后台引导，免权限点）+ 4 条会员订阅路由。
 // 增删管理路由必须同步改这个数字，让漏改权限的改动无法悄悄通过。
-const expectedAdminRouteCount = 51
+const expectedAdminRouteCount = 60
 
 func newAdminRouteTestEngine(t *testing.T) (*gin.Engine, []adminRouteSpec) {
 	t.Helper()
@@ -84,6 +85,27 @@ func TestEveryRegisteredPermissionIsUsedBySomeRoute(t *testing.T) {
 	}
 	if len(used) != len(authz.Keys()) {
 		t.Fatalf("路由使用的权限点数应等于注册表数量 %d, got %d", len(authz.Keys()), len(used))
+	}
+}
+
+// TestAdminMembershipRoutesRegistered 锁定会员订阅四条路由的权限点：
+// 列表读 membership.read，发放/补偿/作废写 membership.write。
+func TestAdminMembershipRoutesRegistered(t *testing.T) {
+	_, specs := newAdminRouteTestEngine(t)
+	want := map[string]string{
+		"GET /membership/subscriptions":        authz.PermMembershipRead,
+		"POST /membership/grant":               authz.PermMembershipWrite,
+		"POST /membership/compensate":          authz.PermMembershipWrite,
+		"DELETE /membership/subscriptions/:id": authz.PermMembershipWrite,
+	}
+	got := make(map[string]string, len(specs))
+	for _, spec := range specs {
+		got[spec.Method+" "+spec.Path] = spec.Permission
+	}
+	for full, permission := range want {
+		if got[full] != permission {
+			t.Fatalf("路由 %s 应注册权限点 %s, got %q", full, permission, got[full])
+		}
 	}
 }
 

@@ -326,12 +326,14 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		PurchasedMicros int64
 		GrantedMicros   int64
 		StorageBytes    int64
+		StorageQuota    int64
 	}
 	selectExpr := `platform_users.id, platform_users.email, platform_users.username, platform_users.role, platform_users.role_key, platform_users.status,
 		platform_users.email_verified_at, platform_users.created_at,
 		COALESCE(ca.purchased_micros, 0) AS purchased_micros,
 		COALESCE(ca.granted_micros, 0) AS granted_micros,
-		COALESCE(sa.used_bytes, 0) AS storage_bytes`
+		COALESCE(sa.used_bytes, 0) AS storage_bytes,
+		COALESCE(sa.quota_bytes, 0) AS storage_quota`
 	err := base.Select(selectExpr).
 		Order(sortColumn).Order("platform_users.id ASC").
 		Offset((params.Page - 1) * params.Size).Limit(params.Size).
@@ -345,12 +347,14 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	// 管理流量低：逐行派生档位与最新订阅周期，planId/paidUntil 键名不变、语义按 D6 新口径。
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		derived, _, err := h.membership.ActivePlan(c.Request.Context(), row.ID, now)
+		derived, graceEndsAt, err := h.membership.ActivePlan(c.Request.Context(), row.ID, now)
 		if err != nil {
 			slog.Error("派生用户档位失败", "err", err)
 			errs.Abort(c, errs.ErrInternal)
 			return
 		}
+		// membership.periodEnd 与 paidUntil 同源：最新订阅行的 period_end。
+		paidUntil := latestPaidUntil(h.db, row.ID)
 		items = append(items, gin.H{
 			"id":              row.ID.String(),
 			"email":           row.Email,
@@ -362,9 +366,20 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"planId":          derived,
 			"purchasedMicros": row.PurchasedMicros,
 			"grantedMicros":   row.GrantedMicros,
-			"paidUntil":       formatTimePtr(latestPaidUntil(h.db, row.ID)),
+			"paidUntil":       formatTimePtr(paidUntil),
 			"storageBytes":    row.StorageBytes,
 			"createdAt":       formatTime(row.CreatedAt),
+			// T07 纯加法：会员/存储/产品聚合键，旧键全部保留。
+			"membership": gin.H{
+				"planId":      derived,
+				"periodEnd":   formatTimePtr(paidUntil),
+				"graceEndsAt": formatTimePtr(graceEndsAt),
+			},
+			"storage": gin.H{
+				"usedBytes":  row.StorageBytes,
+				"quotaBytes": row.StorageQuota,
+			},
+			"products": []string{model.ProductCanvas},
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": params.Page, "size": params.Size})
@@ -381,7 +396,7 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		return
 	}
 	now := time.Now()
-	planID, _, err := h.membership.ActivePlan(c.Request.Context(), userID, now)
+	planID, graceEndsAt, err := h.membership.ActivePlan(c.Request.Context(), userID, now)
 	if err != nil {
 		errs.Abort(c, errs.ErrInternal)
 		return
@@ -391,13 +406,15 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	storageBytes, _, _ := h.usage.Snapshot(c.Request.Context(), userID)
+	storageBytes, quotaBytes, _ := h.usage.Snapshot(c.Request.Context(), userID)
 	balance, err := h.credits.Balance(c.Request.Context(), userID)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
 	mediaCount, _ := h.mediaCount(userID)
+	// membership.periodEnd 与 paidUntil 同源：最新订阅行的 period_end。
+	paidUntil := latestPaidUntil(h.db, userID)
 	c.JSON(http.StatusOK, gin.H{"user": gin.H{
 		"id":              user.ID.String(),
 		"email":           user.Email,
@@ -415,10 +432,21 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		"retentionDays":   plan.RetentionDays,
 		"purchasedMicros": balance.PurchasedMicros,
 		"grantedMicros":   balance.GrantedMicros,
-		"paidUntil":       formatTimePtr(latestPaidUntil(h.db, userID)),
+		"paidUntil":       formatTimePtr(paidUntil),
 		"storageBytes":    storageBytes,
 		"mediaCount":      mediaCount,
 		"readOnly":        storageBytes > plan.StorageBytes,
+		// T07 纯加法：会员/存储/产品聚合键，旧键全部保留。
+		"membership": gin.H{
+			"planId":      plan.ID,
+			"periodEnd":   formatTimePtr(paidUntil),
+			"graceEndsAt": formatTimePtr(graceEndsAt),
+		},
+		"storage": gin.H{
+			"usedBytes":  storageBytes,
+			"quotaBytes": quotaBytes,
+		},
+		"products": []string{model.ProductCanvas},
 	}})
 }
 

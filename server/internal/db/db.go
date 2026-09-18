@@ -84,6 +84,7 @@ func Migrate(gormDB *gorm.DB) error {
 		&model.Role{},
 		&model.Permission{},
 		&model.RolePermission{},
+		&model.OAuthClient{},
 	)
 }
 

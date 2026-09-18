@@ -27,7 +27,10 @@ import (
 
 const (
 	RefreshCookieName = "ic_refresh"
-	RefreshCookiePath = "/api/auth"
+	// RefreshCookiePath 自 M3 起从 /api/auth 扩为 /api（PLAN-PLATFORM-ACCOUNT-MEMBERSHIP D8
+	// 拍板直接切换，无双发兼容期）：覆盖 /api 下全部端点，包括 /api/oidc/* 的 OIDC 流程。
+	// 仍为 host-only + Lax + HttpOnly，只是可见路径变宽。
+	RefreshCookiePath = "/api"
 )
 
 var (

@@ -25,6 +25,7 @@ import (
 	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
 	"github.com/infinite-canvas/server/internal/watermark"
@@ -212,6 +213,7 @@ func main() {
 	// 平台权益三域：报价的免费试用判定走 billing 域，媒体记账与档位派生走 storage/membership 域。
 	catalogService := service.NewCatalogService(gormDB, func() bool { return cfg.PromotionEnabled })
 	billingService := billing.NewService(gormDB, model.ProductCanvas)
+	storageService := platformstorage.NewService(gormDB, model.ProductCanvas)
 	quoteService := service.NewQuoteService(catalogService, billingService, cfg.JWTSecret)
 	aiHandler := handler.NewAIHandler(gormDB, catalogService, quoteService, upstreamService, mediaStorage, cfg.AppBaseURL, moderationService)
 	aiTaskService := service.NewAITaskService(gormDB, upstreamService, service.NewMediaWriteService(gormDB, mediaStorage))
@@ -227,6 +229,15 @@ func main() {
 	adminHandler.SetSettings(siteSettings)
 	communityHandler := handler.NewCommunityHandler(gormDB, siteSettings)
 	activityHandler := handler.NewActivityHandler(gormDB, siteSettings, grantService, cfg)
+
+	// M3 OIDC Provider（PLAN T09）：签名密钥从 OIDC_JWKS_PRIVATE_KEY（PEM PKCS#8）读取，
+	// 配置了但解析失败直接退出（fail-fast）；未配置时生成临时密钥并告警——重启后旧 token 失效，
+	// 生产环境必须显式配置。
+	oidcHandler, err := handler.NewOIDCHandler(gormDB, cfg, idn)
+	if err != nil {
+		slog.Error("初始化 OIDC Provider 失败", "err", err)
+		os.Exit(1)
+	}
 
 	router := gin.New()
 	router.Use(middleware.RequestID(), middleware.Logger(level.Level()), middleware.Recovery())
@@ -293,6 +304,16 @@ func main() {
 
 	// 全站业务接口要求登录且账号未封禁；注销冷静期的账号可以浏览，但生成与下单被拦截。
 	active := middleware.RequireActiveUser(idn)
+
+	// OIDC Provider 四端点（PLAN T09）：authorize 要求登录（Auth + RequireActiveUser），
+	// token/jwks 公开；userinfo 在 handler 内验 OIDC 签发的 RS256 access token，
+	// 与平台 HS256 会话是两套凭据，不走 middleware.Auth。/api/oidc/ 也在维护模式豁免前缀内
+	// （token 是 POST，不能被维护模式拦断）。T09 不含 admin 管理端点（T10 再挂 sso.read/write）。
+	oidc := api.Group("/oidc")
+	oidc.GET("/authorize", middleware.Auth(secret), active, oidcHandler.Authorize)
+	oidc.POST("/token", oidcHandler.Token)
+	oidc.GET("/userinfo", oidcHandler.Userinfo)
+	oidc.GET("/jwks.json", oidcHandler.JWKS)
 
 	me := api.Group("/me", middleware.Auth(secret), active, passwordGate)
 	{
@@ -458,6 +479,16 @@ func main() {
 			slog.Error("账号匿名化任务失败", "err", err)
 		} else if n > 0 {
 			slog.Info("已匿名化到期的注销账号", "count", n)
+		}
+	})
+	// T08：夜间存储记账对账——三层比对（media_files 聚合 / storage_usage / storage_accounts），
+	// 不平走 storage.Recalculate 以事实源重算收敛并落结构化日志（告警通道 D9 拍板后接线）。
+	reconcileService := service.NewReconcileService(gormDB, storageService)
+	go runScheduled(ctx, "存储记账对账", 24*time.Hour, func() {
+		if checked, fixed, err := reconcileService.ReconcileStorage(ctx, time.Now()); err != nil {
+			slog.Error("存储记账对账失败", "err", err)
+		} else if fixed > 0 {
+			slog.Warn("storage_reconcile_drift", "checked", checked, "fixed", fixed)
 		}
 	})
 

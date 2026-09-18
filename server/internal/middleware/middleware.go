@@ -264,7 +264,8 @@ var errMaintenanceMode = errs.New(503, "MAINTENANCE_MODE", "站点维护中，�
 
 // MaintenanceGate 维护模式写拦截（差异清单 #117）：站点设置开启维护模式后，
 // 非管理员的写请求（POST/PUT/PATCH/DELETE）返回 503 MAINTENANCE_MODE；
-// GET/HEAD/OPTIONS 放行，/api/auth/* 与 /api/admin/* 放行（健康检查不在 /api 组，天然不受影响）。
+// GET/HEAD/OPTIONS 放行，/api/auth/*、/api/oidc/*（token 是 POST，OIDC 流程不能被拦断）
+// 与 /api/admin/* 放行（健康检查不在 /api 组，天然不受影响）。
 //
 // 挂载在 /api 组级、Auth 之前：匿名与普通用户的写请求在这里被挡下。管理员判定按 RBAC
 // 现状每请求查库（platform_users.role_key 非空即有后台角色），只在「维护中 + 写请求 + 非豁免路径」时才查。
@@ -280,7 +281,7 @@ func MaintenanceGate(settings *service.SiteSettingService, idn *identity.Service
 		// 支付回调是渠道服务器的服务端调用，维护期也必须照常到账，
 		// 否则渠道会反复重试而订单长期 pending。
 		if strings.HasPrefix(path, "/api/auth/") || strings.HasPrefix(path, "/api/admin/") ||
-			strings.HasPrefix(path, "/api/payments/webhook/") {
+			strings.HasPrefix(path, "/api/payments/webhook/") || strings.HasPrefix(path, "/api/oidc/") {
 			c.Next()
 			return
 		}

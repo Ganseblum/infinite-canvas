@@ -97,6 +97,19 @@ func registerAdminRoutes(g *gin.RouterGroup, h *handler.AdminHandler) []adminRou
 	r.GET("/orders", authz.PermOrdersRead, h.ListOrders)
 	r.POST("/requests/refunds/retry", authz.PermOrdersRefund, h.RetryRefunds)
 
+	// ===== 会员订阅 =====
+	r.GET("/membership/subscriptions", authz.PermMembershipRead, h.ListSubscriptions)
+	r.POST("/membership/grant", authz.PermMembershipWrite, h.GrantSubscription)
+	r.POST("/membership/compensate", authz.PermMembershipWrite, h.CompensateSubscription)
+	r.DELETE("/membership/subscriptions/:id", authz.PermMembershipWrite, h.RevokeSubscription)
+
+	// ===== SSO 接入客户端（PLAN T10）=====
+	r.GET("/sso/clients", authz.PermSSORead, h.ListOAuthClients)
+	r.POST("/sso/clients", authz.PermSSOWrite, h.CreateOAuthClient)
+	r.PATCH("/sso/clients/:id", authz.PermSSOWrite, h.UpdateOAuthClient)
+	r.POST("/sso/clients/:id/reset-secret", authz.PermSSOWrite, h.ResetOAuthClientSecret)
+	r.DELETE("/sso/clients/:id", authz.PermSSOWrite, h.DeleteOAuthClient)
+
 	r.GET("/channels", authz.PermChannelsRead, h.ListChannels)
 	r.POST("/channels", authz.PermChannelsWrite, h.CreateChannel)
 	r.PATCH("/channels/:id", authz.PermChannelsWrite, h.UpdateChannel)
