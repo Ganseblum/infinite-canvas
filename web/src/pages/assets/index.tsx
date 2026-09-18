@@ -10,7 +10,7 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { assetCoverUrl, assetHeight, assetMimeType, assetNote, assetSource, assetText, assetUrl, assetWidth } from "@/lib/asset";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
-import { getMediaBlob } from "@/services/api/media";
+import { fetchMediaDownload, requestDownload } from "@/services/api/media";
 import { createAsset, deleteAsset, patchAsset } from "@/services/api/assets";
 import { publishCommunityWork, getPublicSettings } from "@/services/api/community";
 import type { AssetItem, AssetKind } from "@/services/data/types";
@@ -154,10 +154,13 @@ export default function AssetsPage() {
     const downloadAsset = async (asset: AssetItem) => {
         if (asset.kind === "text") return;
         try {
-            const blob = asset.storageKey ? await getMediaBlob(asset.storageKey) : await (await fetch(assetUrl(asset))).blob();
-            if (!blob) {
-                message.error(t("assets.downloadFailed"));
-                return;
+            let blob: Blob;
+            if (asset.storageKey) {
+                // 先向服务端申请取件链接（按档位返回水印版或干净件），再凭链接取件。
+                const { url } = await requestDownload(asset.storageKey);
+                blob = await fetchMediaDownload(url);
+            } else {
+                blob = await (await fetch(assetUrl(asset))).blob();
             }
             const ext = assetMimeType(asset).split("/")[1]?.split("+")[0] || (asset.kind === "video" ? "mp4" : "png");
             saveAs(blob, `${asset.title || "asset"}.${ext}`);
@@ -231,15 +234,7 @@ export default function AssetsPage() {
                     </div>
 
                     <div className="mx-auto mt-8 w-full max-w-2xl">
-                        <Input.Search
-                            className="w-full"
-                            size="large"
-                            allowClear
-                            prefix={<Search className="size-4 text-stone-400" />}
-                            value={keyword}
-                            placeholder={t("assets.search")}
-                            onChange={(event) => setKeyword(event.target.value)}
-                        />
+                        <Input.Search className="w-full" size="large" allowClear prefix={<Search className="size-4 text-stone-400" />} value={keyword} placeholder={t("assets.search")} onChange={(event) => setKeyword(event.target.value)} />
                     </div>
 
                     <div className="mx-auto mt-6 grid max-w-6xl gap-3 text-left">
@@ -277,11 +272,7 @@ export default function AssetsPage() {
                                 >
                                     {t("assets.import")}
                                 </button>
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={openCreate}
-                                >
+                                <button type="button" className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300" onClick={openCreate}>
                                     {t("assets.add")}
                                 </button>
                             </div>
@@ -531,7 +522,9 @@ function AssetCard({
                     {cover ? (
                         <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
                     ) : (
-                        <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? assetText(asset) : t("assets.noCover")}</div>
+                        <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">
+                            {asset.kind === "text" ? assetText(asset) : t("assets.noCover")}
+                        </div>
                     )}
                 </button>
             }

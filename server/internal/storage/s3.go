@@ -44,6 +44,8 @@ type S3 struct {
 	creds  aws.Credentials
 	// now 可注入，测试里用来断言同一对齐窗口内签出的 URL 完全一致。
 	now func() time.Time
+	// origNeg 是干净原件的「不存在」负缓存，见 orig.go。nil 时退化为每次 Stat。
+	origNeg *origNegCache
 }
 
 func NewS3(cfg S3Config) (*S3, error) {
@@ -68,11 +70,12 @@ func NewS3(cfg S3Config) (*S3, error) {
 		return nil, err
 	}
 	return &S3{
-		cfg:    cfg,
-		client: client,
-		signer: signer.NewSigner(),
-		creds:  creds,
-		now:    time.Now,
+		cfg:     cfg,
+		client:  client,
+		signer:  signer.NewSigner(),
+		creds:   creds,
+		now:     time.Now,
+		origNeg: &origNegCache{missing: map[string]struct{}{}},
 	}, nil
 }
 
@@ -143,6 +146,21 @@ func (s *S3) Stat(ctx context.Context, path string) (int64, error) {
 // 这里显式把对齐后的时间传给 SDK 的 SigV4 签名器，签名本身仍由 SDK 计算。
 func (s *S3) Presign(ctx context.Context, path string) (Presigned, error) {
 	signedAt := s.now().UTC().Truncate(s.cfg.PresignAlign)
+	return s.presignAt(ctx, path, signedAt, s.cfg.PresignTTL)
+}
+
+// PresignWithTTL 生成精确 ttl 的预签名 URL，签发时间为当前时刻、不对齐整点，
+// 供短时效受限直链（如干净原件下载）使用。ttl 必须 > 0。
+func (s *S3) PresignWithTTL(ctx context.Context, path string, ttl time.Duration) (Presigned, error) {
+	if ttl <= 0 {
+		return Presigned{}, fmt.Errorf("storage: PresignWithTTL 需要正数 ttl, got %s", ttl)
+	}
+	return s.presignAt(ctx, path, s.now().UTC(), ttl)
+}
+
+// presignAt 是 Presign 与 PresignWithTTL 的共享实现：signedAt 为签发时间，
+// 有效期精确等于 ttl，签名仍由 SDK 的 SigV4 签名器计算。
+func (s *S3) presignAt(ctx context.Context, path string, signedAt time.Time, ttl time.Duration) (Presigned, error) {
 	objectURL, err := s.objectURL(path)
 	if err != nil {
 		return Presigned{}, err
@@ -152,14 +170,14 @@ func (s *S3) Presign(ctx context.Context, path string) (Presigned, error) {
 		return Presigned{}, err
 	}
 	q := req.URL.Query()
-	q.Set("X-Amz-Expires", strconv.FormatInt(int64(s.cfg.PresignTTL.Seconds()), 10))
+	q.Set("X-Amz-Expires", strconv.FormatInt(int64(ttl.Seconds()), 10))
 	req.URL.RawQuery = q.Encode()
 
 	uri, _, err := s.signer.PresignHTTP(ctx, s.creds, req, "UNSIGNED-PAYLOAD", s3ServiceName, s.cfg.Region, signedAt)
 	if err != nil {
 		return Presigned{}, err
 	}
-	return Presigned{URL: uri, ExpiresAt: signedAt.Add(s.cfg.PresignTTL)}, nil
+	return Presigned{URL: uri, ExpiresAt: signedAt.Add(ttl)}, nil
 }
 
 // objectURL 按 S3_FORCE_PATH_STYLE 组装对象地址；bucket 与对象路径都由服务端控制，

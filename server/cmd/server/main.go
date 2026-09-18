@@ -17,13 +17,14 @@ import (
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/db"
-	"github.com/infinite-canvas/server/internal/handler"
 	"github.com/infinite-canvas/server/internal/envload"
+	"github.com/infinite-canvas/server/internal/handler"
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
+	"github.com/infinite-canvas/server/internal/watermark"
 )
 
 func main() {
@@ -171,7 +172,10 @@ func main() {
 		CacheTTL: cfg.ModerationCacheTTL,
 	})
 
-	mediaHandler := handler.NewMediaHandler(gormDB, mediaStorage, moderationService)
+	// 媒体水印服务：WATERMARK_ENABLED 只控制生成链路是否烧录（生成挂钩消费），
+	// 下发闸门与下载端点不读该开关、永远在线（计划红线）。
+	wmService := watermark.NewService(cfg.WatermarkFontPath, cfg.WatermarkText)
+	mediaHandler := handler.NewMediaHandler(gormDB, mediaStorage, moderationService, []byte(cfg.JWTSecret), wmService)
 	paymentRegistry, err := service.NewPaymentRegistry(cfg)
 	if err != nil {
 		slog.Error("支付渠道配置无效", "err", err)
@@ -206,6 +210,10 @@ func main() {
 	aiHandler := handler.NewAIHandler(gormDB, catalogService, quoteService, upstreamService, mediaStorage, cfg.AppBaseURL, moderationService)
 	aiTaskService := service.NewAITaskService(gormDB, upstreamService, service.NewMediaWriteService(gormDB, mediaStorage))
 	aiTaskService.SetModeration(moderationService)
+	// T5 生成落盘水印挂钩：WATERMARK_ENABLED 只控制生成时是否烧录（下发闸门与下载
+	// 端点永远在线，不随 flag 下线）。开关关闭时挂钩不生效，生成链路行为与现状一致。
+	aiHandler.SetWatermark(wmService, watermark.Enabled)
+	aiTaskService.SetWatermark(wmService, watermark.Enabled)
 	requestService := service.NewAIRequestService(gormDB)
 
 	adminHandler := handler.NewAdminHandlerWithUpstream(gormDB, cfg, mediaStorage, upstreamService)
@@ -252,6 +260,8 @@ func main() {
 	orderLimiter := middleware.NewLimiter(time.Hour, 10)
 	// 社区发布限流：与 handler 内的每日上限双保险（差异清单 #38）。
 	publishLimiter := middleware.NewLimiter(time.Hour, 12)
+	// 申请下载限流：签发端无状态，按用户限流防刷短时效链接（60 次/小时）。
+	downloadLimiter := middleware.NewLimiter(time.Hour, 60)
 
 	api := router.Group("/api")
 
@@ -361,6 +371,17 @@ func main() {
 		media.GET("/:storageKey", mediaHandler.Get)
 		media.PUT("/:storageKey", mediaHandler.Put)
 		media.DELETE("/:storageKey", mediaHandler.Delete)
+		// 申请下载：严格归属校验后签发短期取件链接（POST 认 Bearer，与写路径同口径）。
+		media.POST("/:storageKey/download",
+			middleware.RateLimit(downloadLimiter, func(c *gin.Context) string { return "download:" + c.GetString("user_id") }),
+			mediaHandler.RequestDownload)
+	}
+
+	// 干净原件取件：签名 URL 必须同时过 MediaAuth（ic_media cookie 或 Bearer），
+	// 这是防盗链的第二道闸；签名、过期与归属校验在 handler 内完成，任一失败一律 404。
+	mediaDownload := api.Group("/media-download", middleware.MediaAuth(secret, gormDB), active, passwordGate)
+	{
+		mediaDownload.GET("/:token", mediaHandler.ServeDownload)
 	}
 
 	// 点数、档位与模型目录

@@ -38,6 +38,9 @@ type Storage interface {
 	// Presign 生成读路径。s3 返回对齐过整点的预签名 URL 与到期时间；
 	// local 返回零值，表示由 handler 直接回流。
 	Presign(ctx context.Context, path string) (Presigned, error)
+	// PresignWithTTL 生成指定 TTL 的读路径签名。s3 返回精确 ttl 的预签名 URL（不对齐整点）；
+	// local 返回零值 Presigned（URL 空、ExpiresAt 零值），调用方据此直接回流。
+	PresignWithTTL(ctx context.Context, path string, ttl time.Duration) (Presigned, error)
 	// Delete 删除对象，对象不存在视为成功（幂等）。
 	Delete(ctx context.Context, path string) error
 	// Stat 返回对象字节数，对象不存在时返回 ErrObjectNotFound。

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	"github.com/infinite-canvas/server/internal/provider"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
+	"github.com/infinite-canvas/server/internal/watermark"
 )
 
 // AIHandler 是报价与全部生成/查询接口的入口。
@@ -40,6 +42,14 @@ type AIHandler struct {
 	tasks      *service.AITaskService
 	moderation *service.ModerationService
 	appURL     string
+	wm         imageWatermarker // 生成落盘水印挂钩（T5），main.go 注入 *watermark.Service
+	wmEnabled  func() bool      // 水印总开关，生产恒为 watermark.Enabled
+}
+
+// imageWatermarker 是生成落盘挂钩对图片水印能力的最小依赖：生产注入 *watermark.Service，
+// 测试注入可报错的替身，用于锁死 fail-closed 语义。
+type imageWatermarker interface {
+	Image(src []byte, srcMime string) (out []byte, outMime string, err error)
 }
 
 func NewAIHandler(db *gorm.DB, catalog *service.CatalogService, quotes *service.QuoteService, upstream *service.UpstreamService, store storage.Storage, appURL string, moderation *service.ModerationService) *AIHandler {
@@ -56,7 +66,18 @@ func NewAIHandler(db *gorm.DB, catalog *service.CatalogService, quotes *service.
 		tasks:      service.NewAITaskService(db, upstream, media),
 		moderation: moderation,
 		appURL:     appURL,
+		wmEnabled:  watermark.Enabled,
 	}
+}
+
+// SetWatermark 注入生成落盘水印挂钩（T5）。enabled 传 watermark.Enabled，
+// 测试可替换以分别覆盖开关两态；未注入 wm 或开关为关时整段跳过，行为与现状一致。
+func (h *AIHandler) SetWatermark(wm imageWatermarker, enabled func() bool) {
+	if enabled == nil {
+		enabled = watermark.Enabled
+	}
+	h.wm = wm
+	h.wmEnabled = enabled
 }
 
 // Slots 供健康检查与测试观察并发占用。
@@ -421,16 +442,9 @@ func (h *AIHandler) moderateAndStoreArtifact(c *gin.Context, user model.User, pr
 		return nil, err
 	}
 	// 审核通过：先写正式存储，再删除隔离原件。媒体行的审核状态与生成记录同口径，
-	// 不再恒为 skipped（差异清单 #12）。
-	objectID := randomKey()
-	file, err := h.media.Save(c.Request.Context(), service.SaveGeneratedMediaInput{
-		UserID:     user.ID,
-		StorageKey: fmt.Sprintf("%s:%s", prefix, objectID),
-		MimeType:   mimeType,
-		Data:       data,
-		MaxBytes:   maxBytes,
-		Moderation: artifactModerationStatus(h.moderation, verdict),
-	})
+	// 不再恒为 skipped（差异清单 #12）。落盘统一走 saveGeneratedImage（水印挂钩在此执行，
+	// 审核送审仍然使用原始 data，水印只发生在审核通过之后）。
+	file, err := h.saveGeneratedImage(c.Request.Context(), user.ID, fmt.Sprintf("%s:%s", prefix, randomKey()), mimeType, data, maxBytes, artifactModerationStatus(h.moderation, verdict))
 	if err != nil {
 		return nil, err
 	}
@@ -533,7 +547,8 @@ func (h *AIHandler) storeAudioArtifact(ctx context.Context, userID uuid.UUID, da
 }
 
 // materialize 把上游产物（base64 或 URL）转成 storageKey 并落盘。
-func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {	data := image.Data
+func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix string, image provider.GeneratedImage, maxBytes int64, downloadTimeout time.Duration) (gin.H, error) {
+	data := image.Data
 	mimeType := image.MimeType
 	if len(data) == 0 && image.URL != "" {
 		downloaded, contentType, err := h.upstream.Download(ctx, image.URL, maxBytes, downloadTimeout)
@@ -552,13 +567,7 @@ func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix st
 		mimeType = defaultMime(prefix)
 	}
 	storageKey := fmt.Sprintf("%s:%s", prefix, randomKey())
-	file, err := h.media.Save(ctx, service.SaveGeneratedMediaInput{
-		UserID:     userID,
-		StorageKey: storageKey,
-		MimeType:   mimeType,
-		Data:       data,
-		MaxBytes:   maxBytes,
-	})
+	file, err := h.saveGeneratedImage(ctx, userID, storageKey, mimeType, data, maxBytes, "")
 	if err != nil {
 		return nil, err
 	}
@@ -567,6 +576,57 @@ func (h *AIHandler) materialize(ctx context.Context, userID uuid.UUID, prefix st
 		"bytes":      file.Bytes,
 		"mimeType":   file.MimeType,
 	}, nil
+}
+
+// saveGeneratedImage 是生成图片落盘的唯一汇聚点（T5 水印挂钩），materialize 与
+// moderateAndStoreArtifact 审核通过后都经由它写正式存储。水印未注入/开关为关、
+// 或归属者为付费档时走现状路径直接存原始字节；免费/日落档严格按 fail-closed 顺序执行：
+// ① 烧水印，失败 → 整单失败退款，绝不回退原始字节；
+// ② 无水印原件写入 orig 路径，失败 → 整单失败（此时水印版尚未落盘，没有任何干净字节可下发）；
+// ③ 水印版落正式存储，失败 → 补偿删除已写的 orig（best-effort）再整单失败。
+func (h *AIHandler) saveGeneratedImage(ctx context.Context, userID uuid.UUID, storageKey, mimeType string, data []byte, maxBytes int64, moderation string) (*model.MediaFile, error) {
+	if h.wm != nil && h.wmEnabled() {
+		_, plan, err := service.NewQuotaService(h.db).DerivePlan(ctx, userID, time.Now())
+		if err != nil {
+			slog.Error("watermark_failed", "kind", "image", "storageKey", storageKey, "err", err)
+			return nil, fmt.Errorf("读取水印档位失败: %w", err)
+		}
+		if plan.ID != "paid" {
+			wmBytes, wmMime, err := h.wm.Image(data, mimeType)
+			if err != nil {
+				slog.Error("watermark_failed", "kind", "image", "storageKey", storageKey, "err", err)
+				return nil, fmt.Errorf("水印烧录失败: %w", err)
+			}
+			origPath := storage.OrigPath(userID.String(), storageKey)
+			if _, _, err := h.store.Put(ctx, origPath, bytes.NewReader(data), mimeType); err != nil {
+				slog.Error("watermark_failed", "kind", "image", "storageKey", storageKey, "err", err)
+				return nil, fmt.Errorf("留存干净原件失败: %w", err)
+			}
+			file, err := h.media.Save(ctx, service.SaveGeneratedMediaInput{
+				UserID:     userID,
+				StorageKey: storageKey,
+				MimeType:   wmMime,
+				Data:       wmBytes,
+				MaxBytes:   maxBytes,
+				Moderation: moderation,
+			})
+			if err != nil {
+				if delErr := h.store.Delete(ctx, origPath); delErr != nil {
+					slog.Error("补偿删除干净原件失败", "path", origPath, "err", delErr)
+				}
+				return nil, err
+			}
+			return file, nil
+		}
+	}
+	return h.media.Save(ctx, service.SaveGeneratedMediaInput{
+		UserID:     userID,
+		StorageKey: storageKey,
+		MimeType:   mimeType,
+		Data:       data,
+		MaxBytes:   maxBytes,
+		Moderation: moderation,
+	})
 }
 
 // ===== 语音 =====

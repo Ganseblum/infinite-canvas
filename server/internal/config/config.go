@@ -10,7 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+// maxWatermarkTextRunes 是水印文案的字符上限（按 Unicode 字符计，非字节）。
+const maxWatermarkTextRunes = 40
 
 type Config struct {
 	Port          string
@@ -107,6 +111,12 @@ type Config struct {
 	StorageDriver string // local | s3
 	MediaRoot     string // local 驱动的落盘根目录
 
+	// 媒体水印（T4/T5）：ENABLED 只控制生成链路是否烧录水印；
+	// 下发闸门与下载端点不读该开关、永远在线。
+	WatermarkEnabled  bool
+	WatermarkFontPath string
+	WatermarkText     string
+
 	S3Endpoint        string
 	S3Region          string
 	S3Bucket          string
@@ -119,26 +129,26 @@ type Config struct {
 
 func Load() (*Config, error) {
 	c := &Config{
-		Port:                       getenv("PORT", "8080"),
-		DatabaseURL:                os.Getenv("DATABASE_URL"),
-		JWTSecret:                  os.Getenv("JWT_SECRET"),
-		CredentialKey:              os.Getenv("CREDENTIAL_MASTER_KEY"),
-		AppBaseURL:                 os.Getenv("APP_BASE_URL"),
-		AdminEmail:                 os.Getenv("ADMIN_EMAIL"),
-		SeedTestData:               getenvBool("SEED_TEST_DATA", false),
-		SeedTestDataEmail:          getenv("SEED_TEST_DATA_EMAIL", "test@example.com"),
-		SeedTestDataPassword:       getenv("SEED_TEST_DATA_PASSWORD", "test123456"),
-		AdminPassword:              os.Getenv("ADMIN_PASSWORD"),
-		CookieSecure:               getenvBool("COOKIE_SECURE", true),
-		LogLevel:                   getenv("LOG_LEVEL", "info"),
-		SiteEnv:                    getenv("SITE_ENV", "development"),
-		MailDriver:                 getenv("MAIL_DRIVER", "smtp"),
-		SMTPHost:                   os.Getenv("SMTP_HOST"),
-		SMTPPort:                   os.Getenv("SMTP_PORT"),
-		SMTPUsername:               os.Getenv("SMTP_USERNAME"),
-		SMTPPassword:               os.Getenv("SMTP_PASSWORD"),
-		SMTPFrom:                   os.Getenv("SMTP_FROM"),
-		SMTPSecurity:               getenv("SMTP_SECURITY", "ssl"),
+		Port:                 getenv("PORT", "8080"),
+		DatabaseURL:          os.Getenv("DATABASE_URL"),
+		JWTSecret:            os.Getenv("JWT_SECRET"),
+		CredentialKey:        os.Getenv("CREDENTIAL_MASTER_KEY"),
+		AppBaseURL:           os.Getenv("APP_BASE_URL"),
+		AdminEmail:           os.Getenv("ADMIN_EMAIL"),
+		SeedTestData:         getenvBool("SEED_TEST_DATA", false),
+		SeedTestDataEmail:    getenv("SEED_TEST_DATA_EMAIL", "test@example.com"),
+		SeedTestDataPassword: getenv("SEED_TEST_DATA_PASSWORD", "test123456"),
+		AdminPassword:        os.Getenv("ADMIN_PASSWORD"),
+		CookieSecure:         getenvBool("COOKIE_SECURE", true),
+		LogLevel:             getenv("LOG_LEVEL", "info"),
+		SiteEnv:              getenv("SITE_ENV", "development"),
+		MailDriver:           getenv("MAIL_DRIVER", "smtp"),
+		SMTPHost:             os.Getenv("SMTP_HOST"),
+		SMTPPort:             os.Getenv("SMTP_PORT"),
+		SMTPUsername:         os.Getenv("SMTP_USERNAME"),
+		SMTPPassword:         os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:             os.Getenv("SMTP_FROM"),
+		SMTPSecurity:         getenv("SMTP_SECURITY", "ssl"),
 		// 合规门禁：备案、条款法务与人工复核值守确认前不得公开注册。
 		// 默认关闭，环境变量显式打开；按模板部署不再是「开注册 + 关审核」。
 		RegistrationEnabled:        getenvBool("REGISTRATION_ENABLED", false),
@@ -186,6 +196,9 @@ func Load() (*Config, error) {
 		AIAllowPrivateUpstream:     getenvBool("AI_ALLOW_PRIVATE_UPSTREAM", false),
 		StorageDriver:              getenv("STORAGE_DRIVER", "local"),
 		MediaRoot:                  getenv("MEDIA_ROOT", "/data/media"),
+		WatermarkEnabled:           parseWatermarkEnabled(os.Getenv("WATERMARK_ENABLED")),
+		WatermarkFontPath:          os.Getenv("WATERMARK_FONT_PATH"),
+		WatermarkText:              getenv("WATERMARK_TEXT", "infinite-canvas"),
 		S3Endpoint:                 os.Getenv("S3_ENDPOINT"),
 		S3Region:                   os.Getenv("S3_REGION"),
 		S3Bucket:                   os.Getenv("S3_BUCKET"),
@@ -326,6 +339,35 @@ func (c *Config) validate() error {
 	if err := c.validateModeration(); err != nil {
 		return err
 	}
+	if err := c.validateWatermark(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// parseWatermarkEnabled 对齐 watermark.Enabled 的口径（"1"/"true"/"TRUE"）。
+// watermark 包的解析函数未导出，这里保持字面一致，避免两处开关口径漂移。
+func parseWatermarkEnabled(raw string) bool {
+	return raw == "1" || raw == "true" || raw == "TRUE"
+}
+
+// validateWatermark 校验水印配置：文案超长直接拒绝启动（不得静默截断）；
+// 启用烧录时字体文件必须可读，否则生成链路会整体失败，提前到启动期暴露。
+func (c *Config) validateWatermark() error {
+	if n := utf8.RuneCountInString(c.WatermarkText); n > maxWatermarkTextRunes {
+		return fmt.Errorf("WATERMARK_TEXT 超过 %d 字符上限: %d", maxWatermarkTextRunes, n)
+	}
+	if !c.WatermarkEnabled {
+		return nil
+	}
+	if c.WatermarkFontPath == "" {
+		return errors.New("WATERMARK_ENABLED=true 时 WATERMARK_FONT_PATH 必须指向可读的 CJK 字体文件")
+	}
+	f, err := os.Open(c.WatermarkFontPath)
+	if err != nil {
+		return fmt.Errorf("WATERMARK_ENABLED=true 但字体文件不可读: %s", c.WatermarkFontPath)
+	}
+	_ = f.Close()
 	return nil
 }
 

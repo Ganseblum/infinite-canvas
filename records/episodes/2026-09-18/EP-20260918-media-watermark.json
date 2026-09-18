@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "episode_id": "EP-20260918-media-watermark",
+  "source_type": "review",
+  "objective": "媒体水印功能：免费/日落档用户 AI 生成的图片/视频服务端烧录平铺文字水印（展示与下载均为水印版），付费用户不加水印且升级后历史素材下发自动变干净；干净原件仅可经「申请下载」端点签发的 ≤300s HMAC 签名 URL（须同时通过 MediaAuth）取走；水印 fail-closed 失败即生成失败退款；无 schema 变更，agentflow 多角色流程（TD → plan-architect → 5 个实现 worker 分两波 → 独立 reviewer 两轮）",
+  "outcome": "partial",
+  "signals": [
+    { "kind": "server_tests", "value": "go test -count=1 ./... exit 0，14 包 ok、0 fail、0 skip", "evidence_ref": "records/plans/media-watermark.md 任务表 evidence 列" },
+    { "kind": "web_checks", "value": "tsc --noEmit 无输出；vitest 3 文件 6 用例全过", "evidence_ref": "records/plans/media-watermark.md 任务表 T7 行" },
+    { "kind": "leak_surface_tests", "value": "三个泄漏面（社区浏览者 /download、token 过期/篡改/跨用户、S3 presign TTL==360s）全部有非空转单测锁死", "evidence_ref": "server/internal/handler/media_download_test.go、media_watermark_test.go" },
+    { "kind": "fail_closed_tests", "value": "水印失败/orig 写失败/Save 失败三分支注入测试齐备，断言 0 媒体行 0 存储对象 + 退款恰 1 条", "evidence_ref": "server/internal/handler/ai_watermark_test.go、server/internal/service/aitask_watermark_test.go" },
+    { "kind": "write_scope_compliance", "value": "29 项变更面全部在计划 write_scope 内，保护区（admin/*、db/version.go、authz、admin_routes.go、design/html）零触碰，唯一新依赖 golang.org/x/image", "evidence_ref": "records/plans/media-watermark.md" },
+    { "kind": "unverified_claims", "value": "浏览器级端到端（画布展示水印、下载按钮点击、真实 AI 上游、S3 真环境 TTL/限流）本机不可执行，待用户按用例库 smoke/E2E 集验收", "evidence_ref": "docs/content/docs/progress/pending-test.mdx 媒体水印节" },
+    { "kind": "incident", "value": "执行期间用户并行会话清理 untracked 文件，v1 计划文件与 design/html 9 个草稿被连带删除；计划 v2 重建，草稿不可恢复", "evidence_ref": "records/plans/media-watermark.md notes.incident" }
+  ],
+  "review_roundtrips": [
+    {
+      "at": "2026-09-18T18:40:00+08:00",
+      "reviewer": "agentflow:reviewer（独立，非实现者）",
+      "decision": "changes_requested",
+      "finding": "E-1[S2] webp 源生成件付费出 orig 时 local 驱动以行 mime(image/png) 下发 webp 原字节且 nosniff 禁纠偏，展示回归；E-2[S3] Head 的 X-Checksum 出 orig 时口径未收口；E-3[S3] 落盘序「orig 写失败→整单失败」分支无测试；E-4[S3 登记] admin releaseQuarantined 绕过水印挂钩需登记口径。三个泄漏面、缓存头分级、档位口径、orig 五处删除路径、token 校验链静态核查全部 PASS",
+      "resolution": "E-1/E-2：serveLocal/Head 出 orig 改按字节嗅探（共享 sniffHead helper），X-Checksum 出 orig 省略，webp 夹具回归锁；E-3：补 orig 写失败 fail-closed 用例（图片+视频两侧）；E-4：计划风险表登记 + todo.mdx 立后续待办。修复后 A/B/C 原始输出复核（14 包 ok EXIT=0 / web 全绿 / gofmt 零输出）",
+      "evidence_ref": "records/plans/media-watermark.md 评审门节"
+    },
+    {
+      "at": "2026-09-18T19:40:00+08:00",
+      "reviewer": "agentflow:reviewer（同一独立角色，delta 复核）",
+      "decision": "approved",
+      "finding": "三项 required_changes 修复全部核实合格（回归锁对修复前代码必败）；两条残余披露（S3 HEAD 多一次 512B GetObject、orig 304 不带 Content-Type）裁定可接受；附带 prettier 格式化语义零变化",
+      "resolution": "评审门关闭；残余风险移交：E-4 归属语义独立任务、浏览器级端到端待用户按 pending-test 验收、部署前提（ffmpeg/ffprobe + CJK 字体）",
+      "evidence_ref": "records/plans/media-watermark.md 评审门节"
+    }
+  ],
+  "feedback_summary": "多角色流程有效性：TD 预判修正了 supervisor 任务切分的 main.go 撞车与 S3 302 绕过点；评审两轮共发现 4 项问题（1 项用户可见回归、2 项测试缺口、1 项口径登记），全部在合入前闭环。边界值纪律：token TTL 300s、presign 360s、限流 60/h、WATERMARK_TIMEOUT 120s、水印视觉参数等默认值随计划批准生效并已向用户报备。",
+  "agentflow_version": "0.7.2",
+  "host": "other",
+  "provenance": {
+    "carrier": "zcode-session-c40254a8-1d0c-4542-89ed-cf8da5ef066e 主对话编排记录",
+    "sanitized": true
+  },
+  "redactions": [],
+  "occurred_at": "2026-09-18T12:00:00+08:00"
+}

@@ -16,7 +16,7 @@ import { createVideoGenerationTask, waitForVideoGenerationTask, type VideoGenera
 import { useAddAsset } from "@/hooks/use-asset-library";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
-import { mediaUrl } from "@/services/api/media";
+import { fetchMediaDownload, mediaUrl, requestDownload } from "@/services/api/media";
 import type { GenerationItem } from "@/services/data/types";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -252,8 +252,19 @@ export default function VideoPage() {
         void generate();
     };
 
-    const downloadVideo = (video: GeneratedVideo) => {
-        saveAs(video.url, "video.mp4");
+    const downloadVideo = async (video: GeneratedVideo) => {
+        try {
+            // 无 storageKey 的记录沿用原地址直存；有 storageKey 的先申请取件链接再取件保存。
+            if (!video.storageKey) {
+                saveAs(video.url, "video.mp4");
+                return;
+            }
+            const { url } = await requestDownload(video.storageKey);
+            const blob = await fetchMediaDownload(url);
+            saveAs(blob, "video.mp4");
+        } catch (error) {
+            message.error(getApiErrorMessage(error));
+        }
     };
 
     const saveResultToAssets = (video: GeneratedVideo) => {
@@ -474,15 +485,7 @@ export default function VideoPage() {
                         </div>
 
                         <div className="mt-auto pt-6">
-                            <Button
-                                type="primary"
-                                size="large"
-                                block
-                                icon={<Sparkles className="size-4" />}
-                                loading={running}
-                                disabled={!canGenerate || running || retryAfterSeconds > 0}
-                                onClick={() => void generate()}
-                            >
+                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running || retryAfterSeconds > 0} onClick={() => void generate()}>
                                 {t("workbench.generate")}
                             </Button>
                         </div>

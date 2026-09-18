@@ -91,9 +91,14 @@ func (s *DeletionService) AnonymizeExpired(ctx context.Context, now time.Time) (
 func (s *DeletionService) anonymizeOne(ctx context.Context, user *model.User, now time.Time) error {
 	placeholderEmail := fmt.Sprintf("deleted-%s@invalid", user.ID.String())
 	placeholderUsername := fmt.Sprintf("deleted-%s", user.ID.String()[:12])
-	// 媒体记录硬删除并同步扣减存储计数；对象路径在事务内收集，提交后再逐个删除
-	// （行删掉后保留期清理任务按 media_files 扫描，永远扫不到这些对象）。
-	objectPaths := make([]string, 0, 8)
+	// 媒体记录硬删除并同步扣减存储计数；对象与干净原件（orig）路径在事务内收集，
+	// 提交后再逐个删除（行删掉后保留期清理任务按 media_files 扫描，永远扫不到这些对象）。
+	type mediaObject struct {
+		storageKey string
+		objectPath string
+		origPath   string
+	}
+	objects := make([]mediaObject, 0, 8)
 	var mediaBytes int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.User{}).Where("id = ?", user.ID).Updates(map[string]any{
@@ -136,11 +141,15 @@ func (s *DeletionService) anonymizeOne(ctx context.Context, user *model.User, no
 		if err := tx.Where("user_id = ?", user.ID).Find(&mediaFiles).Error; err != nil {
 			return err
 		}
-		objectPaths = objectPaths[:0]
+		objects = objects[:0]
 		mediaBytes = 0
 		for _, file := range mediaFiles {
 			mediaBytes += file.Bytes
-			objectPaths = append(objectPaths, file.ObjectPath)
+			objects = append(objects, mediaObject{
+				storageKey: file.StorageKey,
+				objectPath: file.ObjectPath,
+				origPath:   storage.OrigPath(user.ID.String(), file.StorageKey),
+			})
 		}
 		if err := tx.Where("user_id = ?", user.ID).Delete(&model.MediaFile{}).Error; err != nil {
 			return err
@@ -162,9 +171,18 @@ func (s *DeletionService) anonymizeOne(ctx context.Context, user *model.User, no
 	// 事务提交后再删对象。单个对象删除失败只记日志、不阻塞匿名化：
 	// 失败回滚会把用户重新拉回注销流程，对象残留好过误删或中断。
 	if s.storage != nil {
-		for _, p := range objectPaths {
-			if err := s.storage.Delete(ctx, p); err != nil {
-				slog.Error("注销清理媒体对象失败", "userId", user.ID, "path", p, "err", err)
+		for _, obj := range objects {
+			if err := s.storage.Delete(ctx, obj.objectPath); err != nil {
+				slog.Error("注销清理媒体对象失败", "userId", user.ID, "path", obj.objectPath, "err", err)
+				continue
+			}
+			// 连带删除干净原件（orig）：best-effort，失败只记日志、不影响主删除结果；
+			// storageKey 无冒号（无原件路径）时直接跳过。
+			if obj.origPath == "" {
+				continue
+			}
+			if err := s.storage.Delete(ctx, obj.origPath); err != nil {
+				slog.Error("注销清理干净原件失败", "userId", user.ID, "storageKey", obj.storageKey, "err", err)
 			}
 		}
 	}

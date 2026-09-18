@@ -7,6 +7,20 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+## 媒体水印与干净原件下发（本版本新增，待验收）
+
+**部署前提**：api 容器 PATH 内需有 ffmpeg/ffprobe（ffmpeg 需含 libx264，视频水印重编码用），`WATERMARK_FONT_PATH` 指向一个可读的 CJK 字体文件（建议 Noto Sans SC）；`WATERMARK_ENABLED=true` 且字体缺失会拒绝启动（fail-fast）。`WATERMARK_ENABLED` 默认 false——关闭时生成/展示/下载行为与本功能上线前完全一致，先验这条回归再开 flag。
+
+- **flag=false 回归**：免费账号生成、画布/工作台/素材页展示、三处下载按钮、画布导出，行为与现状一致（无水印、下载直下）。
+- **免费链路（flag=true）**：免费账号生成图片与视频，画布节点、图片/视频工作台、素材页展示的均为带平铺「infinite-canvas」水印的版本；素材页/图片页/视频页点下载得到水印文件；webp 源生成的图片展示正常（水印版转 PNG）。
+- **格式边界（flag=true）**：上游返回 gif 图片或 webm 视频时，免费账号生成应报失败并退还点数/试用次数（fail-closed，绝不下发未打水印的干净件）；付费账号不受影响。
+- **付费链路与升级回溯**：付费账号生成全程无水印；免费期间生成过的素材，账号升级付费后刷新画布/素材页即变为干净版（展示与下载都是）；点数耗尽降级或权益到期后回到水印版。
+- **申请下载两步流**：付费账号对免费期生成的素材点下载，网络面板应见先 `POST /api/media/{key}/download` 返回 `/api/media-download/{token}` 与 `expiresAt`（≤300 秒），随后取件的文件为无水印原件，文件名 `ic-{对象id}.{扩展名}`；免费账号点下载拿到的是水印版、无签发请求语义差异。
+- **防盗链**：签名 URL 过期后再取应 404；把签名 URL 发给另一个登录账号取件应 404（须同时校验本人媒体登录态）；篡改 token 404；对他人（含社区已发布作品的浏览者）调 `/download` 应 404。
+- **社区语义**：免费作者发布的作品，其他用户浏览时为水印版；付费作者发布的作品为干净版（付费权益随作品展示）。
+- **清理**：删除素材、注销账号后，服务端存储 `{uid}/orig/` 下的原件对象同步删除（可在服务器媒体目录核对）。
+- **限流**：同一账号高频点下载（>60 次/小时）应被限流，展示不受影响。
+
 ## 主站静态站骨架（main-site，本版本新增）
 
 - `cd main-site && npm install && npm run build` 成功，`out/` 生成 `index.html`、`works/`、`films/`、`templates/`、`blog/`、`404.html`、`sitemap.xml`、`robots.txt`、`og.png`。

@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -282,5 +284,53 @@ func TestModerationFakeProviderGate(t *testing.T) {
 	c.SiteEnv = "production"
 	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "fake") {
 		t.Fatalf("SITE_ENV=production 且 provider=fake 应拒绝启动, got %v", err)
+	}
+}
+
+func TestWatermarkConfigValidation(t *testing.T) {
+	font := filepath.Join(t.TempDir(), "font.ttf")
+	if err := os.WriteFile(font, []byte("font-bytes"), 0o644); err != nil {
+		t.Fatalf("写入字体夹具失败: %v", err)
+	}
+
+	t.Run("开关解析对齐 watermark.Enabled 口径", func(t *testing.T) {
+		cases := map[string]bool{
+			"1": true, "true": true, "TRUE": true,
+			"True": false, "false": false, "0": false, "": false, "yes": false,
+		}
+		for raw, want := range cases {
+			if got := parseWatermarkEnabled(raw); got != want {
+				t.Fatalf("parseWatermarkEnabled(%q)=%v, want %v", raw, got, want)
+			}
+		}
+	})
+
+	cases := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr bool
+	}{
+		{"flag 关闭无需字体", func(c *Config) {}, false},
+		{"启用且字体可读", func(c *Config) {
+			c.WatermarkEnabled = true
+			c.WatermarkFontPath = font
+		}, false},
+		{"启用但缺字体路径", func(c *Config) { c.WatermarkEnabled = true }, true},
+		{"启用但字体不可读", func(c *Config) {
+			c.WatermarkEnabled = true
+			c.WatermarkFontPath = font + ".missing"
+		}, true},
+		{"文案 40 字符为上限", func(c *Config) { c.WatermarkText = strings.Repeat("水", 40) }, false},
+		{"文案 41 字符拒绝", func(c *Config) { c.WatermarkText = strings.Repeat("水", 41) }, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := storageBase()
+			tc.mutate(cfg)
+			err := cfg.validate()
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("validate() err=%v, wantErr=%v", err, tc.wantErr)
+			}
+		})
 	}
 }

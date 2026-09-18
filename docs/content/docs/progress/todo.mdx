@@ -5,6 +5,7 @@ description: Planned follow-up work
 
 # TODO
 
+- 隔离件人工放行的水印归属语义（媒体水印评审 E-4 登记）：admin「释放隔离件」（`releaseQuarantined`）以隔离区原始字节直接落正式对象、不经生成链路的水印挂钩，免费用户被拒生成件经人工放行后为无水印版。需独立设计「按素材来源区分应否烧录」的归属判定与用例后再修（admin 侧代码当时处于保护区未动）。
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.
 - Account system and backend services: build the MySQL 8.4 LTS + Go backend per the master plan and phase 1–5 documents under `我的规划/` at the repo root; all features require login and all AI channels are server-configured. Phase 1 (accounts, email, free-grant risk control), phase 2 (resource storage and object storage), phase 3 (double-bucket credits, packages and orders, plan derivation and storage quota, model catalog with promotions, retention cleanup, account deletion, and the admin console), and phase 4 (server-side AI routing with quote, reserve, and failure refund, encrypted platform channels with failover, async video tasks, SSE chat, and the removal of browser-direct channels and scripts) are delivered.

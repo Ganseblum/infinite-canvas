@@ -212,6 +212,7 @@ func watermarkTimeout() time.Duration // WATERMARK_TIMEOUT，默认 120s（包�
 | S1 | 水印失败回退成干净下发 | T5 fail-closed：失败即退款，无干净字节落盘；单测锁死注入错误场景 |
 | S2 | 缓存串档：可变字节被浏览器/CDN 缓存导致档位错乱 | T4 缓存头分级（private, no-cache + ETag wm-/orig- + 304；稳定字节维持 immutable；token 流 no-store） |
 | S2 | 格式/字体失败率：webp/gif/字体缺失推高失败率 | T1 格式矩阵单测 + 启动 fail-fast + watermark_failed 日志灰度观察 |
+| S2 | 隔离件人工放行绕过水印（评审 E-4 登记口径）：admin releaseQuarantined（admin_moderation.go:204-241）以隔离区原始字节写新 key、不经 saveGeneratedImage 水印挂钩，free 用户被拒生成件经人工放行后正式对象为干净版 | admin/* 属保护区本 feature 不动；无跨用户泄漏（操作者 gated、新 key 新行、不经 /download 签发）；「生成件应烧录 / 上传件不应烧录」的归属语义需独立设计任务承接，登记为后续待办 |
 | S2 | orig 孤儿：媒体行已删但 orig 残留 | T6 双入口补删 + error 日志；长期策略见未决项 |
 | S3 | 历史干净件：上线前 free 用户已生成的素材仍是干净版，本期不追溯回填 | 已知限制，接受；免费档保留期仅 7 天，自然窗口极短；后续如需回填另立待办 |
 | S3 | 视频收敛延迟：ffmpeg 转码耗时/任务积压 | WATERMARK_TIMEOUT=120s + preset veryfast + 灰度观察 watermark_failed |
@@ -229,3 +230,12 @@ func watermarkTimeout() time.Duration // WATERMARK_TIMEOUT，默认 120s（包�
 | 环境前提（测试替身） | ffmpeg/ffprobe 在 PATH；CJK 字体 fixture；样本夹具 jpeg/png/webp/gif/mp4 各一 | 缺失时视频用例明确 skip 或 fail，不允许静默假绿 |
 
 **评审门（material 变更，独立 reviewer，作者不自审）**：重点核对三个泄漏面单测、缓存头分级、fail-closed、保护区零触碰；端到端用例先于评审门通过。
+
+### 评审记录（已关闭）
+
+| 轮次 | 结论 | 发现与处理 |
+| --- | --- | --- |
+| 第 1 轮 | changes_requested | E-1[S2] webp 源生成件付费出 orig 时 local 驱动 Content-Type 失配（行 mime=png 下发 webp 字节）；E-2[S3] Head 的 X-Checksum 出 orig 口径未收口；E-3[S3] orig 写失败分支缺测试；E-4[S3 登记] admin releaseQuarantined 绕过水印挂钩。泄漏面/缓存分级/档位口径/orig 删除路径/token 校验链静态核查全 PASS。处理：修复轮改嗅探（共享 sniffHead）+ webp 回归锁 + 两侧 fail-closed 用例 + E-4 登记计划与 todo |
+| 第 2 轮（delta） | **approved** | 三项修复核实合格（回归锁对修复前代码必败）；两条残余披露可接受（S3 HEAD 多一次 512B GetObject、orig 304 不带 Content-Type）；A/B/C 原始输出复核（14 包 ok EXIT=0、web 全绿、gofmt 零输出）。评审门关闭 |
+
+最终决策：outcome = partial（代码层 complete；浏览器级端到端待用户按 pending-test.mdx 媒体水印节验收，属既有「用户自行测试」流程）。决策记录：`records/episodes/2026-09-18/EP-20260918-media-watermark.json`。

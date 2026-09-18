@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Local 是本地磁盘驱动，落盘根目录由 MEDIA_ROOT 指定。
@@ -84,7 +85,11 @@ func (l *Local) Get(_ context.Context, path string) (io.ReadCloser, error) {
 	return f, err
 }
 
-func (l *Local) Presign(context.Context, string) (Presigned, error) {
+func (l *Local) Presign(ctx context.Context, path string) (Presigned, error) {
+	return l.PresignWithTTL(ctx, path, 0)
+}
+
+func (l *Local) PresignWithTTL(context.Context, string, time.Duration) (Presigned, error) {
 	// 本地驱动不走预签名，handler 直接回流二进制。
 	return Presigned{}, nil
 }

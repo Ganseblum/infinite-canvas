@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,8 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/provider"
+	"github.com/infinite-canvas/server/internal/storage"
+	"github.com/infinite-canvas/server/internal/watermark"
 )
 
 // AITaskService 负责视频任务的创建后生命周期：后台主动轮询、进程重启恢复与失败退还。
@@ -24,6 +27,9 @@ type AITaskService struct {
 	requests   *AIRequestService
 	media      *MediaWriteService
 	moderation *ModerationService
+	wm         videoWatermarker // 生成落盘水印挂钩（T5），main.go 注入 *watermark.Service
+	wmEnabled  func() bool      // 水印总开关，生产恒为 watermark.Enabled
+	store      storage.Storage  // 与 media 同源的对象存储，用于写入/补偿删除 orig 干净原件
 }
 
 func NewAITaskService(db *gorm.DB, upstream *UpstreamService, media *MediaWriteService) *AITaskService {
@@ -32,7 +38,24 @@ func NewAITaskService(db *gorm.DB, upstream *UpstreamService, media *MediaWriteS
 		upstream: upstream,
 		requests: NewAIRequestService(db),
 		media:    media,
+		store:    media.storage,
 	}
+}
+
+// videoWatermarker 是视频任务落盘挂钩对水印能力的最小依赖：生产注入 *watermark.Service，
+// 测试注入可报错的替身，用于锁死 fail-closed 语义。
+type videoWatermarker interface {
+	Video(ctx context.Context, src []byte, srcMime string) ([]byte, error)
+}
+
+// SetWatermark 注入视频任务落盘水印挂钩（T5）。enabled 传 watermark.Enabled，
+// 测试可替换以分别覆盖开关两态；未注入 wm 或开关为关时整段跳过，行为与现状一致。
+func (s *AITaskService) SetWatermark(wm videoWatermarker, enabled func() bool) {
+	if enabled == nil {
+		enabled = watermark.Enabled
+	}
+	s.wm = wm
+	s.wmEnabled = enabled
 }
 
 // SetModeration 注入审核服务：视频产物在落正式存储前先过帧审核。
@@ -183,24 +206,52 @@ func (s *AITaskService) succeedTask(ctx context.Context, task *model.AITask, sta
 		videoModerationStatus = decision
 	}
 	storageKey := "video:" + randomStorageKey()
+	// T5 生成落盘水印挂钩：审核通过后、落正式存储前，按归属者档位 fail-closed 处理。
+	// 水印未注入/开关为关、或归属者为付费档 → 现状路径，原始字节直接落盘、不写 orig。
+	saveData := data
+	origPath := ""
+	if s.wm != nil && s.wmEnabled() {
+		_, plan, err := NewQuotaService(s.db).DerivePlan(ctx, task.UserID, time.Now())
+		if err != nil {
+			slog.Error("watermark_failed", "kind", "video", "task", task.ID, "err", err)
+			return s.failTask(ctx, task, "水印处理失败")
+		}
+		if plan.ID != "paid" {
+			wmBytes, err := s.wm.Video(ctx, data, mimeType)
+			if err != nil {
+				slog.Error("watermark_failed", "kind", "video", "task", task.ID, "err", err)
+				return s.failTask(ctx, task, "水印处理失败")
+			}
+			// 落盘序固定为「水印 → orig 干净原件 → 正式存储」：水印失败或原件写入失败
+			// 都整单退款，绝不回退原始字节；正式存储失败时补偿删除已写的 orig。
+			origPath = storage.OrigPath(task.UserID.String(), storageKey)
+			if _, _, err := s.store.Put(ctx, origPath, bytes.NewReader(data), mimeType); err != nil {
+				slog.Error("watermark_failed", "kind", "video", "task", task.ID, "err", err)
+				return s.failTask(ctx, task, "视频落盘失败")
+			}
+			saveData = wmBytes
+		}
+	}
 	file, err := s.media.Save(ctx, SaveGeneratedMediaInput{
 		UserID:     task.UserID,
 		StorageKey: storageKey,
 		MimeType:   mimeType,
-		Data:       data,
+		Data:       saveData,
 		MaxBytes:   maxFile,
 		Moderation: videoModerationStatus,
 	})
 	if err != nil {
+		if origPath != "" {
+			if delErr := s.store.Delete(ctx, origPath); delErr != nil {
+				slog.Error("补偿删除干净原件失败", "path", origPath, "err", delErr)
+			}
+		}
 		return s.failTask(ctx, task, "视频落盘失败")
 	}
 	if videoQuarantineKey != "" {
 		// 已转正式存储：删除隔离原件并清空审核记录上的 key，避免管理端残留可预览项。
 		_ = s.moderation.Quarantine().Delete(ctx, task.UserID, videoQuarantineKey)
 		s.moderation.ClearQuarantineKey(ctx, videoRecordID)
-	}
-	if err != nil {
-		return s.failTask(ctx, task, "视频落盘失败")
 	}
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {

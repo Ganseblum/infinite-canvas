@@ -77,7 +77,7 @@ func TestMediaLocalUploadHeadGetDelete(t *testing.T) {
 		t.Fatalf("HEAD 响应头不符: %v", w.Header())
 	}
 
-	// GET 本地驱动直接回流二进制，带 ETag 与一年 immutable
+	// GET 本地驱动直接回流二进制；免费档 image 属可变字节：no-cache + wm- ETag（T4 下发闸门）
 	w = doRaw(r, http.MethodGet, "/api/media/image:Abc123", nil, "", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET 应 200, got %d", w.Code)
@@ -85,11 +85,11 @@ func TestMediaLocalUploadHeadGetDelete(t *testing.T) {
 	if w.Body.String() != string(payload) {
 		t.Fatalf("GET 内容不符: %q", w.Body.String())
 	}
-	if w.Header().Get("Cache-Control") != "private, max-age=31536000, immutable" {
-		t.Fatalf("本地驱动缓存头不符: %s", w.Header().Get("Cache-Control"))
+	if w.Header().Get("Cache-Control") != "private, no-cache" {
+		t.Fatalf("免费档影像缓存头应为 no-cache: %s", w.Header().Get("Cache-Control"))
 	}
-	if w.Header().Get("ETag") != `"`+wantChecksum+`"` {
-		t.Fatalf("ETag 应为 checksum 引号形式: %s", w.Header().Get("ETag"))
+	if w.Header().Get("ETag") != `"wm-`+wantChecksum+`"` {
+		t.Fatalf("免费档影像 ETag 应带 wm- 前缀: %s", w.Header().Get("ETag"))
 	}
 
 	// 重复 PUT 是覆盖语义：唯一约束更新原行

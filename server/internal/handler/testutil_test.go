@@ -31,6 +31,7 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
+	"github.com/infinite-canvas/server/internal/watermark"
 )
 
 // testPNG 是带真实 PNG 魔数的最小上传夹具（33 字节）：上传侧会嗅探文件头，
@@ -39,6 +40,10 @@ var testPNG = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x0
 
 // testPNG2 是内容不同的第二份 PNG 夹具（34 字节），供覆盖上传断言内容变化。
 var testPNG2 = append(append([]byte(nil), testPNG...), 'x')
+
+// testWebP 是带真实 WebP 魔数（RIFF....WEBPVP8）的最小夹具：orig 下发按文件头
+// 嗅探实际类型（评审 E-1），夹具必须真的会被 http.DetectContentType 识别为 image/webp。
+var testWebP = append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 \x10\x00\x00\x00"), bytes.Repeat([]byte{0x00}, 16)...)
 
 func newTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -353,7 +358,7 @@ func newResourceRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Confi
 	canvasH := NewCanvasHandler(g)
 	assetH := NewAssetHandler(g)
 	genH := NewGenerationHandler(g)
-	mediaH := NewMediaHandler(g, stor, moderationService)
+	mediaH := NewMediaHandler(g, stor, moderationService, secret, watermark.NewService("", ""))
 
 	api := r.Group("/api")
 	canvases := api.Group("/canvases", middleware.Auth(secret))
@@ -381,6 +386,10 @@ func newResourceRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Confi
 	media.GET("/:storageKey", mediaH.Get)
 	media.PUT("/:storageKey", mediaH.Put)
 	media.DELETE("/:storageKey", mediaH.Delete)
+	media.POST("/:storageKey/download", mediaH.RequestDownload)
+
+	download := api.Group("/media-download", middleware.MediaAuth(secret, g))
+	download.GET("/:token", mediaH.ServeDownload)
 	return r
 }
 
@@ -442,6 +451,8 @@ type fakeStorage struct {
 	kind       string
 	objects    map[string][]byte
 	deleted    []string
+	gets       []string        // 记录每次 Get 的路径，供「304 不读文件体」断言
+	withTTLs   []time.Duration // 记录每次 PresignWithTTL 收到的 ttl，供短时效断言
 	presignURL string
 	presignTTL time.Duration
 	putErr     error
@@ -470,6 +481,7 @@ func (f *fakeStorage) Put(_ context.Context, path string, r io.Reader, _ string)
 }
 
 func (f *fakeStorage) Get(_ context.Context, path string) (io.ReadCloser, error) {
+	f.gets = append(f.gets, path)
 	data, ok := f.objects[path]
 	if !ok {
 		return nil, storage.ErrObjectNotFound
@@ -482,6 +494,15 @@ func (f *fakeStorage) Presign(context.Context, string) (storage.Presigned, error
 		return storage.Presigned{}, errors.New("fake storage 未配置 presign URL")
 	}
 	return storage.Presigned{URL: f.presignURL, ExpiresAt: time.Now().Add(f.presignTTL)}, nil
+}
+
+// PresignWithTTL 是 Storage 接口新增方法（storage.T2）的最小 fake 补齐，返回精确 ttl 的到期时间。
+func (f *fakeStorage) PresignWithTTL(_ context.Context, _ string, ttl time.Duration) (storage.Presigned, error) {
+	f.withTTLs = append(f.withTTLs, ttl)
+	if f.presignURL == "" {
+		return storage.Presigned{}, errors.New("fake storage 未配置 presign URL")
+	}
+	return storage.Presigned{URL: f.presignURL, ExpiresAt: time.Now().Add(ttl)}, nil
 }
 
 func (f *fakeStorage) Delete(_ context.Context, path string) error {

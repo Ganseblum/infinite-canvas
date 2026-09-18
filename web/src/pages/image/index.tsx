@@ -23,7 +23,7 @@ import { uploadImage } from "@/services/media-ingest";
 import { useAddAsset } from "@/hooks/use-asset-library";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
-import { mediaUrl } from "@/services/api/media";
+import { fetchMediaDownload, mediaUrl, requestDownload } from "@/services/api/media";
 import type { GenerationItem } from "@/services/data/types";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
@@ -229,8 +229,19 @@ export default function ImagePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoRunToken]);
 
-    const downloadImage = (image: GeneratedImage, index: number) => {
-        saveAs(image.dataUrl, `image-${index + 1}.png`);
+    const downloadImage = async (image: GeneratedImage, index: number) => {
+        try {
+            // 无 storageKey 的是本地/外部数据，不走服务端；有 storageKey 的先申请取件链接再取件保存。
+            if (!image.storageKey) {
+                saveAs(image.dataUrl, `image-${index + 1}.png`);
+                return;
+            }
+            const { url } = await requestDownload(image.storageKey);
+            const blob = await fetchMediaDownload(url);
+            saveAs(blob, `image-${index + 1}.png`);
+        } catch (error) {
+            message.error(getApiErrorMessage(error));
+        }
     };
 
     const addResultToReferences = (image: GeneratedImage, index: number) => {
@@ -467,15 +478,7 @@ export default function ImagePage() {
                         </div>
 
                         <div className="mt-auto pt-6">
-                            <Button
-                                type="primary"
-                                size="large"
-                                block
-                                icon={<Sparkles className="size-4" />}
-                                loading={running}
-                                disabled={!canGenerate || running || retryAfterSeconds > 0}
-                                onClick={() => void generate()}
-                            >
+                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running || retryAfterSeconds > 0} onClick={() => void generate()}>
                                 {t("workbench.generate")}
                             </Button>
                         </div>

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -16,7 +17,9 @@ import (
 
 // mapStorage 是清理测试用的内存存储驱动。
 type mapStorage struct {
-	objects map[string][]byte
+	objects    map[string][]byte
+	deleted    []string         // Delete 调用过的全部路径（含失败调用），供断言 orig 连带删除
+	failDelete map[string]error // 指定路径的 Delete 注入错误，验证 best-effort 语义
 }
 
 func newMapStorage() *mapStorage { return &mapStorage{objects: map[string][]byte{}} }
@@ -44,7 +47,16 @@ func (m *mapStorage) Presign(context.Context, string) (storage.Presigned, error)
 	return storage.Presigned{URL: "https://example.com", ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
+// PresignWithTTL 是 Storage 接口新增方法（storage.T2）的最小 fake 补齐，返回精确 ttl 的到期时间。
+func (m *mapStorage) PresignWithTTL(_ context.Context, _ string, ttl time.Duration) (storage.Presigned, error) {
+	return storage.Presigned{URL: "https://example.com", ExpiresAt: time.Now().Add(ttl)}, nil
+}
+
 func (m *mapStorage) Delete(_ context.Context, path string) error {
+	m.deleted = append(m.deleted, path)
+	if err, ok := m.failDelete[path]; ok {
+		return err
+	}
 	delete(m.objects, path)
 	return nil
 }
@@ -266,5 +278,81 @@ func TestCleanupKeepsSoftDeletedCanvasMedia(t *testing.T) {
 	}
 	if _, ok := stor.objects[file.ObjectPath]; !ok {
 		t.Fatalf("软删除画布引用的媒体不应被删除")
+	}
+}
+
+// 断言 Delete 调用列表与期望集合完全一致：orig 被连带删除，且无冒号 key
+// 不会产生多余的 orig 删除调用（如空 id 拼出的路径）。
+func assertDeletedExactly(t *testing.T, deleted []string, want map[string]bool) {
+	t.Helper()
+	if len(deleted) != len(want) {
+		t.Fatalf("删除调用次数不符: got %v, want %v", deleted, want)
+	}
+	for _, path := range deleted {
+		if !want[path] {
+			t.Fatalf("不应删除计划外对象: %s (all %v)", path, deleted)
+		}
+	}
+}
+
+func TestCleanupReclaimAlsoDeletesOrig(t *testing.T) {
+	g := newServiceDB(t)
+	stor := newMapStorage()
+	cleanup := NewCleanupService(g, stor)
+	user := createUserRow(t, g)
+
+	orphan := seedMedia(t, g, stor, user.ID, "image:OrphanO", 50)
+	origPath := storage.OrigPath(user.ID.String(), orphan.StorageKey)
+	stor.objects[origPath] = []byte("orig")
+	// 无冒号 key 的异常行：OrigPath 返回空串，清理时应跳过 orig、不报错。
+	plain := seedMedia(t, g, stor, user.ID, "plainkey", 50)
+
+	report, err := cleanup.Reclaim(context.Background(), user.ID, 7, 1<<30, time.Now(), false)
+	if err != nil {
+		t.Fatalf("清理失败: %v", err)
+	}
+	if report.Reclaimed != 2 {
+		t.Fatalf("两条媒体都应被清理: %+v", report)
+	}
+	for _, path := range []string{orphan.ObjectPath, origPath, plain.ObjectPath} {
+		if _, ok := stor.objects[path]; ok {
+			t.Fatalf("对象应被删除: %s", path)
+		}
+	}
+	assertDeletedExactly(t, stor.deleted, map[string]bool{
+		orphan.ObjectPath: true,
+		origPath:          true,
+		plain.ObjectPath:  true,
+	})
+}
+
+func TestCleanupReclaimOrigDeleteFailureBestEffort(t *testing.T) {
+	g := newServiceDB(t)
+	stor := newMapStorage()
+	cleanup := NewCleanupService(g, stor)
+	user := createUserRow(t, g)
+
+	orphan := seedMedia(t, g, stor, user.ID, "image:OrphanF", 50)
+	origPath := storage.OrigPath(user.ID.String(), orphan.StorageKey)
+	stor.objects[origPath] = []byte("orig")
+	stor.failDelete = map[string]error{origPath: errors.New("存储故障")}
+
+	report, err := cleanup.Reclaim(context.Background(), user.ID, 7, 1<<30, time.Now(), false)
+	if err != nil {
+		t.Fatalf("orig 删除失败不应影响主流程: %v", err)
+	}
+	if report.Reclaimed != 1 {
+		t.Fatalf("主删除仍应成功: %+v", report)
+	}
+	if _, ok := stor.objects[orphan.ObjectPath]; ok {
+		t.Fatalf("主对象仍应被删除")
+	}
+	var count int64
+	g.Model(&model.MediaFile{}).Where("user_id = ?", user.ID).Count(&count)
+	if count != 0 {
+		t.Fatalf("媒体记录仍应被清理, got %d", count)
+	}
+	if _, ok := stor.objects[origPath]; !ok {
+		t.Fatalf("orig 删除失败时对象应保留（best-effort 不吞错误也不假装成功）")
 	}
 }

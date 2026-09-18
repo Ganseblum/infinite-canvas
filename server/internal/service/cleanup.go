@@ -131,6 +131,13 @@ func (s *CleanupService) Reclaim(ctx context.Context, userID uuid.UUID, retentio
 				slog.Error("删除媒体对象失败", "storageKey", item.StorageKey, "err", err)
 				continue
 			}
+			// 连带删除干净原件（orig）：best-effort，失败只记日志、不影响主删除结果；
+			// storageKey 无冒号（无原件路径）时直接跳过。
+			if origPath := storage.OrigPath(userID.String(), file.StorageKey); origPath != "" {
+				if err := s.storage.Delete(ctx, origPath); err != nil {
+					slog.Error("删除媒体干净原件失败", "user", userID, "storageKey", item.StorageKey, "err", err)
+				}
+			}
 			if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 				if err := tx.Where("id = ?", file.ID).Delete(&model.MediaFile{}).Error; err != nil {
 					return err
