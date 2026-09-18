@@ -14,11 +14,11 @@ source: 全部断言值取自 2026-09-18 工作区源码（分支 feature-platfo
 
 | 文件 | 内容 | 条数 |
 | --- | --- | --- |
-| [parity-contract.md](./parity-contract.md) | 契约用例：对照 T02 奇偶清单的请求/响应键、状态码与错误码用例，含中间件错误矩阵与 M2 三域契约（待实现验证） | 82 |
-| [regression-points.md](./regression-points.md) | 五个回归点：登录 / 充值 / 生成扣费 / 配额 / 注销，各含步骤、前置、期望与证据记录位置 | 27 |
+| [parity-contract.md](./parity-contract.md) | 契约用例：对照 T02 奇偶清单的请求/响应键、状态码与错误码用例，含中间件错误矩阵与 M2 三域契约（待实现验证） | 94 |
+| [regression-points.md](./regression-points.md) | 五个回归点：登录 / 充值 / 生成扣费 / 配额 / 注销，各含步骤、前置、期望与证据记录位置 | 28 |
 | [critical-paths.md](./critical-paths.md) | 三条关键路径异常矩阵用例：生成扣费 Reserve/Refund、支付回调 markPaid 幂等、媒体落盘记账三层对账 | 12 |
 | [oidc-security.md](./oidc-security.md) | OIDC 安全用例：PKCE、code 一次性、redirect_uri、token 有效期、cookie、secret 存储口径（全部待实现验证） | 14 |
-| [smoke.md](./smoke.md) | 冒烟集：`cd server && go test ./...` 可执行 + 真实 MySQL 启动检查，全部引用真实存在的测试函数 | 60 函数 |
+| [smoke.md](./smoke.md) | 冒烟集：`cd server && go test ./...` 可执行 + 真实 MySQL 启动检查，全部引用真实存在的测试函数 | 74 函数 |
 
 ## 工作区状态前提（2026-09-18 核实）
 
@@ -68,8 +68,8 @@ cd server && DATABASE_URL='mysql://<user>:<pass>@127.0.0.1:3306/<db>' go run ./c
 
 ## 数量核对
 
-- 契约用例：82 条（≥40 达标；覆盖 /api/auth 8、/api/me 7、billing 5、orders 4+webhook、media 6、admin 身份端点 11、中间件错误矩阵 8、M2 三域 22）。
-- 回归点：5 组共 27 条（每组 ≥4 达标）。
+- 契约用例：94 条（≥40 达标；/api/auth 14、/api/me 13、billing 7、orders+webhook 7、media 10、admin 身份端点 13、中间件错误矩阵 8、M2 三域 22）。
+- 回归点：5 组共 28 条（登录 6 / 充值 6 / 生成扣费 6 / 配额 5 / 注销 5，每组 ≥4 达标）。
 - 异常矩阵：3 路径 × 4 行 = 12 条（逐行覆盖，含「回调失败 N/A」行的前提验证）。
-- OIDC：14 条（≥10 达标）。
-- 冒烟集：60 个真实测试函数。
+- OIDC：14 条（≥10 达标，全部待实现验证）。
+- 冒烟集：74 个真实测试函数。
