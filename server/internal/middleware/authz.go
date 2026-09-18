@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"sort"
 
@@ -63,6 +64,12 @@ func LoadAdminAccess(idn *identity.Service, db *gorm.DB) gin.HandlerFunc {
 		}
 		user, err := idn.GetByID(c.Request.Context(), userID)
 		if err != nil {
+			// 用户行不存在与「没有后台角色」同口径拒绝（403），与切换前 Scan 空行行为一致；
+			// 其余查询错误才是内部故障（500）。
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errs.Abort(c, errs.ErrForbidden)
+				return
+			}
 			slog.Error("读取用户角色失败", "err", err, "user_id", userID)
 			errs.Abort(c, errs.ErrInternal)
 			return

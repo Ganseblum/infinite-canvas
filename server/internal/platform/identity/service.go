@@ -169,24 +169,25 @@ func (s *Service) CancelDeletion(ctx context.Context, userID uuid.UUID) error {
 }
 
 // AnonymizeExpired 处理到期账号：身份侧（置 disabled、写入占位邮箱与用户名、清空密码哈希、
-// 吊销并抹除全部会话痕迹）与业务数据清理（cleanup 回调）共享一个事务；回调里收集的
-// 媒体对象等物理删除由调用方在事务提交后自行处理。返回处理的账号数量。
-func (s *Service) AnonymizeExpired(ctx context.Context, now time.Time, cleanup CleanupFunc) (int, error) {
+// 吊销并抹除全部会话痕迹）与业务数据清理（cleanup 回调）共享一个事务。返回事务已成功
+// 提交的账号 id 列表——媒体对象等物理删除只允许针对列表内的账号执行，防止事务失败
+// 后对象被误删。单个账号失败只记日志、不阻塞其余账号。
+func (s *Service) AnonymizeExpired(ctx context.Context, now time.Time, cleanup CleanupFunc) ([]uuid.UUID, error) {
 	var users []model.PlatformUser
 	if err := s.db.WithContext(ctx).
 		Where("status = ? AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= ?", "pending_deletion", now).
 		Limit(100).Find(&users).Error; err != nil {
-		return 0, err
+		return nil, err
 	}
-	count := 0
+	processed := make([]uuid.UUID, 0, len(users))
 	for i := range users {
 		if err := s.anonymizeOne(ctx, &users[i], now, cleanup); err != nil {
 			slog.Error("账号匿名化失败", "user", users[i].ID, "err", err)
 			continue
 		}
-		count++
+		processed = append(processed, users[i].ID)
 	}
-	return count, nil
+	return processed, nil
 }
 
 func (s *Service) anonymizeOne(ctx context.Context, user *model.PlatformUser, now time.Time, cleanup CleanupFunc) error {

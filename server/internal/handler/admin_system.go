@@ -249,9 +249,7 @@ func (h *AdminHandler) RemoveAdmin(c *gin.Context) {
 			return err
 		}
 		// 降权后撤销其全部 refresh token，管理权限下一次请求即失效。
-		if err := tx.Model(&model.Session{}).
-			Where("user_id = ? AND revoked_at IS NULL", targetID).
-			Update("revoked_at", time.Now()).Error; err != nil {
+		if err := h.identity.RevokeSessionsTx(tx, targetID, time.Now()); err != nil {
 			return err
 		}
 		return h.audit.Record(tx, actorID, "user.role", "user", targetID.String(), c.GetString("request_id"), "",

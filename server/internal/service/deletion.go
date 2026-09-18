@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/model"
@@ -39,18 +40,21 @@ func (s *DeletionService) AnonymizeExpired(ctx context.Context, now time.Time) (
 		objectPath string
 		origPath   string
 	}
-	objects := make([]mediaObject, 0, 8)
-	n, err := s.identity.AnonymizeExpired(ctx, now, func(tx *gorm.DB, user *model.PlatformUser) error {
+	// 待删对象按用户暂存，只有 AnonymizeExpired 返回名单（事务已提交）里的账号才物理删除：
+	// 回调中途失败会整体回滚，对象引用不能外泄（评审门① #1）。
+	pending := make(map[uuid.UUID][]mediaObject, 4)
+	processed, err := s.identity.AnonymizeExpired(ctx, now, func(tx *gorm.DB, user *model.PlatformUser) error {
 		// 媒体记录硬删除并同步扣减存储计数；对象与干净原件（orig）路径在事务内收集，
 		// 提交后再逐个删除（行删掉后保留期清理任务按 media_files 扫描，永远扫不到这些对象）。
 		var mediaFiles []model.MediaFile
 		if err := tx.Where("user_id = ?", user.ID).Find(&mediaFiles).Error; err != nil {
 			return err
 		}
+		objs := make([]mediaObject, 0, len(mediaFiles))
 		var mediaBytes int64
 		for _, file := range mediaFiles {
 			mediaBytes += file.Bytes
-			objects = append(objects, mediaObject{
+			objs = append(objs, mediaObject{
 				userID:     user.ID.String(),
 				storageKey: file.StorageKey,
 				objectPath: file.ObjectPath,
@@ -83,15 +87,20 @@ func (s *DeletionService) AnonymizeExpired(ctx context.Context, now time.Time) (
 				return err
 			}
 		}
+		// 全部写操作成功后才登记待删对象。
+		pending[user.ID] = objs
 		return nil
 	})
 	if err != nil {
-		return n, err
+		return 0, err
 	}
 	// 事务提交后再删对象。单个对象删除失败只记日志、不阻塞匿名化：
 	// 失败回滚会把用户重新拉回注销流程，对象残留好过误删或中断。
-	if s.storage != nil {
-		for _, obj := range objects {
+	if s.storage == nil {
+		return len(processed), nil
+	}
+	for _, uid := range processed {
+		for _, obj := range pending[uid] {
 			if err := s.storage.Delete(ctx, obj.objectPath); err != nil {
 				slog.Error("注销清理媒体对象失败", "userId", obj.userID, "path", obj.objectPath, "err", err)
 				continue
@@ -106,5 +115,5 @@ func (s *DeletionService) AnonymizeExpired(ctx context.Context, now time.Time) (
 			}
 		}
 	}
-	return n, nil
+	return len(processed), nil
 }
