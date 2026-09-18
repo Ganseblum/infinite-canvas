@@ -1,21 +1,21 @@
 ---
 plan_id: PLAN-PLATFORM-ACCOUNT-MEMBERSHIP
 plan_version: 0.1.0
-status: proposed
+status: approved
 objective: 趁未上线把身份/会员/点数/空间收敛为 platform 四域并分三步迁移（M1 身份切换、M2 权益中心化、M3 OIDC Provider），全程画布前端零改动。
 recorded_at: 2026-09-18T12:00:00+08:00
-updated_at: 2026-09-18T12:00:00+08:00
+updated_at: 2026-09-18T22:17:00+08:00
 ---
 
 # 平台账号与会员体系（M1-M3）执行计划
 
 > 输入材料：`我的规划/平台账号与会员体系设计.md`（含 Picwand 实地调研，2026-09-18）；技术负责人架构门决策摘要（2026-09-18 定稿，本文全量采用）。
 > 代码证据（2026-09-18 读取）：`server/internal/handler/admin.go:274` 与 `server/internal/middleware/authz.go:66`（裸 SQL 断裂点）；`server/internal/handler/testutil_test.go:251`（barrier 依赖表名 refresh_tokens）；`server/internal/db/db.go:52`（AutoMigrate 清单与 SeedPlans free/paid/sunset）；`server/internal/authz/catalog.go:19-42`（现有权限点）；`server/internal/service/request.go:98-112`（生成幂等 unique 查询）；`server/internal/service/orders.go:89-275`（provider_order_id 回写与查单兜底）；`server/internal/service/quota.go:31-237`（ErrReadOnly→402 语义）；`server/internal/handler/auth.go:25`（ic_refresh cookie 名）。
-> 本计划是执行契约，不是改码授权：status: proposed，未经 supervisor 批准与未决项拍板前不得开始实现。
+> 本计划是执行契约：status: approved。2026-09-18 用户确认「按规划全部实现开工」，D1-D7 按建议拍板，解除阻塞。
 
 ## 进展概览
 
-进度：0/11 已完成、0 进行中、0 任务阻塞；范围 = M1 身份切换 + M2 权益中心化 + M3 OIDC Provider（画布前端零改动红线贯穿全程），另有 7 个决策项待用户拍板（阻塞 approved，不阻塞计划撰写）。
+进度：0/11 已完成、2 进行中（T01 模型改造、T02 奇偶清单）、0 任务阻塞；范围 = M1 身份切换 + M2 权益中心化 + M3 OIDC Provider（画布前端零改动红线贯穿全程）。D1-D7 已于 2026-09-18 由用户按建议拍板，计划提为 approved。
 
 | 事项 | 业务侧解读 | 技术侧解读 | 交付效果 |
 | --- | --- | --- | --- |
@@ -24,9 +24,9 @@ updated_at: 2026-09-18T12:00:00+08:00
 | M3 OIDC Provider | 未来 blog 等新产品用标准 OAuth 接入平台登录，无需各造账号 | authorize/token/userinfo/jwks 四端点 + oauth_clients 表 + PKCE（RS256 15min） | 测试 client 全链路打通；admin SSO 管理页可用；authz 增 sso 权限点 |
 | 前置与横切 | 套餐怎么拆、空间怎么管等 7 项拍板后才能定稿执行 | 接口奇偶清单（T02）与测试用例库（T11）先于/并行于实现 | 未决项关闭后计划可提为 approved；冒烟集进入验证命令 |
 
-- 我们在哪：计划 v0.1.0（proposed）刚起草；架构门四域决策已定稿，代码未动，M1-M3 全部未开始。
-- 下一步：用户拍板未决项 D1-D7 → supervisor 将 status 提为 approved → T02 奇偶清单与 T01 落表并行启动 M1。
-- 阻塞风险：7 个决策项未拍板（阻塞 approved 而非阻塞撰写）；M1 裸 SQL/字面量断裂点遗漏风险（缓解：grep 逐一确认 + 真实 MySQL 迁移一次，仓库红线）；M2 档位派生废除是用户可见行为变更（需 D6 知情确认）；如需新增超时/重试/退避等边界值，必须先报用户确认，不得静默加入。
+- 我们在哪：计划 v0.1.0（approved）；D1-D7 已按建议拍板，T02 奇偶清单与 T01 落表并行启动，M1-M3 代码未动。
+- 下一步：T01/T02 完成 → T03 auth/middleware/admin/authz 切换 identity 域 → T04 真实 MySQL 迁移验收（评审门①）→ M2 → M3。
+- 阻塞风险：M1 裸 SQL/字面量断裂点遗漏风险（缓解：grep 逐一确认 + 真实 MySQL 迁移一次，仓库红线）；M2 档位派生废除已获 D6 知情确认；如需新增超时/重试/退避等边界值，必须先报用户确认，不得静默加入。
 
 ## 任务清单
 
@@ -48,17 +48,17 @@ updated_at: 2026-09-18T12:00:00+08:00
 
 | 编号 | 决策/事项 | 内容与选项 | 建议 | 依赖 | 状态 | Owner |
 | --- | --- | --- | --- | --- | --- | --- |
-| D1 | 空间共享池 | 平台共享池 / 各产品独立配额 | 共享池（业界一致，体验最好） | T05, T06 | ⚠ 阻塞 | 用户 |
-| D2 | 平台会员 | 平台会员一次订阅全产品生效 / 各产品各自会员 | 平台会员 | T05, T07 | ⚠ 阻塞 | 用户 |
-| D3 | 点数共享余额 | 一个余额全产品消耗（流水带 product 维度）/ 各产品独立钱包 | 共享余额 | T05, T06 | ⚠ 阻塞 | 用户 |
-| D4 | 平台新人礼 | 注册即赠平台统一发放 / 各产品自行发放；并确认每日免费额度、永久买断档是否加入 backlog | 平台新人礼；每日额度与买断档仅入 backlog | T05, T06 | ⚠ 阻塞 | 用户 |
-| D5 | 套餐两张表拆分 | membership_plans（订阅）+ credit_packages（点数包）分表，不再一张表混装 | 是 | T05, T07 | ⚠ 阻塞 | 用户 |
-| D6 | M2 行为变更知情 | purchased>0⇒paid 派生废除：只有点数、无有效订阅的用户回落 free 档（仍可消费），graceEndsAt=period_end+60 天；需用户知情确认后才可切换 | 按技术负责人方案执行，用户确认即视为拍板 | T06 | ⚠ 阻塞 | 用户 |
-| D7 | 奖励中心/积分任务体系是否立项 | 签到递增、任务积分、兑换码等平台级增长模块；本期仅 backlog，不影响 M1-M3 实现 | 先入 backlog，后续单独立项 | — | ⚠ 阻塞 | 用户 |
+| D1 | 空间共享池 | 平台共享池 / 各产品独立配额 | 共享池（业界一致，体验最好） | T05, T06 | ✅ 已拍板（按建议） | 用户 |
+| D2 | 平台会员 | 平台会员一次订阅全产品生效 / 各产品各自会员 | 平台会员 | T05, T07 | ✅ 已拍板（按建议） | 用户 |
+| D3 | 点数共享余额 | 一个余额全产品消耗（流水带 product 维度）/ 各产品独立钱包 | 共享余额 | T05, T06 | ✅ 已拍板（按建议） | 用户 |
+| D4 | 平台新人礼 | 注册即赠平台统一发放 / 各产品自行发放；并确认每日免费额度、永久买断档是否加入 backlog | 平台新人礼；每日额度与买断档仅入 backlog | T05, T06 | ✅ 已拍板（按建议） | 用户 |
+| D5 | 套餐两张表拆分 | membership_plans（订阅）+ credit_packages（点数包）分表，不再一张表混装 | 是 | T05, T07 | ✅ 已拍板（按建议） | 用户 |
+| D6 | M2 行为变更知情 | purchased>0⇒paid 派生废除：只有点数、无有效订阅的用户回落 free 档（仍可消费），graceEndsAt=period_end+60 天；需用户知情确认后才可切换 | 按技术负责人方案执行，用户确认即视为拍板 | T06 | ✅ 已拍板（按建议） | 用户 |
+| D7 | 奖励中心/积分任务体系是否立项 | 签到递增、任务积分、兑换码等平台级增长模块；本期仅 backlog，不影响 M1-M3 实现 | 先入 backlog，后续单独立项 | — | ✅ 已拍板（按建议） | 用户 |
 | D8 | ic_refresh Cookie Path 扩面顺序 | M3 直接将 Path 从 /api/auth 扩为 /api，是否需要旧 Path 双发兼容期及灰度顺序 | 待 T09 设计评审定，倾向直接切换（未上线无兼容包袱） | T09 | ☐ 未开始 | 技术负责人 |
 | D9 | 夜间对账任务告警通道 | 对账不平时的通知方式（邮件/IM/admin 站内）与值守口径 | 待 T08 设计评审定 | T08 | ☐ 未开始 | 技术负责人 |
 
-说明：D1-D7 为决策表待用户拍板项，全部标记 ⚠ 阻塞——它们阻塞本计划提为 approved，不阻塞计划撰写；D8-D9 为非阻塞技术未决项，随对应任务的设计评审关闭。
+说明：D1-D7 已于 2026-09-18 由用户按建议拍板（✅）；D8-D9 为非阻塞技术未决项，随对应任务的设计评审关闭。
 
 ## 接口与共享机制
 
