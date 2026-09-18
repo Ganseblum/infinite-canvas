@@ -16,6 +16,10 @@ export type AdminUser = {
     paidUntil: string | null;
     storageBytes: number;
     createdAt: string;
+    // 平台会员/存储三域切换后的加法投影：后端实现前字段缺失，渲染时按缺省处理显示占位符。
+    membership?: { planId: string; periodEnd: string | null; graceEndsAt: string | null } | null;
+    storage?: { usedBytes: number; quotaBytes: number | null } | null;
+    products?: string[] | null;
 };
 
 export type AdminUserDetail = AdminUser & {
@@ -627,4 +631,56 @@ export function listAdminPermissions(signal?: AbortSignal) {
 // roleKey 传 null 表示取消该用户的后台角色。改自己、让系统角色失去最后一个 active 用户会被服务端拒绝。
 export function assignAdminUserRole(id: string, roleKey: string | null) {
     return apiRequest<{ id: string; roleKey: string | null }>(`/admin/users/${id}/role`, { method: "PATCH", body: { roleKey } });
+}
+
+// ===== 会员管理（membership）=====
+
+export type AdminMembershipSubscription = {
+    id: string;
+    userId: string;
+    userEmail: string;
+    userUsername: string;
+    planId: string;
+    planName: string;
+    status: "active" | "ended";
+    startedAt: string;
+    periodEnd: string;
+    sourceRef: string | null;
+    createdAt: string;
+};
+
+export type AdminMembershipListParams = {
+    page?: number;
+    size?: number;
+    userId?: string;
+    planId?: string;
+    status?: string;
+};
+
+export type AdminMembershipGrantInput = {
+    userId: string;
+    planId: string;
+    reason: string;
+};
+
+export function listAdminMembershipSubscriptions(params: AdminMembershipListParams, signal?: AbortSignal) {
+    return apiRequest<{ items: AdminMembershipSubscription[]; total: number; page: number; size: number }>("/admin/membership/subscriptions", {
+        query: { page: params.page, size: params.size, userId: params.userId, planId: params.planId, status: params.status },
+        signal,
+    });
+}
+
+// 发放 / 续期会员：同一用户已有生效订阅时由服务端做续期。
+export function grantAdminMembership(input: AdminMembershipGrantInput) {
+    return apiRequest<{ subscription: AdminMembershipSubscription }>("/admin/membership/grant", { method: "POST", body: input });
+}
+
+// 补偿发放：请求与响应形状同 grant，仅审计口径不同。
+export function compensateAdminMembership(input: AdminMembershipGrantInput) {
+    return apiRequest<{ subscription: AdminMembershipSubscription }>("/admin/membership/compensate", { method: "POST", body: input });
+}
+
+// 作废订阅：DELETE 带 body，服务端作废后返回 ended。
+export function revokeAdminMembership(id: string, reason: string) {
+    return apiRequest<{ id: string; status: "ended" }>(`/admin/membership/subscriptions/${id}`, { method: "DELETE", body: { reason } });
 }

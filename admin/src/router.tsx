@@ -13,6 +13,7 @@ import AdminPackagesPage from "@admin/pages/credit-packages";
 import ForbiddenPage from "@admin/pages/forbidden";
 import AdminDashboardPage from "@admin/pages/index";
 import AdminLoginPage from "@admin/pages/login";
+import AdminMembershipPage from "@admin/pages/membership";
 import AdminModelsPage from "@admin/pages/models";
 import AdminModerationPage from "@admin/pages/moderation";
 import NoPermissionPage from "@admin/pages/no-permission";
@@ -83,6 +84,14 @@ export const router = createBrowserRouter([
                         element: (
                             <RequirePermission required={permissionsForPath("/admin/users")}>
                                 <AdminUsersPage />
+                            </RequirePermission>
+                        ),
+                    },
+                    {
+                        path: "/admin/membership",
+                        element: (
+                            <RequirePermission required={permissionsForPath("/admin/membership")}>
+                                <AdminMembershipPage />
                             </RequirePermission>
                         ),
                     },

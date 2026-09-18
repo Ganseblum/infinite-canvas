@@ -15,6 +15,8 @@ export const PERM = {
     usersRead: "users.read",
     usersWrite: "users.write",
     usersCredits: "users.credits",
+    membershipRead: "membership.read",
+    membershipWrite: "membership.write",
     modelsRead: "models.read",
     channelsRead: "channels.read",
     moderationRead: "moderation.read",
@@ -52,6 +54,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     { path: "/admin", labelKey: "admin.tabs.dashboard", anyOf: [PERM.statsRead] },
     { path: "/admin/analytics", labelKey: "admin.tabs.analytics", anyOf: [PERM.statsUsage] },
     { path: "/admin/users", labelKey: "admin.tabs.users", anyOf: [PERM.usersRead] },
+    { path: "/admin/membership", labelKey: "admin.tabs.membership", anyOf: [PERM.membershipRead] },
     {
         path: "/admin/models",
         labelKey: "admin.tabs.models",

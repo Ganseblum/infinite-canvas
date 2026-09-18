@@ -193,6 +193,42 @@ export default function AdminUsersPage() {
             width: 140,
             render: (value: string) => dayjs(value).format("YYYY-MM-DD"),
         },
+        // 平台会员/存储域的加法投影列：后端未实现前字段缺失，统一显示「—」占位。
+        {
+            title: t("admin.users.columns.membership"),
+            key: "membership",
+            width: 150,
+            render: (_, row) => {
+                const membership = row.membership;
+                if (!membership?.planId) return "—";
+                return (
+                    <div className="min-w-0">
+                        <Tag color={PLAN_COLORS[membership.planId]}>{t(`admin.users.plans.${membership.planId}`, { defaultValue: membership.planId })}</Tag>
+                        {membership.graceEndsAt ? (
+                            <div className="truncate text-xs text-stone-500 dark:text-stone-400">
+                                {t("admin.users.membershipGrace", { date: dayjs(membership.graceEndsAt).format("YYYY-MM-DD") })}
+                            </div>
+                        ) : membership.periodEnd ? (
+                            <div className="truncate text-xs text-stone-500 dark:text-stone-400">
+                                {t("admin.users.membershipUntil", { date: dayjs(membership.periodEnd).format("YYYY-MM-DD") })}
+                            </div>
+                        ) : null}
+                    </div>
+                );
+            },
+        },
+        {
+            title: t("admin.users.columns.storageQuota"),
+            key: "storageQuota",
+            align: "right",
+            width: 140,
+            render: (_, row) =>
+                row.storage ? (
+                    `${formatBytes(row.storage.usedBytes)}${row.storage.quotaBytes != null ? ` / ${formatBytes(row.storage.quotaBytes)}` : ""}`
+                ) : (
+                    "—"
+                ),
+        },
         {
             title: t("admin.users.columns.actions"),
             key: "actions",
