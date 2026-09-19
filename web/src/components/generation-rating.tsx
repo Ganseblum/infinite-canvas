@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { App, Button, Checkbox, Input, Modal } from "antd";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { getApiErrorMessage } from "@/lib/api-error";
-import { deleteGenerationFeedback, setGenerationFeedback } from "@/services/api/feedback";
+import { deleteGenerationFeedback, getGenerationFeedback, setGenerationFeedback } from "@/services/api/feedback";
 
 export type GenerationRatingValue = 1 | -1 | null | undefined;
 
@@ -27,14 +27,34 @@ export function GenerationRating({
     const [labels, setLabels] = useState<string[]>([]);
     const [note, setNote] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    // 会话内的评分存在父组件；页面刷新后从这里回填本人已提交的评分，
+    // 让「撤销/换选」在刷新后依然成立。
+    const [serverValue, setServerValue] = useState<GenerationRatingValue>(undefined);
+    useEffect(() => {
+        if (!generationId) return;
+        let cancelled = false;
+        getGenerationFeedback(generationId)
+            .then((res) => {
+                if (!cancelled && res.feedback) setServerValue(res.feedback.rating);
+            })
+            .catch(() => undefined);
+        return () => {
+            cancelled = true;
+        };
+    }, [generationId]);
+    const effective = value ?? serverValue;
 
     if (!generationId) return null;
 
     const rate = async (rating: GenerationRatingValue, meta?: RatingMeta) => {
         try {
-            if (rating === null) await deleteGenerationFeedback(generationId);
-            else if (rating === 1 || rating === -1) await setGenerationFeedback(generationId, { rating, labels: meta?.labels, note: meta?.note });
-            else return;
+            if (rating === null) {
+                await deleteGenerationFeedback(generationId);
+                setServerValue(undefined);
+            } else if (rating === 1 || rating === -1) {
+                await setGenerationFeedback(generationId, { rating, labels: meta?.labels, note: meta?.note });
+                setServerValue(rating);
+            } else return;
             onChange(rating, meta);
             if (rating === -1) message.success(t("workbench.ratingSubmitted"));
         } catch (error) {
@@ -43,12 +63,12 @@ export function GenerationRating({
     };
 
     const onLike = () => {
-        if (value === 1) void rate(null);
+        if (effective === 1) void rate(null);
         else void rate(1);
     };
 
     const onDislike = () => {
-        if (value === -1) {
+        if (effective === -1) {
             void rate(null);
             return;
         }
@@ -77,7 +97,7 @@ export function GenerationRating({
                     type="text"
                     className="!h-6 !px-1"
                     title={t("workbench.ratingLike")}
-                    icon={<ThumbsUp className={`size-3.5 ${value === 1 ? "fill-emerald-500 text-emerald-500" : ""}`} />}
+                    icon={<ThumbsUp className={`size-3.5 ${effective === 1 ? "fill-emerald-500 text-emerald-500" : ""}`} />}
                     onClick={() => void onLike()}
                 />
                 <Button
@@ -85,7 +105,7 @@ export function GenerationRating({
                     type="text"
                     className="!h-6 !px-1"
                     title={t("workbench.ratingDislike")}
-                    icon={<ThumbsDown className={`size-3.5 ${value === -1 ? "fill-rose-500 text-rose-500" : ""}`} />}
+                    icon={<ThumbsDown className={`size-3.5 ${effective === -1 ? "fill-rose-500 text-rose-500" : ""}`} />}
                     onClick={onDislike}
                 />
             </span>

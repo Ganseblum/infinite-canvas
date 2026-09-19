@@ -64,11 +64,11 @@ if [[ -n "$DB_PORT" ]]; then
     DB_PASS="$(env_value MYSQL_PASSWORD)"
     DB_NAME="$(env_value MYSQL_DATABASE)"
     [[ -n "$DB_USER" && -n "$DB_NAME" ]] || { echo "$ENV_FILE 缺少 MYSQL_USER / MYSQL_DATABASE" >&2; exit 1; }
-    mysqldump --single-transaction --set-gtid-purged=OFF \
+    mysqldump --single-transaction --no-tablespaces --set-gtid-purged=OFF \
         -h "$DB_HOST" -P "$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" | gzip > "$BACKUP_DIR/db.sql.gz"
 else
     docker exec "${DB_CONTAINER:-infinite-canvas-db-1}" sh -c \
-        'exec mysqldump --single-transaction --set-gtid-purged=OFF -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+        'exec mysqldump --single-transaction --no-tablespaces --set-gtid-purged=OFF -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
         | gzip > "$BACKUP_DIR/db.sql.gz"
 fi
 

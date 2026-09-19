@@ -1,0 +1,211 @@
+---
+title: 博客站实施计划（评论 / 点赞 / 收藏 / SEO）
+description: blog.youc.online 的开源选型结论、互动功能（评论/点赞/收藏）规划、SEO 方案与分阶段实施计划
+---
+
+> 上游文档：[博客站架构（深夜排字房）](/docs/overview/blog-architecture)。架构文档定渲染方案与数据模型基线；本文档回答三件事：**开源方案怎么选**、**互动功能（评论 / 点赞 / 收藏）怎么做**、**SEO 怎么做**，并给出完整分期计划。设计稿 `design/html/blog-draft-pressroom.html` 文章页已含操作栏与评论区样张。
+
+## 一、结论速览
+
+| 决策点 | 结论 | 一句话理由 |
+| --- | --- | --- |
+| 是否采用开源博客引擎（Halo / Ghost / WordPress / Hexo 系） | **不整站采用** | 栈不匹配（Java / Node / PHP），账号体系与管理后台重复建设；我们是「平台内的新产品域」，不是独立小站 |
+| Markdown 渲染 | **goldmark + Chroma**（开源积木） | Go 生态标准解析器，100% CommonMark，GFM / 脚注 / Alert 全内建，默认转义 raw HTML |
+| 后台编辑器 | **md-editor-rt**（备选 Vditor） | React 原生、MIT、中文文档、图片上传与目录齐备，贴合现有 antd 管理后台 |
+| 评论 / 点赞 / 收藏 | **自建**（复用平台账号与审核基建） | Artalk/Waline 都要带第二套用户体系与运行时；平台已有账号、角色、内容审核与管理台，自建反而最省、且身份徽章天然打通 |
+| 定位 | **完全免费** | 无付费墙 / 会员 / 打赏；RSS 输出全文；页面零广告零追踪脚本 |
+| 前台框架 | **Next.js 独立应用（App Router）** | 已拍板：ISR + 按需再验证承接后台即改即生效；Markdown 渲染仍在 Go（API 返回 `content_html`），主站静态导出不受影响 |
+| 首要目标 | **SEO** | Next SSR/ISR 服务端渲染是底座，本文档第四节给逐页 SEO 规格 |
+
+## 二、开源选型
+
+### 2.1 为什么不直接用一个开源博客引擎
+
+- **Halo**（Java）、**Ghost**（Node）、**WordPress**（PHP）：都自带用户体系、管理后台与主题运行时。引入任何一个等于在平台旁边再养一套账号 + 后台 + 部署，与「博客读者 = 平台用户、管理后台 = 现有 admin」相冲突。
+- **Hexo / Hugo / Astro**（静态生成器）：内容是仓库里的 Markdown 文件，管理走 git，与「后台即时发布」诉求相反。
+- 结论：**引擎自建，积木开源**。自建部分只有一个 Go 域 + 两三张表 + 模板，真正的重活（Markdown 解析、高亮、编辑器、审核）全部用开源件。
+
+### 2.2 Markdown 管线（服务端，Go）
+
+- **goldmark**（5.0k★，MIT）：100% CommonMark 0.31.2、模糊测试覆盖、对 CJK 友好；锁 v1 稳定线（v2 早期，等扩展生态跟上）。
+- 内建扩展直接覆盖设计稿的全部组件：**GFM**（表格 / 任务列表 / 删除线 / Linkify / **Alert 警告块**——`> [!TIP]`、`> [!WARNING]` 即设计稿的 Callout，无需自写钩子）、**Footnote**（脚注）。
+- 周边扩展：`goldmark-highlighting`（接 **Chroma** 做服务端高亮，深夜配色）、`goldmark-anchor`（标题锚点）；目录由渲染时收集 h2/h3 自行生成（十几行，不引第三方 TOC）。
+- 输出契约（Next 前台已定）：goldmark 在 Go 侧渲染为 `content_html` + `toc` 随内容 API 返回，Next 只做展示层；admin 的发布前预览走 `POST /api/admin/blog/preview`（同一条管线，所见即前台所得），编辑器内即时预览仅作打字辅助。
+- 安全：默认转义 raw HTML 与危险 URL；评论等不可信输入同管线渲染时再套 bluemonday 白名单。
+
+### 2.3 后台编辑器（React）
+
+| 候选 | 情况 | 结论 |
+| --- | --- | --- |
+| **md-editor-rt**（475★，MIT） | React 原生 TS 组件，工具栏 / 暗色 / 图片粘贴上传 / `MdPreview` / `MdCatalog`、中文文档，按需引入 | **推荐**：与 antd 管理后台同栈，够用且轻 |
+| Vditor（9k★，MIT） | 框架无关，所见即所得 / 即时渲染 / 分屏三模式，功能最重 | 备选：如果想要「像 Notion 一样写」再换，接口上是编辑器替换，不影响数据 |
+| CodeMirror 6 + 自拼预览 | 最灵活 | 不选：拼装成本高于收益 |
+
+### 2.4 评论系统：自建 vs 开源
+
+| 方案 | 技术栈 | 用户体系 | 审核联动 | 主要代价 |
+| --- | --- | --- | --- | --- |
+| **自建（推荐）** | Go 域内新增三张表 | **平台账号直接复用**，徽章（作者 / 管理员）天然打通 | 直接接 P5 审核管线（文本预检 + 隔离 + 管理台） | 需要自建一个阶段（约 P5） |
+| Artalk（2.3k★，MIT） | Go 单二进制 | 自带（社交登录 / 管理员密码），**与平台账号割裂** | 自带审核 / 验证码，但与平台隔离审核、管理台两套 | +1 常驻服务、+1 后台、+1 次登录 |
+| Waline（3.1k★，GPL-2.0） | Node（Serverless / 自托管） | 自带社交登录 | 自带 Akismet 等 | **Node 运行时 + GPL 传染性**，两处都与本项目相悖 |
+| giscus | GitHub Discussions | GitHub 登录 | 无 | 中文读者门槛高，无角色体系 |
+
+结论：**自建评论 / 点赞 / 收藏**。这不是重复造轮子——评论的难点是身份、审核、管理台，而这三样平台全有；真正要写的只是三张表的 CRUD 与计数。
+
+## 三、互动功能规划（评论 / 点赞 / 收藏）
+
+### 3.1 数据模型（在架构文档两张表之上追加）
+
+```sql
+-- 评论（一层面 + 回复指针；不建深层楼中楼）
+CREATE TABLE blog_comments (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  post_id       BIGINT UNSIGNED NOT NULL,
+  user_id       BIGINT UNSIGNED NOT NULL,              -- platform_users.id，登录评论
+  reply_to_id   BIGINT UNSIGNED NULL,                  -- 回复目标评论（扁平展示，@对方昵称）
+  content_md    VARCHAR(2000) NOT NULL,                -- 评论正文（短 Markdown：粗体/行内代码/链接）
+  status        ENUM('visible','hidden','quarantined') NOT NULL DEFAULT 'visible',
+  like_count    INT UNSIGNED NOT NULL DEFAULT 0,       -- 冗余计数，事件内自增
+  ip            VARBINARY(16) NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_comment_post FOREIGN KEY (post_id) REFERENCES blog_posts(id),
+  CONSTRAINT fk_comment_user FOREIGN KEY (user_id) REFERENCES platform_users(id)
+);
+CREATE INDEX idx_comment_post ON blog_comments (post_id, status, created_at);
+
+-- 点赞（文章 / 评论通用，一人一物至多一个）
+CREATE TABLE blog_reactions (
+  user_id       BIGINT UNSIGNED NOT NULL,
+  target_type   ENUM('post','comment') NOT NULL,
+  target_id     BIGINT UNSIGNED NOT NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, target_type, target_id)
+);
+
+-- 收藏（文章）
+CREATE TABLE blog_bookmarks (
+  user_id       BIGINT UNSIGNED NOT NULL,
+  post_id       BIGINT UNSIGNED NOT NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, post_id),
+  CONSTRAINT fk_bookmark_post FOREIGN KEY (post_id) REFERENCES blog_posts(id)
+);
+```
+
+`blog_posts` 增加冗余计数列 `comment_count` / `like_count` / `bookmark_count`（写路径事务内自增，读路径免聚合）；计数与明细以夜间对账任务兜底（复用 D9 对账模式）。
+
+### 3.2 身份、角色与会话（关键集成点）
+
+- **评论者 = 平台登录用户**：评论框未登录时显示「登录后评论」，跳转现有登录页，登录后回跳文章页。
+- **会话作用域**：blog.youc.online 作为新子域，签发**自己的 host-only 会话 cookie**（Domain 保持不动，不影响主应用现有 cookie 语义），会话落 identity 域同一张 sessions 表——同一个人，两处登录态互不干扰。
+- **角色展示**（设计稿评论区已示意）：评论者昵称 + 头像 + 徽章——**作者**（该文作者）、**管理员**（admin 角色）；普通用户无徽章。
+- **权限**：本人可删自己的评论；管理员可隐藏 / 恢复 / 删除任意评论并置顶；管理员隐藏走「hidden」，前台显示「该评论已被管理员隐藏」占位。
+
+### 3.3 防滥用与审核
+
+- **审核管线复用 P5**：评论提交先过文本预检（NSFWJS / Detoxify 同款语义），命中 → `quarantined` 进现有隔离审核台；通过 → `visible` 直接显示（先发后审，命中才拦）。
+- **限流**（建议默认值，**上线前需确认**）：单用户发评 ≥30s 间隔、每日 ≤50 条、单篇 ≤2000 字、同评论 ≥1 条/10s/IP 的 IP 级限流（沿用登录端点同口径 429 + Retry-After）；超限失败提示明确文案。
+- 收藏 / 点赞幂等：主键去重，重复请求返回当前状态而非报错。
+
+### 3.4 API 面（`/api/v1/blog/*`，进 OpenAPI）
+
+内容读 API（`GET /posts`、`GET /posts/{slug}` 返回 `content_html` + `toc`、`GET /topics`）与管理面 `POST /api/admin/blog/preview` 预览端点见架构文档第五节；互动端点如下：
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /api/v1/blog/posts/{slug}/comments?cursor=` | 评论列表（登录态返回自己的点赞/隐藏态；游客可见 visible） |
+| `POST /api/v1/blog/posts/{slug}/comments` | 发表 / 回复（登录 + 限流 + 审核） |
+| `DELETE /api/v1/blog/comments/{id}` | 本人删除（管理员走 admin） |
+| `POST /api/v1/blog/reactions` / `DELETE`（body: type + id） | 点赞 / 取消（登录，幂等） |
+| `PUT /api/v1/blog/posts/{slug}/bookmark` / `DELETE` | 收藏 / 取消（登录，幂等） |
+| `GET /api/v1/blog/bookmarks` | 我的收藏列表（分页） |
+| `GET/POST/... /api/admin/blog/comments` | 管理台：全量列表 / 隐藏 / 恢复 / 删除 / 置顶 |
+
+前台交互形态：评论列表由 Next 服务端组件（RSC）渲染（SEO 与首屏），发表 / 点赞 / 收藏用小型 client 组件（fetch + 乐观更新），不需要额外状态管理库。
+
+### 3.5 范围裁剪（本期不做）
+
+邮件 / 站内通知、楼中楼多级嵌套、评论编辑（只能删了重发）、游客评论、打赏与付费墙、全文搜索（MVP 用栏目 + 分页覆盖；后续可上 SQLite/MySQL 全文或 Meilisearch）。
+
+## 四、SEO 方案（免费站的主增长面）
+
+### 4.1 基础设施（Next SSR/ISR 已天然具备）
+
+- 服务端完整 HTML（无 CSR 白屏）、单一规范域名 `blog.youc.online`、HTTPS、80→443 跳转、响应式（设计稿已含移动端）。
+- `robots.txt`（允许抓取，`/api`、`/assets` 私有路径排除）；`sitemap.xml` 由服务端按发布文章自动生成；RSS `/feed.xml` 输出**全文**（免费站愿意喂阅读器）。
+- URL 规范：`/posts/{slug}`（小写英文短词，发布后不变，改标题不改 slug）；栏目 `/topics/{slug}`；分页 `/page/2` 各自 canonical 指自身。
+- 草稿与下架文章返回 **404**（不返回 200 占位，不留软 404）。
+
+### 4.2 逐页 head 规格
+
+| 页面 | title 模板 | description | canonical | 结构化数据（JSON-LD） |
+| --- | --- | --- | --- | --- |
+| 首页 | `航的手记 — AI 工作流 / 独立开发 / 模板配色` | 站点一句话 | 自身 | `WebSite` + `Blog` |
+| 文章页 | `{标题} — 航的手记` | 摘要（空则首 120 字） | 自身 | `BlogPosting`（headline/datePublished/dateModified/author Person/image keywords）+ `BreadcrumbList`（首页→栏目→文章） |
+| 栏目页 | `{栏目} — 航的手记` | 栏目描述 | 自身 | `Blog` + `ItemList` |
+| 关于页 | `关于 — 航的手记` | 固定文案 | 自身 | `Person` |
+
+通用：Open Graph（`og:title/description/type/url/image`——文章用封面，无封面用默认 OG 图）与 Twitter Card 同值；`<html lang="zh-CN">`；文章正文 `<time datetime>`、唯一 `<h1>`、图片 `alt` + 固定宽高（防 CLS）+ 懒加载。
+
+### 4.3 性能预算（Core Web Vitals）
+
+- 首页无 JS（评论页一小段 fetch 脚本 <5KB），CSS 单文件 ≤30KB gzip，字体三族子集化 + `display=swap` + preload，LCP 目标 <1.8s、CLS <0.05、INP <100ms（移动端）。
+- nginx：`/assets/*` 一年强缓存 + 文件名指纹；HTML `no-cache`（后台改完即时生效）；gzip/brotli 开启。
+- 图片：封面与配图出 768px 预览档（复用画布缩略图管线思路），`srcset` 回退原图。
+
+### 4.4 提交与验证
+
+Google Search Console + Bing Webmaster + 百度站长平台三处提交 sitemap；上线后用 Rich Results Test 验证 JSON-LD；`curl -I` 走查 404/301/canonical；AIGC 封面角标与正文标注保留（既是合规也是 E-E-A-T 的透明度信号）。
+
+## 五、实施分期（在架构文档 P1–P4 基础上细化）
+
+| 阶段 | 内容 | 交付物 / 验收 |
+| --- | --- | --- |
+| **P1 内容域（服务端）** | `internal/blog`：topics / posts 两表迁移、admin CRUD + 发布/下架、goldmark 管线（含 Alert/Footnote/锚点/Chroma 深夜配色）、字数统计、权限点、路由条数测试与域内单测 | 真实 MySQL 迁移验证；OpenAPI 增量 |
+| **P2 管理后台** | 「博客管理」三界面 + md-editor-rt 编辑器（图片上传、目录、预览主题套深夜配色）、slug 冲突 409、删除二次确认 | 后台可完整走：新建 → 草稿 → 发布 → 下架 → 删除 |
+| **P3 前台站点** | `blog/` 独立 Next 应用（App Router）：五页 + 设计稿 CSS 移植、ISR + 缓存标签 + 按需再验证、内容读 API 对接（`content_html` / `toc`）、RSS / sitemap / robots、逐页 head + JSON-LD、双主题切换（暗色默认 + 跟随系统 + localStorage 覆盖 + 防闪内联脚本） | Lighthouse SEO ≥95、性能预算达标、Rich Results 通过 |
+| **P4 上线** | DNS / 证书 / nginx server block、主站 `/blog/` 导流、三平台站长提交、pending-test 走查 | 正式环境发布 |
+| **P5 互动（本期新增）** | comments / reactions / bookmarks 三表 + 计数列、公共互动 API、评论列表 RSC + 互动 client 组件、审核接入（隔离 + 管理台隐藏/置顶）、限流、我的收藏页 | 端到端：登录发评 → 命中隔离 → 管理员放行；点赞/收藏幂等；限流 429 |
+| **P6 运营打磨（可选）** | 文章 OG 分享图自动生成、归档页 / 全文搜索、阅读量统计、百度收录优化 | 按需排期 |
+
+P5 独立成阶段：核心博客（P1–P4）先上线，互动随后追加，互不阻塞。
+
+## 六、参考项目学习（只学思路，不照搬）
+
+两个参考：**KiwiBlog**（`myProject/KiwiBlog`，VitePress 定制主题，内容即 Markdown 文件，学设计与细节）与 **my-blog 三件套**（`github.com/Ganseblum/my-blog` / `-server` / `-admin`，Next 前台 + Koa 后端 + Vue admin，学结构与教训）。
+
+### 6.1 从 KiwiBlog 学到的
+
+1. **「最后更新于」**：VitePress `lastUpdated` 在文章页展示最后更新时间——我们 `updated_at` 已有，前台照此展示，并与 JSON-LD `dateModified` 同源。
+2. **图片体验**：`markdown.image.lazyLoading` 全局懒加载 + medium-zoom 点击放大——SSR 输出统一带 `loading="lazy"` + 显式宽高；点击放大排入 P6。
+3. **开箱细节清单**：内建 local search、sitemap、PWA、appearance 暗色切换——sitemap 与主题切换我们已规划；本地搜索与 PWA 记入 P6 打磨。
+4. **评论的主题同步**：Beaudar（GitHub issue 评论）靠 postMessage 同步明暗样式——反证「评论区必须跟随主题」，自建评论无 iframe，直接用主题变量即可。
+5. **不照搬**：内容即文件（与后台 CRUD 诉求相反）、Netlify 托管（自有服务器）、GitHub 账号评论（读者门槛）、Lenis 平滑滚动（装饰性，性能优先）、中英双语（单语言）。
+
+### 6.2 从 my-blog 三件套学到的
+
+1. **数据模型字段增补**（其 `ArticleT` 的合理之处）：`is_top` 置顶、`origin_url` 转载原文链接（配合 type 原创/转载）、`view_times` 浏览量、`thumbs_up_times` 点赞——已并入架构文档 DDL：`is_pinned`（置顶）、`origin_url`（空 = 原创）、浏览量统计排入 P6（先不建列）。
+2. **md-editor-rt 已在前台验证**：其文章页即 `MdPreview`（正文渲染）+ `MdCatalog`（右侧 300px 目录，scrollElement 绑定）——后台编辑器选 md-editor-rt 与自己的历史用法一致，前台目录对应我们 SSR 目录方案。
+3. **明暗主题机制升级**：其 `data-theme` + localStorage 方案的「留坑」（不跟随系统、切换会闪）由我们补齐——**博客站双主题**：暗色（A1）为默认，亮色（A2）就位；`prefers-color-scheme` 跟随 + localStorage 手动覆盖 + `<head>` 内联脚本防闪（FOUC），切换按钮在顶栏。
+4. **路由分层思路**：其 open / public / private 三层路由——我们按域规范两层即可（`/api/admin/blog/*` 管理面 + `/api/v1/blog/*` 互动面），HTML 页面路由独立。
+5. **首页右栏**（个人卡 / 热门文章 / 最新作品 / 公告）是常见的中文博客布局——我们保持单列编辑风，右栏排入 P6 评估。
+6. **SEO 反面教训**（照着避坑）：根布局 metadata 只有 `title:'博客'`、`lang="en"`、文章页 `'use client'` 客户端渲染且写死 mock 数据、`*{transition:all 100ms}` 全局过渡——分别对应我们的：逐页 head 模板 + `lang="zh-CN"`、RSC/ISR 服务端渲染（已是架构决策）、只对必要属性做过渡。
+
+### 6.3 对照确认（我们与两者的本质差异）
+
+| 维度 | KiwiBlog | my-blog | 我们 |
+| --- | --- | --- | --- |
+| 内容 | Markdown 文件入库 git | MySQL（Koa + Sequelize） | MySQL（Go 域 + 后台 CRUD） |
+| 渲染 | VitePress 构建期 SSG | Next 客户端渲染为主 | **Next ISR**（内容读 API 由 Go 提供，`content_html` 在 Go 渲染） |
+| 评论 | Beaudar（GitHub issue） | 未实现 | 自建（平台账号 + 审核） |
+| 主题 | 亮暗切换 | 亮暗切换（有坑） | 双主题（跟随系统 + 防闪） |
+| 编辑器 | 无（本地写 md） | md-editor-rt（后台未完成） | md-editor-rt |
+
+## 七、待用户确认的开放项
+
+1. **评论是否强制登录**：推荐登录评论（质量 + 收藏/点赞依赖账号）；若想降低门槛可加「昵称 + 邮箱」游客评论（需额外防滥用权重）。
+2. **限流数值**：3.3 节的建议值（30s / 条、50 条 / 日、2000 字）是否调整。
+3. **审核口径**：先发后审 + 命中隔离（推荐，社区同款语义）还是全部先审后发。
+4. **收藏入口**：「我的收藏」页放博客（`/bookmarks`，需登录）还是主应用账户中心（推荐前者，博客内闭环）。
+5. **再验证兜底窗口**：Go 回调 `/api/revalidate` 失败时，页面缓存自动过期时间建议 300 秒（兼顾生效速度与 API 压力），是否调整。

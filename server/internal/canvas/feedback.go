@@ -411,10 +411,15 @@ func feedbackRepliesPayload(replies []model.FeedbackTicketReply) []gin.H {
 }
 
 func generationFeedbackPayload(feedback model.GenerationFeedback) gin.H {
+	// 未携带标签时输出空数组而不是 [""]。
+	labels := []string{}
+	if feedback.Labels != "" {
+		labels = strings.Split(feedback.Labels, ",")
+	}
 	return gin.H{
 		"generationId": feedback.GenerationID.String(),
 		"rating":       feedback.Rating,
-		"labels":       strings.Split(strings.Trim(feedback.Labels, ","), ","),
+		"labels":       labels,
 		"note":         feedback.Note,
 		"updatedAt":    httpx.FormatTime(feedback.UpdatedAt),
 	}

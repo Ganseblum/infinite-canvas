@@ -1,0 +1,6 @@
+HTTP/1.1 301 Moved Permanently
+Content-Type: text/html; charset=utf-8
+Location: /api/v1/feedback
+Date: Sat, 19 Sep 2026 12:42:11 GMT
+Content-Length: 51
+

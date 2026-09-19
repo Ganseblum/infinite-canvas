@@ -1,0 +1,6 @@
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+X-Request-Id: bbf9f0fab03245135ed0efe1c129ad20
+Date: Sat, 19 Sep 2026 12:34:23 GMT
+Content-Length: 147
+

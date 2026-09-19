@@ -138,6 +138,9 @@ services:
       MODERATION_NSFWJS_ENDPOINT: "${MODERATION_NSFWJS_ENDPOINT:-}"
       MODERATION_DETOXIFY_ENDPOINT: "${MODERATION_DETOXIFY_ENDPOINT:-}"
       MODERATION_IMAGE_THRESHOLD: "${MODERATION_IMAGE_THRESHOLD:-0.6}"
+      # 博客前台按需再验证：内容变更后回调 blog-web /api/revalidate（URL 空 = 关闭）
+      BLOG_REVALIDATE_URL: "${BLOG_REVALIDATE_URL:-}"
+      BLOG_REVALIDATE_SECRET: "${BLOG_REVALIDATE_SECRET:-}"
       MODERATION_TEXT_THRESHOLD: "${MODERATION_TEXT_THRESHOLD:-0.8}"
       MODERATION_VIDEO_SAMPLE_FPS: "${MODERATION_VIDEO_SAMPLE_FPS:-1}"
       MODERATION_FAIL_MODE: ${MODERATION_FAIL_MODE:-}
@@ -191,6 +194,28 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+
+  # ===== 博客前台（深夜排字房）=====
+  # Next.js standalone：页面 ISR 渲染 + /api/v1/blog/* 同域代理回 api（互动 cookie 落 blog 子域）。
+  # REVALIDATE_SECRET 必须与 api 侧 BLOG_REVALIDATE_SECRET 一致，否则按需再验证被拒（兜底 300s 过期）。
+  blog-web:
+    image: ${BLOG_WEB_IMAGE:?需要在 env 文件里设置 BLOG_WEB_IMAGE}
+    build:
+      context: ./blog
+      dockerfile: Dockerfile
+    environment:
+      BLOG_API_BASE: "http://api:8080/api/v1/blog"
+      BLOG_API_INTERNAL: "http://api:8080"
+      REVALIDATE_SECRET: ${BLOG_REVALIDATE_SECRET:-}
+      BLOG_SITE_URL: ${BLOG_SITE_URL:-https://blog.youc.online}
+      NEXT_PUBLIC_LOGIN_URL: ${NEXT_PUBLIC_LOGIN_URL:-https://youc.online/login}
+    ports:
+      # 端口只绑回环，公网访问走宿主机 nginx（deploy/nginx-blog.youc.online.conf）
+      - "127.0.0.1:${BLOG_WEB_PORT:-3101}:3101"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
 
   # ===== 内容审核推理 sidecar（可选，默认不启动）=====
   # image 为占位：按《我的规划/后续功能备忘》的 sidecar 契约实现真实镜像后填入再启用

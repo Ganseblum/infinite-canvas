@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>博客站设计稿总览 · 四种风格</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 active:scale-[0.98] dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85 dark:active:bg-stone-100/75; }
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-stone-200 px-3.5 text-[13px] font-medium text-stone-700 transition hover:bg-black/[0.06] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.1]; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply overflow-hidden rounded-xl border border-stone-200 dark:border-stone-800; }
+</style>
+</head>
+<body class="bg-white text-stone-950 antialiased dark:bg-[#1c1917] dark:text-stone-100">
+
+<!-- ========== 顶部导航 ========== -->
+<header class="sticky top-0 z-40 h-14 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl dark:border-stone-800 dark:bg-[#1c1917]/90">
+  <div class="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6">
+    <div class="flex items-center gap-2 text-sm font-semibold tracking-tight">
+      <span class="size-5 rounded bg-current"></span>
+      <span class="text-base font-medium">博客站设计稿 · 四种风格</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="index.html" class="btn-secondary !h-8 !px-3 text-[13px]">设计稿总览</a>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="切换本页主题">
+        <i data-lucide="sun" class="size-4 hidden dark:block"></i>
+        <i data-lucide="moon" class="size-4 dark:hidden"></i>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+  <p class="text-sm leading-6 text-stone-500 dark:text-stone-400">
+    四种风格的博客站设计稿。已选定 <b class="text-stone-700 dark:text-stone-200">A 深夜排字房</b>（暗色 A1 / 亮色 A2），A 稿为<b class="text-stone-700 dark:text-stone-200">全页面套件</b>：右下角切换器可浏览 首页 / 文章详情页 / 栏目页 / 关于页 / 404 五个页面，文章页按 Markdown 渲染管线出全套组件（标题层级 / 引用 / Callout 提示框 / 带文件名代码块 / 表格 / 任务列表 / 图注 / 脚注 / 标签 / 上下篇 / 侧边目录）。后台管理（文章 CRUD / 编辑器 / 栏目管理）见下方「后台管理」。
+  </p>
+
+  <!-- ========== 四种风格 ========== -->
+  <section class="mt-8">
+    <h2 class="mb-4 text-lg font-semibold">风格方案</h2>
+    <div class="grid gap-4 sm:grid-cols-2">
+
+      <div class="card">
+        <iframe src="blog-draft-pressroom.html" class="pointer-events-none h-52 w-full border-0" loading="lazy"></iframe>
+        <div class="border-t border-stone-200 p-4 dark:border-stone-800">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium">A · 深夜排字房 <span class="ml-1 text-xs text-stone-400">暗色 · 全页面套件 ✦ 已选定</span></p>
+              <p class="mt-1 text-xs text-stone-400">blog-draft-pressroom.html · 首页 / 文章 / 栏目 / 关于 / 404 · Anton + 衬线正文 · 橙 #ff4d00</p>
+            </div>
+            <div class="flex gap-1.5">
+              <a href="blog-draft-pressroom.html" target="_blank" class="btn-secondary">首页</a>
+              <a href="blog-draft-pressroom.html#post" target="_blank" class="btn-secondary">文章页</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <iframe src="blog-draft-pressroom-light.html" class="pointer-events-none h-52 w-full border-0" loading="lazy"></iframe>
+        <div class="border-t border-stone-200 p-4 dark:border-stone-800">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium">A2 · 深夜排字房 <span class="ml-1 text-xs text-stone-400">亮色 · 纸白墨字同款版式</span></p>
+              <p class="mt-1 text-xs text-stone-400">blog-draft-pressroom-light.html · 纸白 #f4f0e8 + 深橙 #d43a00 · 代码块保留深夜暗色</p>
+            </div>
+            <div class="flex gap-1.5">
+              <a href="blog-draft-pressroom-light.html" target="_blank" class="btn-secondary">首页</a>
+              <a href="blog-draft-pressroom-light.html#post" target="_blank" class="btn-secondary">文章页</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <iframe src="blog-draft-paper.html" class="pointer-events-none h-52 w-full border-0" loading="lazy"></iframe>
+        <div class="border-t border-stone-200 p-4 dark:border-stone-800">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium">B · 纸上书房 <span class="ml-1 text-xs text-stone-400">纸白 · 报刊头版与书页</span></p>
+              <p class="mt-1 text-xs text-stone-400">blog-draft-paper.html · Playfair + 衬线正文 · 印章红 #bc4326</p>
+            </div>
+            <div class="flex gap-1.5">
+              <a href="blog-draft-paper.html" target="_blank" class="btn-secondary">首页</a>
+              <a href="blog-draft-paper.html#post" target="_blank" class="btn-secondary">文章页</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <iframe src="blog-draft-zine.html" class="pointer-events-none h-52 w-full border-0" loading="lazy"></iframe>
+        <div class="border-t border-stone-200 p-4 dark:border-stone-800">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium">C · 出厂设置 ZINE <span class="ml-1 text-xs text-stone-400">新粗野 · 贴纸杂志</span></p>
+              <p class="mt-1 text-xs text-stone-400">blog-draft-zine.html · Archivo Black + 硬阴影 · 贴纸黄 #ffe600</p>
+            </div>
+            <div class="flex gap-1.5">
+              <a href="blog-draft-zine.html" target="_blank" class="btn-secondary">首页</a>
+              <a href="blog-draft-zine.html#post" target="_blank" class="btn-secondary">文章页</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <iframe src="blog-draft-terminal.html" class="pointer-events-none h-52 w-full border-0" loading="lazy"></iframe>
+        <div class="border-t border-stone-200 p-4 dark:border-stone-800">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium">D · 终端手记 <span class="ml-1 text-xs text-stone-400">开发者 · tmux 会话</span></p>
+              <p class="mt-1 text-xs text-stone-400">blog-draft-terminal.html · JetBrains Mono · 荧光绿 #3fe081</p>
+            </div>
+            <div class="flex gap-1.5">
+              <a href="blog-draft-terminal.html" target="_blank" class="btn-secondary">首页</a>
+              <a href="blog-draft-terminal.html#post" target="_blank" class="btn-secondary">文章页</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ========== 后台管理 ========== -->
+  <section class="mt-12">
+    <h2 class="mb-4 text-lg font-semibold">后台管理（对齐现有 admin 设计稿家族）</h2>
+    <div class="card overflow-hidden">
+      <iframe src="admin-blog.html" class="pointer-events-none h-72 w-full border-0" loading="lazy"></iframe>
+      <div class="border-t border-stone-200 p-4 dark:border-stone-800">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium">博客管理 · admin-blog <span class="ml-1 text-xs text-stone-400">文章列表 / 编辑器 / 栏目管理</span></p>
+            <p class="mt-1 text-xs text-stone-400">admin-blog.html · 新建/编辑/发布/下架/删除 + Markdown 编辑与实时预览 + 删除确认</p>
+          </div>
+          <div class="flex gap-1.5">
+            <a href="admin-blog.html" target="_blank" class="btn-secondary">新窗口打开</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 选型参考 ========== -->
+  <section class="mt-12">
+    <h2 class="mb-4 text-lg font-semibold">Markdown 渲染选型参考（详情页实现时用）</h2>
+    <div class="overflow-hidden rounded-xl border border-stone-200 dark:border-stone-800">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-stone-50 text-xs text-stone-500 dark:bg-stone-900 dark:text-stone-400">
+          <tr><th class="px-4 py-3 font-medium">环节</th><th class="px-4 py-3 font-medium">推荐</th><th class="px-4 py-3 font-medium">说明</th></tr>
+        </thead>
+        <tbody class="divide-y divide-stone-200 dark:divide-stone-800">
+          <tr><td class="px-4 py-3 align-top font-medium">正文渲染</td><td class="px-4 py-3 align-top"><code class="text-xs">react-markdown</code> + <code class="text-xs">remark-gfm</code></td><td class="px-4 py-3 text-stone-500 dark:text-stone-400">纯 .md 渲染，15.9k★；GFM 提供表格 / 任务列表 / 脚注 / 删除线；要在文内嵌组件再上 MDX（@next/mdx，支持静态导出）</td></tr>
+          <tr><td class="px-4 py-3 align-top font-medium">正文排版</td><td class="px-4 py-3 align-top"><code class="text-xs">@tailwindcss/typography</code></td><td class="px-4 py-3 text-stone-500 dark:text-stone-400">prose 基线 + 按品牌元素级覆写；本站各稿的文章页样式即它的对应物</td></tr>
+          <tr><td class="px-4 py-3 align-top font-medium">代码高亮</td><td class="px-4 py-3 align-top"><code class="text-xs">shiki</code></td><td class="px-4 py-3 text-stone-500 dark:text-stone-400">构建期高亮、零运行时 JS、VS Code 级语法；文档站已在用同款管线</td></tr>
+          <tr><td class="px-4 py-3 align-top font-medium">目录 / 锚点</td><td class="px-4 py-3 align-top"><code class="text-xs">rehype-slug</code> + 自渲染 TOC</td><td class="px-4 py-3 text-stone-500 dark:text-stone-400">标题加 id，右侧粘性目录；fumadocs 管线可直接复用经验</td></tr>
+          <tr><td class="px-4 py-3 align-top font-medium">不要用</td><td class="px-4 py-3 align-top"><code class="text-xs">next-mdx-remote</code></td><td class="px-4 py-3 text-stone-500 dark:text-stone-400">2026-04 已归档停止维护；等价场景改用 @next/mdx 或直接 @mdx-js/mdx compile</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  lucide.createIcons();
+</script>
+</body>
+</html>

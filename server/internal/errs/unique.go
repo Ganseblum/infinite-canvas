@@ -13,6 +13,8 @@ import (
 var uniqueIndexColumns = map[string]string{
 	"idx_users_email":    "email",
 	"idx_users_username": "username",
+	"idx_blog_posts_slug":   "slug",
+	"idx_blog_topics_slug":  "slug",
 }
 
 // IsDuplicateKey 判断错误是否为唯一索引冲突：MySQL 按 1062 错误码判定，

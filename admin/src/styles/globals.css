@@ -1,3 +1,25 @@
 /* admin 的样式入口：主题变量、基础层与 dark 变体直接复用 web 的 globals.css，避免两份漂移。
    @source 由 vite.config.ts 按 admin/scripts/web-whitelist.mjs 注入（与 import 边界共用同一份清单）。 */
 @import "../../../web/src/styles/globals.css";
+
+/* ===== 博客管理：同源预览（正文为 Go goldmark 渲染产物，深夜配色缩影） ===== */
+.blog-preview { color: #f2f2ef; background: #0b0b0d; border: 1px solid rgba(242, 242, 239, 0.14); border-radius: 8px; padding: 16px 18px; font-size: 13px; line-height: 1.95; }
+.blog-preview h1, .blog-preview h2, .blog-preview h3 { color: #f2f2ef; margin: 1.2em 0 0.6em; }
+.blog-preview h2 { font-size: 15px; padding-bottom: 8px; border-bottom: 1px solid rgba(242, 242, 239, 0.14); }
+.blog-preview p { margin: 0 0 1em; color: rgba(242, 242, 239, 0.86); }
+.blog-preview a { color: #ff7847; text-decoration: underline; }
+.blog-preview code { font-family: ui-monospace, monospace; font-size: 11px; background: rgba(242, 242, 239, 0.08); border: 1px solid rgba(242, 242, 239, 0.14); padding: 1px 5px; border-radius: 3px; }
+.blog-preview pre { background: #191712; border: 1px solid rgba(242, 242, 239, 0.14); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+.blog-preview pre code { background: none; border: none; padding: 0; line-height: 1.8; }
+.blog-preview blockquote { margin: 1em 0; padding-left: 14px; border-left: 3px solid #ff4d00; color: rgba(242, 242, 239, 0.6); }
+.blog-preview blockquote p { margin: 0 0 0.4em; }
+.blog-preview .callout { border: 1px solid rgba(242, 242, 239, 0.14); border-left: 3px solid #ff4d00; background: rgba(255, 77, 0, 0.06); padding: 12px 16px; margin: 1em 0; }
+.blog-preview .callout.warn { border-left-color: #e0a100; background: rgba(224, 161, 0, 0.07); }
+.blog-preview .callout .cl-t { font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.18em; color: #ff7847; margin: 0 0 6px; }
+.blog-preview .callout.warn .cl-t { color: #e0a100; }
+.blog-preview table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 1em 0; }
+.blog-preview th { text-align: left; font-size: 10px; letter-spacing: 0.1em; color: rgba(242, 242, 239, 0.55); border-bottom: 2px solid #f2f2ef; padding: 6px 8px; }
+.blog-preview td { border-bottom: 1px solid rgba(242, 242, 239, 0.14); padding: 6px 8px; }
+.blog-preview ul.task, .blog-preview ul.contains-task-list { list-style: none; padding-left: 0; }
+.blog-preview ul.task li, .blog-preview li.task-list-item { list-style: none; }
+.blog-preview .footnotes { font-size: 11px; color: rgba(242, 242, 239, 0.55); border-top: 1px solid rgba(242, 242, 239, 0.14); margin-top: 1.5em; padding-top: 8px; }

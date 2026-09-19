@@ -5,6 +5,15 @@ description: 已规划的后续工作
 
 # 待办
 
+## 博客站「深夜排字房」：实施进度（本版本更新）
+
+架构/计划文档与设计稿见 `docs/content/docs/overview/blog-architecture.mdx`、`docs/content/docs/development/blog-plan.mdx`、`design/html/blog-draft-*`。**P1–P3、P5 代码已全部落地并通过 21 包单测与 tsc（验收清单见 pending-test.mdx）**：
+
+- **已完成**：P1 内容域（5 表迁移、admin 17 端点 + 公共读 3 端点、goldmark 管线含 Callout/脚注/锚点/Chroma、再验证通知器、权限点 blog.read/write）；P2 管理后台（文章/栏目/评论三界面 + 同源预览，双语 i18n）；P3 前台（blog/ Next 15 应用：五页 + 设计稿 CSS 移植 + ISR + 再验证路由 + RSS 全文/sitemap/robots + JSON-LD + 双主题防闪）；P5 互动（评论/点赞/收藏 + 冗余计数 + 隔离审核接入 + 我的收藏）。
+- **剩余 P4 上线（需真实环境）**：真实 MySQL 迁移验证（硬性）；DNS blog A 记录 → certbot 补证书 → nginx 落地（模板 `deploy/nginx-blog.youc.online.conf`）→ compose env 填 BLOG_* → 按需再验证联调 → 主站 /blog/ 改导流 → 三平台站长提交。
+- **P6 运营打磨（可选）**：OG 分享图生成、归档页/全文搜索、阅读量统计、图片点击放大、admin 编辑器换 md-editor-rt（当前为文本框 + 同源预览，React 19 兼容性待验证）、首页右栏评估。
+- **开放项待确认**：评论强制登录口径、限流数值（当前 2 次/分钟）、先发后审、收藏入口在博客内 /bookmarks、再验证兜底 300s——均按建议值实现，可在验收后调整。
+
 ## 平台账号与会员体系：遗留与后续（本版本新增）
 
 - **deletion 多产品记账**：注销清理把全部释放字节记到 canvas 产品，当前单产品无害，第二产品接入前需按 product 聚合。
@@ -35,7 +44,7 @@ description: 已规划的后续工作
 - The multi-product admin shell and the EasyPay payment channel (planned in `我的规划/Admin后台与多产品规划.md` / `我的规划/易支付接入规划.md`) are delivered and running on the test environment (`sim-admin.youc.online`); production rollout follows the accepted-main release process. Real moderation sidecars (NSFWJS / Detoxify) remain pending the server-resource and option decision.
 - Test-environment deployment: only test and production databases exist, and local development shares `infinite_canvas_test`. Compose, image/port isolation, the server checkout, keys/env, image build, test-domain Nginx and certificate are now in place — the test site runs at `https://sim-art.youc.online` (app bound to `127.0.0.1:3100`, MySQL additionally exposed on `127.0.0.1:13306`). Still open: real email delivery (the test site uses `MAIL_DRIVER=log`), S3 storage, moderation sidecars, the DBeaver tunnel check, end-to-end acceptance for container restarts, and backup. The platform channel (`ai.youc.online`, OpenAI format) and four `gpt-image-*` models are configured, and one image generation has been verified end to end through quote, generate, store and fetch. Real server details stay in the local-only runbook; production is deployed from an accepted main release tag after backup/restore preparation and domain cutover.
 - Admin console deployment is documented in `deploy/README.md` (管理后台): it ships inside the same web app (`/admin/*`) and the same api (`/api/admin/*`), so no extra service, port, domain, or image is needed, and admin APIs are enforced server-side by `Auth` + `AdminOnly`. `ADMIN_EMAIL` / `ADMIN_PASSWORD` only bootstrap the first admin — an existing account is promoted, never re-password-reset — so editing the env file cannot recover a forgotten admin password. Still open: decide whether to restrict admin access before public launch (a proxy access policy covering both `/admin` and `/api/admin/`).
-- Scheduled backup for the canvas deployment is still open: after the test environment stabilizes, add a periodic `mysqldump --single-transaction`, a media volume archive, and the env file, restored as a set. Schema upgrades rely on `AutoMigrate`, which has no rollback, so dump production before every upgrade and rehearse the new version on the test environment first.
+- Scheduled backup for the canvas deployment: the test environment is covered since 2026-09-19 — root crontab runs `scripts/backup.sh --yes` daily at 04:00 (db + media + env → `/opt/backups/infinite-canvas-test`, log at `cron.log`), and the dump was verified complete (36 tables). Still open: install the same cron for production after it is deployed; retention is currently unlimited, so add a prune or revisit disk usage before long-term operation. Schema upgrades rely on `AutoMigrate`, which has no rollback, so dump production before every upgrade and rehearse the new version on the test environment first.
 - Local Go and server test Go sharing one test database: first deploy the same private test S3 bucket with browser-accessible presigned URLs/CORS, then implement controls for schema/seed/admin initialization, startup request convergence and background jobs; the server test Go is the default sole executor. Define setting-cache refresh/restart and schema compatibility. This full mode is not implemented; meanwhile local Vite can use the server test API through SSH without another Go process. Real deploy env files and the local runbook are now excluded from the Docker build context; before long-term operation, add ordinary-media cleanup scheduling and disk monitoring.
 
 ## 管理后台拆分与 RBAC（进行中）

@@ -224,7 +224,7 @@ func (h *AdminHandler) ListGenerationFeedbacks(c *gin.Context) {
 		items = append(items, gin.H{
 			"generationId": rows[i].GenerationID.String(),
 			"rating":       rows[i].Rating,
-			"labels":       strings.Split(strings.Trim(rows[i].Labels, ","), ","),
+			"labels":       feedbackLabelsPayload(rows[i].Labels),
 			"note":         rows[i].Note,
 			"updatedAt":    httpx.FormatTime(rows[i].UpdatedAt),
 			"user":         gin.H{"email": rows[i].Email, "username": rows[i].Username},
@@ -251,6 +251,14 @@ func (h *AdminHandler) loadFeedbackTicket(c *gin.Context) (*model.FeedbackTicket
 		return nil, false
 	}
 	return &ticket, true
+}
+
+// feedbackLabelsPayload 未携带标签时输出空数组而不是 [""]。
+func feedbackLabelsPayload(labels string) []string {
+	if labels == "" {
+		return []string{}
+	}
+	return strings.Split(labels, ",")
 }
 
 // 反馈工单载荷助手：与 canvas 包同形状，各自维护（跨包共享需上移模型层，不值得）。

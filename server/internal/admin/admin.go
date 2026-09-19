@@ -19,6 +19,7 @@ import (
 	"github.com/infinite-canvas/server/internal/auth"
 	"github.com/infinite-canvas/server/internal/authz"
 	billingapi "github.com/infinite-canvas/server/internal/billing"
+	"github.com/infinite-canvas/server/internal/blog"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/httpx"
@@ -50,6 +51,7 @@ type AdminHandler struct {
 	wm         releaseWatermarker
 	wmEnabled  func() bool
 	settings   *service.SiteSettingService
+	blog       *blog.AdminHandler
 }
 
 // releaseWatermarker 供隔离件人工释放按物主档位烧录水印（评审 E-4），与 ai 域共用 *watermark.Service。
@@ -82,6 +84,10 @@ func NewAdminHandlerWithUpstream(db *gorm.DB, cfg *config.Config, stor storage.S
 }
 
 // SetWatermark 注入水印服务：人工释放隔离件时，生成产物按物主档位烧录水印（评审 E-4）。
+// SetBlog 注入博客管理面（内容域 handler）；未注入时管理路由仍注册，
+// 请求时会构造无再验证回调的默认实例（测试夹具）。
+func (h *AdminHandler) SetBlog(b *blog.AdminHandler) { h.blog = b }
+
 func (h *AdminHandler) SetWatermark(wm releaseWatermarker, enabled func() bool) {
 	h.wm = wm
 	h.wmEnabled = enabled

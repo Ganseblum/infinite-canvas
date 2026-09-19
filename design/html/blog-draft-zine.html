@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计稿 C · HANG — 出厂设置 ZINE（博客站）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Mono:wght@400;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#f3efe6; --ink:#141414; --panel:#fffdf6; --soft:#6d675c;
+  --line:#141414; --acc:#ffe600; --acc2:#ff4d00;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Noto Sans SC',sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--acc);color:var(--ink)}
+::-webkit-scrollbar{width:12px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--ink);border-radius:0}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%}
+[hidden]{display:none!important}
+.ab{font-family:'Archivo Black','Noto Sans SC',sans-serif;font-weight:400;text-transform:uppercase;letter-spacing:.01em}
+.mono{font-family:'Space Mono',ui-monospace,monospace;letter-spacing:.02em}
+.wrap{max-width:1240px;margin:0 auto;padding:0 clamp(18px,4vw,48px)}
+.bx{border:2.5px solid var(--ink);background:var(--panel);box-shadow:7px 7px 0 var(--ink)}
+
+/* 贴纸点纹背景 */
+.grain{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.6;
+  background-image:radial-gradient(rgba(20,20,20,.13) 1.2px,transparent 1.2px);background-size:22px 22px;}
+
+.rv{opacity:0;transform:translateY(22px);animation:up .8s cubic-bezier(.2,.9,.3,1) both}
+@keyframes up{to{opacity:1;transform:none}}
+.d1{animation-delay:.06s}.d2{animation-delay:.16s}.d3{animation-delay:.26s}.d4{animation-delay:.36s}
+
+/* ========== 顶栏（粗黑条） ========== */
+header{position:sticky;top:0;z-index:60;background:var(--ink);color:var(--bg)}
+.bar{display:flex;align-items:center;justify-content:space-between;height:62px}
+.bar .logo{font-family:'Archivo Black',sans-serif;font-size:21px;color:var(--bg)}
+.bar .logo i{font-style:normal;color:var(--acc)}
+.bar nav{display:flex;gap:24px;font-size:13px;font-weight:700;letter-spacing:.1em}
+.bar nav a{color:rgba(243,239,230,.72);transition:all .2s;padding:4px 2px}
+.bar nav a:hover{color:var(--acc)}
+.bar .rss{font-size:11px;background:var(--acc);color:var(--ink);padding:6px 14px;font-weight:700;transition:all .2s}
+.bar .rss:hover{background:var(--bg)}
+@media(max-width:860px){.bar nav{display:none}}
+
+/* 视图切换器 */
+.vswitch{position:fixed;right:14px;bottom:14px;z-index:95;display:flex;border:2.5px solid var(--ink);background:var(--panel);box-shadow:5px 5px 0 var(--ink)}
+.vswitch a{font-size:11.5px;font-weight:700;letter-spacing:.12em;padding:9px 16px;color:var(--soft);transition:all .2s}
+.vswitch a.on{background:var(--acc);color:var(--ink)}
+.corner{position:fixed;left:14px;bottom:14px;z-index:90;font-size:10px;letter-spacing:.1em;color:var(--soft)}
+
+/* ========== Hero：大字报 ========== */
+.hero{position:relative;padding:clamp(56px,9vh,110px) 0 clamp(44px,7vh,84px)}
+.hero h1{margin:0;font-size:clamp(3.2rem,11vw,9rem);line-height:.94;text-transform:uppercase}
+.hero h1 .hl{color:var(--ink);background:linear-gradient(0deg,var(--acc) 0 42%,transparent 42%);padding:0 .08em}
+.hero h1 .ol{color:transparent;-webkit-text-stroke:2.5px var(--ink)}
+.hero .zh{margin:22px 0 0;font-size:16px;font-weight:700;max-width:34em;line-height:1.9}
+.hero .zh small{display:block;font-size:13.5px;color:var(--soft);font-weight:400;margin-top:6px}
+.hero .badges{position:absolute;top:clamp(40px,7vh,80px);right:clamp(18px,4vw,48px);display:flex;flex-direction:column;gap:14px;align-items:flex-end}
+.stk{background:var(--acc);border:2.5px solid var(--ink);box-shadow:5px 5px 0 var(--ink);padding:10px 18px;font-size:13px;font-weight:900;transform:rotate(4deg)}
+.stk.b{background:var(--panel);transform:rotate(-3deg)}
+.stk.c{background:var(--acc2);color:#fff;transform:rotate(2deg)}
+.hero .stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:30px}
+.hero .stats .s{border:2.5px solid var(--ink);background:var(--panel);box-shadow:5px 5px 0 var(--ink);padding:12px 20px}
+.hero .stats .n{font-family:'Archivo Black',sans-serif;font-size:24px}
+.hero .stats .n em{font-style:normal;color:var(--acc2)}
+.hero .stats .l{font-size:10.5px;color:var(--soft);letter-spacing:.14em;font-weight:700}
+.hero .cta-row{display:flex;gap:14px;margin-top:26px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 28px;font-size:14px;font-weight:900;letter-spacing:.08em;transition:all .2s;border:2.5px solid var(--ink);box-shadow:6px 6px 0 var(--ink);cursor:pointer}
+.btn.solid{background:var(--acc);color:var(--ink)}
+.btn.ghost{background:var(--panel);color:var(--ink)}
+.btn:hover{transform:translate(-2px,-2px);box-shadow:8px 8px 0 var(--ink)}
+.btn:active{transform:translate(4px,4px);box-shadow:2px 2px 0 var(--ink)}
+@media(max-width:900px){.hero .badges{display:none}}
+
+/* ========== 黑色跑马灯 ========== */
+.marquee{background:var(--ink);color:var(--acc);overflow:hidden;position:relative;z-index:2;border-block:2.5px solid var(--ink)}
+.marquee .track{display:flex;white-space:nowrap;animation:mq 20s linear infinite;padding:11px 0}
+.marquee span{font-family:'Archivo Black',sans-serif;font-size:17px;letter-spacing:.06em;padding:0 16px}
+@keyframes mq{to{transform:translateX(-50%)}}
+
+/* ========== 章节头 ========== */
+.sec{padding:clamp(56px,9vh,100px) 0 0;position:relative;z-index:1}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:28px;flex-wrap:wrap}
+.sec-head h2{margin:0;font-size:clamp(2rem,4.6vw,3.2rem);line-height:1}
+.sec-head h2 .zh{font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:.42em;background:var(--acc);padding:4px 12px;box-shadow:4px 4px 0 var(--ink);display:inline-block;transform:rotate(-1.5deg);vertical-align:middle;margin-left:12px}
+.sec-head .more{font-size:12.5px;font-weight:700;letter-spacing:.12em;border-bottom:2.5px solid var(--ink);padding-bottom:3px;transition:all .2s}
+.sec-head .more:hover{background:var(--acc)}
+
+/* 筛选贴纸 */
+.chips{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:36px}
+.chip{font-size:13px;font-weight:700;padding:9px 18px;border:2.5px solid var(--ink);background:var(--panel);cursor:pointer;transition:all .18s;box-shadow:4px 4px 0 var(--ink)}
+.chip em{font-style:normal;color:var(--acc2);margin-left:6px;font-family:'Space Mono',monospace}
+.chip:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--ink)}
+.chip.on{background:var(--ink);color:var(--acc);box-shadow:none;transform:translate(2px,2px)}
+
+/* ========== 头条 ========== */
+.feat{display:grid;grid-template-columns:1.2fr 1fr;margin-bottom:26px;overflow:hidden}
+.feat .cover{position:relative;overflow:hidden;border-right:2.5px solid var(--ink);min-height:300px}
+.feat .cover img{width:100%;height:100%;object-fit:cover;transition:transform .5s;position:absolute;inset:0}
+.feat:hover .cover img{transform:scale(1.04)}
+.aigc{position:absolute;top:12px;left:12px;font-size:10.5px;font-weight:700;padding:4px 10px;background:var(--acc);border:2px solid var(--ink);letter-spacing:.12em}
+.feat .txt{padding:clamp(22px,3.4vw,44px);display:flex;flex-direction:column;justify-content:center;gap:14px}
+.cat{display:inline-block;font-size:11px;font-weight:900;letter-spacing:.16em;background:var(--ink);color:var(--acc);padding:5px 12px;align-self:flex-start}
+.feat h3{margin:0;font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:clamp(1.5rem,2.8vw,2.3rem);line-height:1.3}
+.feat h3 a:hover{background:linear-gradient(0deg,var(--acc) 0 40%,transparent 40%)}
+.feat .ex{margin:0;font-size:14px;color:var(--soft);line-height:1.9}
+.meta{font-family:'Space Mono',monospace;font-size:11.5px;color:var(--soft);letter-spacing:.02em}
+.meta i{font-style:normal;color:var(--acc2);font-weight:700}
+.feat .go{margin-top:4px;font-size:13px;font-weight:900;letter-spacing:.14em;display:inline-flex;align-items:center;gap:8px;transition:all .2s}
+.feat:hover .go{gap:16px}
+@media(max-width:900px){.feat{grid-template-columns:1fr}.feat .cover{border-right:none;border-bottom:2.5px solid var(--ink);aspect-ratio:16/9;min-height:0}}
+
+/* ========== 文章网格 ========== */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:26px}
+.card{overflow:hidden;display:flex;flex-direction:column;transition:all .22s;background:var(--panel)}
+.card:nth-child(odd){transform:rotate(-.7deg)}
+.card:nth-child(even){transform:rotate(.7deg)}
+.card:hover{transform:rotate(0) translate(-3px,-3px);box-shadow:10px 10px 0 var(--ink)}
+.card .ph{position:relative;overflow:hidden;border-bottom:2.5px solid var(--ink)}
+.card .ph img{width:100%;aspect-ratio:4/3;object-fit:cover;transition:transform .5s}
+.card:hover .ph img{transform:scale(1.05)}
+.card .body{padding:18px 20px 20px;display:flex;flex-direction:column;gap:9px;flex:1}
+.card h3{margin:0;font-weight:900;font-size:17.5px;line-height:1.5}
+.card h3 a:hover{background:linear-gradient(0deg,var(--acc) 0 40%,transparent 40%)}
+.card .ex{margin:0;font-size:12.5px;color:var(--soft);line-height:1.8;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .meta{margin-top:auto;padding-top:8px}
+/* 无封面文字卡 */
+.tcard{padding:22px;display:flex;flex-direction:column;gap:10px;transition:all .22s;position:relative}
+.tcard:nth-child(odd){transform:rotate(.6deg)}
+.tcard:nth-child(even){transform:rotate(-.6deg)}
+.tcard:hover{transform:rotate(0) translate(-3px,-3px);box-shadow:10px 10px 0 var(--ink)}
+.tcard .no{font-family:'Archivo Black',sans-serif;font-size:40px;line-height:1;color:var(--acc);-webkit-text-stroke:1.5px var(--ink)}
+.tcard h3{margin:0;font-weight:900;font-size:17.5px;line-height:1.5}
+.tcard .ex{margin:0;font-size:12.5px;color:var(--soft);line-height:1.8}
+.tcard .meta{margin-top:auto;padding-top:12px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.card,.tcard,.card:nth-child(odd),.tcard:nth-child(even){transform:none}}
+
+/* 短记（票根） */
+.frags{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.frag{padding:20px;position:relative;transition:all .2s}
+.frag::before{content:"TICKET";position:absolute;top:-11px;left:14px;font-family:'Space Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.2em;background:var(--acc);border:2px solid var(--ink);padding:2px 10px}
+.frag:hover{transform:translate(-2px,-2px);box-shadow:9px 9px 0 var(--ink)}
+.frag .num{font-family:'Archivo Black',sans-serif;font-size:15px;color:var(--acc2)}
+.frag h3{margin:8px 0 6px;font-weight:900;font-size:15.5px;line-height:1.5}
+.frag p{margin:0;font-size:12.5px;color:var(--soft);line-height:1.8}
+.frag time{display:block;margin-top:10px;font-family:'Space Mono',monospace;font-size:10.5px;color:var(--soft)}
+@media(max-width:900px){.frags{grid-template-columns:1fr}}
+
+/* 栏目徽章墙 */
+.topics{display:grid;grid-template-columns:repeat(5,1fr);gap:20px}
+.topic{padding:20px;transition:all .2s;background:var(--ink);color:var(--bg);border:2.5px solid var(--ink)}
+.topic:nth-child(2n){background:var(--panel);color:var(--ink)}
+.topic:nth-child(3){background:var(--acc);color:var(--ink)}
+.topic:hover{transform:translate(-3px,-3px);box-shadow:8px 8px 0 var(--acc2)}
+.topic .en{font-family:'Archivo Black',sans-serif;font-size:14px;text-transform:uppercase;opacity:.85}
+.topic .zh{font-weight:900;font-size:17px;margin:8px 0 10px;display:flex;justify-content:space-between;align-items:baseline}
+.topic .zh em{font-style:normal;font-family:'Space Mono',monospace;font-size:11px}
+.topic .last{font-size:11px;line-height:1.8;opacity:.72}
+@media(max-width:1000px){.topics{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.topics{grid-template-columns:1fr}}
+
+/* 订阅 */
+.subscribe{margin-top:clamp(56px,9vh,100px);padding:clamp(28px,4vw,52px);display:flex;justify-content:space-between;align-items:center;gap:30px;flex-wrap:wrap;position:relative}
+.subscribe::before{content:"FREE!" ;position:absolute;top:-18px;left:-10px;font-family:'Archivo Black',sans-serif;font-size:20px;background:var(--acc2);color:#fff;border:2.5px solid var(--ink);box-shadow:5px 5px 0 var(--ink);padding:8px 16px;transform:rotate(-6deg)}
+.subscribe h3{margin:0 0 8px;font-weight:900;font-size:clamp(1.4rem,2.4vw,1.9rem)}
+.subscribe p{margin:0;font-size:13px;color:var(--soft);max-width:36em;line-height:1.9}
+.sub-form{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.sub-form input{background:var(--panel);border:2.5px solid var(--ink);padding:12px 18px;font-size:13.5px;min-width:250px;font-family:'Space Mono',monospace;box-shadow:inset 3px 3px 0 rgba(20,20,20,.08)}
+.sub-form input:focus{outline:3px solid var(--acc)}
+.sub-form button{background:var(--acc);border:2.5px solid var(--ink);box-shadow:5px 5px 0 var(--ink);padding:12px 28px;font-size:14px;font-weight:900;cursor:pointer;transition:all .18s}
+.sub-form button:hover{transform:translate(-2px,-2px);box-shadow:7px 7px 0 var(--ink)}
+.sub-note{width:100%;font-family:'Space Mono',monospace;font-size:10.5px;color:var(--soft);letter-spacing:.06em}
+
+/* ========== 文章详情页 ========== */
+.post{padding:clamp(36px,6vh,64px) 0 0;position:relative;z-index:1}
+.back{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:900;letter-spacing:.14em;margin-bottom:26px;border:2.5px solid var(--ink);background:var(--panel);box-shadow:4px 4px 0 var(--ink);padding:10px 18px;transition:all .2s}
+.back:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--ink)}
+.back::before{content:"←"}
+.paper{display:grid;grid-template-columns:1fr 230px;gap:clamp(28px,4vw,56px);align-items:start}
+.toc{position:sticky;top:86px;padding:20px}
+.toc .t{font-family:'Archivo Black',sans-serif;font-size:12px;letter-spacing:.1em;margin:0 0 12px;background:var(--acc);display:inline-block;padding:4px 10px;border:2px solid var(--ink)}
+.toc a{display:block;padding:7px 2px;color:var(--soft);font-weight:700;font-size:12.5px;line-height:1.6;transition:all .2s;border-bottom:2px dashed rgba(20,20,20,.18)}
+.toc a:last-child{border-bottom:none}
+.toc a:hover,.toc a.on{color:var(--ink);background:linear-gradient(0deg,var(--acc) 0 46%,transparent 46%)}
+.art{max-width:43em;min-width:0;padding:clamp(26px,4.5vw,64px)}
+.art .crumb{font-family:'Space Mono',monospace;font-size:11.5px;color:var(--soft);letter-spacing:.06em}
+.art .crumb i{font-style:normal;background:var(--ink);color:var(--acc);padding:2px 8px}
+.art h1{font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:clamp(1.8rem,3.6vw,2.6rem);line-height:1.35;margin:16px 0 18px}
+.art .rule{width:100%;height:4px;background:repeating-linear-gradient(90deg,var(--ink) 0 14px,transparent 14px 22px);margin-bottom:20px}
+.art .meta{margin-bottom:34px}
+.art .lead{font-size:15.5px;color:var(--soft);line-height:2;border:2.5px dashed var(--ink);padding:18px 22px;margin:0 0 32px;background:var(--bg)}
+.art p{font-size:15px;line-height:2.05;margin:0 0 1.6em}
+.art h2{font-weight:900;font-size:1.45rem;margin:2.2em 0 1em}
+.art h2 mark{background:linear-gradient(0deg,var(--acc) 0 44%,transparent 44%);color:inherit;padding:0 .12em}
+.art h3{font-weight:900;font-size:1.08rem;margin:1.9em 0 .8em}
+.art h3::before{content:"★ ";color:var(--acc2)}
+.art b{color:var(--ink)}
+.art a{font-weight:700;border-bottom:2.5px solid var(--acc2);transition:all .2s}
+.art a:hover{background:var(--acc)}
+.art code{font-family:'Space Mono',monospace;font-size:.85em;background:var(--ink);color:var(--acc);padding:2px 8px}
+.art sup{font-family:'Space Mono',monospace;font-size:.72em;color:var(--acc2);font-weight:700}
+.art blockquote{margin:2em 0;padding:18px 24px;background:var(--ink);color:var(--bg);font-size:15px;line-height:2;position:relative}
+.art blockquote::before{content:"“";position:absolute;top:-4px;left:10px;font-family:'Archivo Black',sans-serif;font-size:56px;color:var(--acc)}
+.art blockquote .who{display:block;margin-top:10px;font-family:'Space Mono',monospace;font-size:11px;color:rgba(243,239,230,.6)}
+.callout{margin:2em 0;border:2.5px solid var(--ink);background:var(--acc);padding:18px 22px;position:relative;box-shadow:6px 6px 0 var(--ink)}
+.callout .cl-t{font-family:'Space Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.18em;margin:0 0 8px}
+.callout p{font-size:13.5px;line-height:1.9;margin:0}
+.callout.warn{background:var(--panel)}
+.callout.warn .cl-t{color:var(--acc2)}
+.art pre{background:var(--ink);color:#7CfFa0;border:2.5px solid var(--ink);margin:2em 0;overflow-x:auto;box-shadow:6px 6px 0 var(--acc)}
+.art pre .fn2{display:flex;justify-content:space-between;padding:9px 16px;border-bottom:2px dashed rgba(243,239,230,.3);font-family:'Space Mono',monospace;font-size:11px;color:rgba(243,239,230,.7)}
+.art pre code{display:block;padding:18px;font-family:'Space Mono',monospace;font-size:12.5px;line-height:1.85;overflow-x:auto;background:none;color:#d9e2dd}
+.art pre code .c{color:#6d675c}
+.art pre code .k{color:var(--acc)}
+.art pre code .s{color:#8fd3ff}
+.art figure{margin:2.2em 0}
+.art figure .im{position:relative;overflow:hidden;border:2.5px solid var(--ink);box-shadow:7px 7px 0 var(--ink)}
+.art figcaption{margin-top:12px;font-family:'Space Mono',monospace;font-size:11px;color:var(--soft);display:flex;justify-content:space-between;gap:10px}
+.art table{width:100%;border-collapse:collapse;margin:2em 0;font-size:13.5px;border:2.5px solid var(--ink);background:var(--panel)}
+.art th{text-align:left;font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.08em;background:var(--ink);color:var(--acc);padding:11px 14px}
+.art td{border-bottom:2px solid rgba(20,20,20,.14);padding:11px 14px;line-height:1.8}
+.art tr:last-child td{border-bottom:none}
+.art tr:hover td{background:#fdf7d8}
+.art ul.task{list-style:none;padding:0;margin:1.6em 0}
+.art ul.task li{font-size:15px;font-weight:500;line-height:2.2;display:flex;gap:12px;align-items:baseline}
+.art ul.task li::before{content:"";flex:none;width:16px;height:16px;border:2.5px solid var(--ink);margin-top:7px;background:var(--panel)}
+.art ul.task li.done::before{background:var(--acc);content:"✓";font-size:11px;font-weight:900;display:grid;place-items:center}
+.art ul.task li.done{color:var(--soft);text-decoration:line-through}
+.art .fn{margin-top:3em;border-top:2.5px solid var(--ink);padding-top:16px;font-size:12px;color:var(--soft);line-height:2.1;font-family:'Space Mono',monospace}
+.art .fn li{list-style:none}
+.art .fn li b{color:var(--acc2);font-weight:700;margin-right:8px}
+.tags{display:flex;gap:10px;flex-wrap:wrap;margin-top:2.4em}
+.tags a{font-size:11px;font-weight:700;letter-spacing:.08em;border:2px solid var(--ink);background:var(--panel);padding:5px 12px;transition:all .2s;box-shadow:3px 3px 0 var(--ink)}
+.tags a:hover{background:var(--acc);transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)}
+.pn{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:clamp(30px,4vw,50px)}
+.pn a{border:2.5px solid var(--ink);padding:20px;display:flex;flex-direction:column;gap:6px;transition:all .22s;background:var(--panel);box-shadow:6px 6px 0 var(--ink)}
+.pn a:hover{transform:translate(-3px,-3px);box-shadow:9px 9px 0 var(--acc)}
+.pn .d{font-size:10.5px;color:var(--soft);letter-spacing:.16em;font-family:'Space Mono',monospace;font-weight:700}
+.pn .ti{font-size:14.5px;font-weight:900}
+.pn a.next{text-align:right;align-items:flex-end}
+@media(max-width:1024px){.paper{grid-template-columns:1fr}.toc{display:none}}
+@media(max-width:640px){.pn{grid-template-columns:1fr}}
+
+/* ========== 页脚（黑块） ========== */
+footer{margin-top:clamp(70px,10vh,120px);background:var(--ink);color:var(--bg);padding:52px 0 30px;position:relative;z-index:1}
+.foot-grid{display:flex;justify-content:space-between;align-items:flex-end;gap:26px;flex-wrap:wrap}
+.wordmark{font-family:'Archivo Black',sans-serif;font-size:clamp(3.4rem,12vw,9rem);line-height:.9;color:var(--bg)}
+.wordmark em{font-style:normal;color:var(--acc)}
+.foot-links{display:flex;flex-direction:column;gap:10px;font-size:13px;text-align:right;font-family:'Space Mono',monospace}
+.foot-links a{color:rgba(243,239,230,.6);transition:color .2s}
+.foot-links a:hover{color:var(--acc)}
+.base{margin-top:30px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;color:rgba(243,239,230,.55);letter-spacing:.08em;font-family:'Space Mono',monospace}
+.end{margin-top:34px;text-align:center;font-size:12px;font-weight:700;color:rgba(243,239,230,.6);letter-spacing:.16em}
+.end a{color:var(--acc);border-bottom:2px solid var(--acc);padding-bottom:2px}
+</style>
+</head>
+<body>
+
+<div class="grain"></div>
+
+<!-- ========== 顶栏 ========== -->
+<header>
+  <div class="wrap bar">
+    <a class="logo" href="#home">HANG<i>.</i></a>
+    <nav>
+      <a href="#home">手记 LOG</a>
+      <a href="#topics">栏目 TOPICS</a>
+      <a href="#post">文章页预览</a>
+      <a href="#about">关于</a>
+    </nav>
+    <a class="rss" href="#dingyue">RSS 订阅</a>
+  </div>
+</header>
+
+<!-- ==================== 视图一 · 首页 ==================== -->
+<div id="view-home">
+
+<div class="wrap hero">
+  <div class="rv d1" style="max-width:900px">
+    <h1 class="ab">
+      <span class="rv d1" style="display:block">INK,</span>
+      <span class="rv d2 ol" style="display:block">PIXELS</span>
+      <span class="rv d3" style="display:block">&amp; <span class="hl">SWEAT.</span></span>
+    </h1>
+    <p class="zh rv d4">航的手记，一本装在浏览器里的 ZINE。<small>AI 工作流 / 独立开发 / 模板配色 / 创作方法 / 碎念——每月装订一期，永不脱销。</small></p>
+  </div>
+  <div class="badges rv d3">
+    <span class="stk">VOL.014 上新！</span>
+    <span class="stk b">43 篇 · 186,420 字</span>
+    <span class="stk c">月更 · 不烂尾</span>
+  </div>
+  <div class="stats rv d4">
+    <div class="s"><div class="n">43<em> 篇</em></div><div class="l">POSTS</div></div>
+    <div class="s"><div class="n">5<em> 栏目</em></div><div class="l">TOPICS</div></div>
+    <div class="s"><div class="n">1.4<em> 万订</em></div><div class="l">READERS</div></div>
+  </div>
+  <div class="cta-row rv d4">
+    <a class="btn solid" href="#post">读本期头条 →</a>
+    <a class="btn ghost" href="#dingyue">订阅航鸽</a>
+  </div>
+</div>
+
+<div class="marquee" aria-hidden="true">
+  <div class="track">
+    <span>手记 LOGS ✺ AI 工作流 ✺ 独立开发 ✺ 模板配色 ✺ 创作方法 ✺ 碎念 ✺ 手记 LOGS ✺ AI 工作流 ✺ 独立开发 ✺ 模板配色 ✺ 创作方法 ✺ 碎念 ✺&nbsp;</span>
+    <span>手记 LOGS ✺ AI 工作流 ✺ 独立开发 ✺ 模板配色 ✺ 创作方法 ✺ 碎念 ✺ 手记 LOGS ✺ AI 工作流 ✺ 独立开发 ✺ 模板配色 ✺ 创作方法 ✺ 碎念 ✺&nbsp;</span>
+  </div>
+</div>
+
+<section class="wrap sec">
+  <div class="sec-head">
+    <h2 class="ab">LOGS<span class="zh">本期文章 · 点开即读</span></h2>
+    <a class="more" href="#">全部 43 篇 →</a>
+  </div>
+  <div class="chips rv">
+    <button class="chip on">全部<em>43</em></button>
+    <button class="chip">AI 工作流<em>12</em></button>
+    <button class="chip">独立开发<em>9</em></button>
+    <button class="chip">模板配色<em>7</em></button>
+    <button class="chip">创作方法<em>6</em></button>
+    <button class="chip">碎念<em>9</em></button>
+  </div>
+
+  <article class="feat bx rv">
+    <a class="cover" href="#post">
+      <img src="https://picsum.photos/seed/hang-zine-feat/1100/700" alt="" />
+      <span class="aigc mono">AI 封面</span>
+    </a>
+    <div class="txt">
+      <span class="cat">本期头条 · AI 工作流</span>
+      <h3><a href="#post">把画布搬进浏览器之后</a></h3>
+      <p class="ex">为什么把作品工作流全部搬进自建的无限画布——素材、生成、排版、导出一条线跑通，以及这一年里踩过的坑、拆过的轮子和最后留下的那几个文件。</p>
+      <p class="meta">2026-08-30 · 4,288 字 · 约 12 分钟 · <i>VOL.014</i></p>
+      <a class="go" href="#post">读这篇文章 →</a>
+    </div>
+  </article>
+
+  <div class="grid">
+    <a class="card bx rv" href="#post">
+      <div class="ph"><img src="https://picsum.photos/seed/hang-zine-1/720/540" alt="" /><span class="aigc mono">AI</span></div>
+      <div class="body">
+        <span class="cat">AI 工作流</span>
+        <h3>AI 插画的工作流重组</h3>
+        <p class="ex">从提示词到成稿：草稿、放大、修边三段式，比一次成型可控得多。</p>
+        <p class="meta">2026-07-14 · 3,102 字</p>
+      </div>
+    </a>
+    <a class="tcard bx rv" href="#post">
+      <span class="no">012</span>
+      <span class="cat">独立开发</span>
+      <h3>个人站的第二次重建</h3>
+      <p class="ex">从动态框架回到纯静态导出，这次把更新成本降到一条命令。框架没有错，是我要的太少了。</p>
+      <p class="meta">2026-04-19 · 2,540 字</p>
+    </a>
+    <a class="card bx rv" href="#post">
+      <div class="ph"><img src="https://picsum.photos/seed/hang-zine-2/720/540" alt="" /></div>
+      <div class="body">
+        <span class="cat">模板配色</span>
+        <h3>模板是怎么被做出来的</h3>
+        <p class="ex">母版、版式与主题色的设计顺序，做对了少返工一半。</p>
+        <p class="meta">2026-06-02 · 2,877 字</p>
+      </div>
+    </a>
+  </div>
+</section>
+
+<section class="wrap sec">
+  <div class="sec-head">
+    <h2 class="ab">TICKETS<span class="zh">短记票根</span></h2>
+    <a class="more" href="#">全部短记 →</a>
+  </div>
+  <div class="frags">
+    <a class="frag bx rv" href="#post"><span class="num">FRAG-009</span><h3>把目录从右边挪到左边，阅读动线顺了</h3><p>移动端折叠，桌面端常驻——就这么个小改动，读完整篇的人多了两成。</p><time>2026-09-02</time></a>
+    <a class="frag bx rv" href="#post"><span class="num">FRAG-008</span><h3>提示词不是咒语，是排班表</h3><p>把「一段话描述一切」换成「分镜清单」，出图稳定率高了一个档位。</p><time>2026-08-11</time></a>
+    <a class="frag bx rv" href="#post"><span class="num">FRAG-007</span><h3>一个人的上线之夜</h3><p>证书、回源、缓存三层各自沉默地正常工作，反而让人心慌。</p><time>2026-07-30</time></a>
+  </div>
+</section>
+
+<section class="wrap sec" id="topics">
+  <div class="sec-head">
+    <h2 class="ab">TOPICS<span class="zh">栏目徽章墙</span></h2>
+    <a class="more" href="#">全部栏目 →</a>
+  </div>
+  <div class="topics">
+    <a class="topic" href="#post"><span class="en">AI Workflow</span><span class="zh">AI 工作流<em>12 篇</em></span><span class="last">最近：AI 插画的工作流重组 · 07-14</span></a>
+    <a class="topic" href="#post"><span class="en">Building</span><span class="zh">独立开发<em>9 篇</em></span><span class="last">最近：个人站的第二次重建 · 04-19</span></a>
+    <a class="topic" href="#post"><span class="en">Templates</span><span class="zh">模板配色<em>7 篇</em></span><span class="last">最近：模板是怎么被做出来的 · 06-02</span></a>
+    <a class="topic" href="#post"><span class="en">Method</span><span class="zh">创作方法<em>6 篇</em></span><span class="last">最近：视频短片的节奏笔记 · 05-11</span></a>
+    <a class="topic" href="#post"><span class="en">Murmur</span><span class="zh">碎念<em>9 篇</em></span><span class="last">最近：深夜排字房 · 03-28</span></a>
+  </div>
+</section>
+
+<section class="wrap" id="dingyue">
+  <div class="subscribe bx rv">
+    <div>
+      <h3>订阅航鸽，每月空投一期</h3>
+      <p>本期手记、上新模板和一点幕后，打包成一封不涝的信。随时退订，鸽子不记仇。</p>
+    </div>
+    <div class="sub-form">
+      <input type="email" placeholder="you@example.com" />
+      <button>订阅</button>
+      <span class="sub-note">一月一封 · 绝不群发广告 · RSS 备着：/feed.xml</span>
+    </div>
+  </div>
+</section>
+
+</div><!-- /view-home -->
+
+<!-- ==================== 视图二 · 文章详情页 ==================== -->
+<div id="view-post" hidden>
+
+<div class="post wrap">
+  <a class="back" href="#home">返回手记列表</a>
+  <div class="paper">
+    <article class="art bx rv">
+      <p class="crumb">手记 / <i>AI 工作流</i> / VOL.014</p>
+      <h1>把画布搬进浏览器之后</h1>
+      <div class="rule"></div>
+      <p class="meta">2026-08-30 · 4,288 字 · 约 12 分钟 · 封面 AI 生成 · 保存为草稿时还没想好结尾</p>
+      <p class="lead">引子：过去一年，我的创作动线是「生成—下载—再上传—再导出」，文件在五个工具之间来回搬。直到我把整条动线塞进一张无限画布，事情才开始变得像创作本身。</p>
+
+      <h2 id="s1"><mark>一、为什么是画布</mark></h2>
+      <p>文件夹是给归档用的，不是给思考用的。当你同时面对 30 张候选图、4 段配乐和一版还在改的文案，<b>空间关系比目录树更接近大脑的工作方式</b>——把相关的摆近一点，把废案拖到远处，本身就是一次整理。</p>
+      <p>无限画布解决了这个问题，但市面上的画布工具都不管「生产」：它们擅长便签和连线，不擅长生成、版本和导出。于是只好自己动手，顺带把工作流重新设计了一遍<sup>[1]</sup>。动手之前，先立三条边界：</p>
+      <ul class="task">
+        <li class="done">画布数据全部存浏览器本地，不上云</li>
+        <li class="done">生成节点必须能挂回原始提示词与参数</li>
+        <li>多人协作——先不做，一个人用就够</li>
+      </ul>
+
+      <blockquote>工具链的每一次跳转，都是一次上下文丢失。画布的价值不在于无限大，而在于不用离开。<span class="who">—— 写在重构第一周</span></blockquote>
+
+      <div class="callout">
+        <p class="cl-t">TIP — 顺手记</p>
+        <p>Markdown 管线里这叫 Callout（<code>&gt; [!TIP]</code>）。写作时少用「注意」多用「为什么」，读者才会停下来。</p>
+      </div>
+
+      <h2 id="s2"><mark>二、三个关键取舍</mark></h2>
+      <h3>缩略图先行</h3>
+      <p>画布上几百个节点同时渲染原图是不现实的。导出 768px WebP 缩略图、按缩放级别回退原图，是整条链路里回报最高的一个决定。</p>
+      <pre><div class="fn2"><span>canvas/thumbnail.ts</span><span>READ</span></div><code><span class="c">// 按缩放级别决定加载哪一档</span>
+<span class="k">const</span> src = scale &lt; <span class="s">0.4</span> ? thumb768 : original;</code></pre>
+      <h3>状态留在本地</h3>
+      <p>画布数据全部存浏览器本地，不上云。代价是换设备要手动迁移，收益是<b>深夜赶稿时不必考虑任何人的服务器</b>。</p>
+      <div class="callout warn">
+        <p class="cl-t">WARNING — 别学我</p>
+        <p>本地存储没有版本历史。重构存储结构前先备份，遇到未知版本或损坏清单要拒绝迁移，这个亏我吃过两次。</p>
+      </div>
+      <figure>
+        <div class="im"><img src="https://picsum.photos/seed/hang-zine-spec/1240/620" alt="" /><span class="aigc mono">AI 配图</span></div>
+        <figcaption><span>图 01 — 画布缩略图导出的 768px 节点</span><span>2026-08</span></figcaption>
+      </figure>
+
+      <h2 id="s4"><mark>三、一年下来的账</mark></h2>
+      <p>把感受换成数字，账本其实挺诚实——素材找回时间从分钟级降到秒级，导出环节彻底消失：</p>
+      <table>
+        <thead><tr><th>指标</th><th>画布前</th><th>画布后</th></tr></thead>
+        <tbody>
+          <tr><td>找一张三个月前的图</td><td>约 4 分钟（翻文件夹）</td><td>约 8 秒（框选缩略图）</td></tr>
+          <tr><td>导出一张分享图</td><td>3 步 · 跨 2 个工具</td><td>1 步 · 画布内框选</td></tr>
+          <tr><td>废弃方案占比</td><td>61%</td><td>34%（废案留得下）</td></tr>
+        </tbody>
+      </table>
+
+      <p>协作是没有的，同步也是没有的。这篇文章保存为草稿的时候，结尾还没想好——但发布按钮已经排好了版，<a href="#">等它想好的那天再补</a>。</p>
+      <div class="tags"><a>AI 工作流</a><a>无限画布</a><a>工作流重组</a><a>VOL.014</a></div>
+      <ul class="fn">
+        <li><b>[1]</b> 指的就是你现在看到的这个站。</li>
+        <li><b>[2]</b> 缩略图方案来自一次失败的首屏优化。</li>
+      </ul>
+      <div class="pn">
+        <a href="#"><span class="d">← 上一篇</span><span class="ti">AI 插画的工作流重组</span></a>
+        <a class="next" href="#"><span class="d">下一篇 →</span><span class="ti">视频短片的节奏笔记</span></a>
+      </div>
+    </article>
+    <aside class="toc bx">
+      <p class="t">目录 TOC</p>
+      <a class="on" href="#s1">一、为什么是画布</a>
+      <a href="#s2">二、三个关键取舍</a>
+      <a href="#s4">三、一年下来的账</a>
+      <a href="#">脚注与参考</a>
+    </aside>
+  </div>
+</div>
+
+</div><!-- /view-post -->
+
+<!-- ========== 页脚 ========== -->
+<footer id="about">
+  <div class="wrap foot-grid">
+    <div class="wordmark">HANG<em>.</em></div>
+    <nav class="foot-links" aria-label="链接">
+      <a href="#">主站 ↗ youc.online</a>
+      <a href="#">影像 ↗</a>
+      <a href="#">模板 ↗</a>
+      <a href="#">GITHUB ↗</a>
+      <a href="#">hi@youc.online ↗</a>
+    </nav>
+  </div>
+  <div class="wrap base">
+    <span>© 2026 航 HANG — blog.youc.online</span>
+    <span>SET IN ARCHIVO BLACK / SPACE MONO — 出厂设置印刷部</span>
+  </div>
+  <div class="end">到底了，贴纸也用完了 ✺ <a href="#home">撕回封面 ↑</a></div>
+</footer>
+
+<div class="corner mono">设计稿 C — 出厂设置 ZINE</div>
+<div class="vswitch">
+  <a href="#home" class="on">首页</a>
+  <a href="#post">文章页</a>
+</div>
+
+<script>
+  const home = document.getElementById('view-home');
+  const post = document.getElementById('view-post');
+  function go(v){
+    const p = v === 'post';
+    home.hidden = p; post.hidden = !p;
+    document.querySelectorAll('.vswitch a').forEach(a => a.classList.toggle('on', (a.getAttribute('href') === '#post') === p));
+    window.scrollTo(0, 0);
+  }
+  function apply(){ go(location.hash === '#post' ? 'post' : 'home'); }
+  window.addEventListener('hashchange', apply);
+  apply();
+</script>
+
+</body>
+</html>

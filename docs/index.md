@@ -4,6 +4,7 @@
 
 - [快速开始](/docs/overview/quick-start)
 - [功能介绍](/docs/overview/features)
+- [博客站架构](/docs/overview/blog-architecture)
 - [Docker 部署](/docs/overview/docker)
 - [第三方提示词来源](/docs/overview/third-party-prompt-repositories)
 - [Codex App 插件](/docs/overview/codex-app-plugin)
@@ -20,6 +21,8 @@
 - [Fork 部署与共享测试数据](../deploy/README.md)
 - [画布数据结构](/docs/development/canvas-data-structure)
 - [本地 Codex 连接画布原理](/docs/development/local-codex-canvas)
+- [博客站实施计划（评论/点赞/收藏/SEO）](/docs/development/blog-plan)
+- [全站接口规范（OpenAPI，可导入 Apifox）](../docs/api/openapi.yaml)：`/api/v1` 用户面 + `/api/admin` 管理面共 131 个操作，由路由代码提取生成
 
 ## 商务
 

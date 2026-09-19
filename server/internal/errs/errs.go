@@ -63,6 +63,8 @@ var (
 	ErrFileTooLarge     = New(413, "FILE_TOO_LARGE", "上传文件超过所属套餐的单文件大小限制")
 	ErrTokenInvalid     = New(410, "TOKEN_INVALID", "令牌无效或已过期")
 	ErrRateLimited      = New(429, "RATE_LIMITED", "请求过于频繁，请稍后重试")
+	ErrSlugTaken        = New(409, "SLUG_TAKEN", "该 slug 已被占用")
+	ErrTopicInUse       = New(409, "TOPIC_IN_USE", "栏目下仍有文章，无法删除")
 	ErrRegDisabled      = New(503, "REGISTRATION_DISABLED", "注册暂时关闭")
 	ErrInternal         = New(500, "INTERNAL_ERROR", "服务暂时不可用，请稍后重试")
 	// 第三期启用

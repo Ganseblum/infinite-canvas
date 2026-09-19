@@ -1,0 +1,3501 @@
+# 优刻（YOUC）全站接口规范（OpenAPI 3.0.3）
+# 由服务端路由代码（server/internal 各域 Mount*Routes 与 handler）提取生成，供 Apifox 等平台导入查阅。
+# 导入方式：Apifox → 项目设置 → 导入数据 → OpenAPI/Swagger → 上传本文件。
+openapi: 3.0.3
+info:
+  title: 优刻（YOUC）平台 API
+  version: 0.19.0-unreleased
+  description: |
+    优刻全站接口：用户面统一前缀 `/api/v1`，管理面为 `/api/admin`（不进公开版本契约）。
+
+    鉴权：
+    - 业务接口走 `Authorization: Bearer <accessToken>`（HS256 JWT，15 分钟有效，登录/刷新接口下发）。
+    - 刷新令牌走 HttpOnly cookie `ic_refresh`（Path=/api，30 天，单次轮换，服务端只存哈希）。
+    - 媒体读取额外接受 HttpOnly cookie `ic_media`（Path=/api/v1/media，为 `<img>/<video>` 直链准备的只读凭据；
+      `/api/v1/media` 与 `/api/v1/media-download` 的 GET/HEAD 可用 Bearer 或该 cookie，写操作仅认 Bearer）。
+
+    全局约定：
+    - 统一错误信封 `{"error":{"code":"...","message":"...","fields":{...}}}`（fields 仅字段级错误时出现，
+      error 对象可能平铺附加键，如 REVISION_CONFLICT 附 revision）；限流响应附 `Retry-After` 头。
+    - 时间一律 RFC3339Nano UTC 字符串；金额单位为微元（1 元 = 1000000 micros）。
+    - 分页：page/size（page 从 1 起、size 默认 20 上限 100）或游标（cursor + nextCursor）两种，按接口标注。
+    - 站点维护模式开启时，非管理员写请求一律 503 MAINTENANCE_MODE（认证、OIDC、管理面、支付回调豁免）。
+    - 强制改密账号仅可调用登出、刷新与修改密码，其余接口 403 PASSWORD_CHANGE_REQUIRED。
+    - 通用错误（除特别标注外各组适用）：401 UNAUTHORIZED / TOKEN_EXPIRED、403 ACCOUNT_DISABLED、
+      403 PASSWORD_CHANGE_REQUIRED、503 MAINTENANCE_MODE、500 INTERNAL_ERROR。
+servers:
+  - url: https://sim-art.youc.online
+    description: 测试环境
+  - url: https://youc.online
+    description: 正式环境（主站应用部署后同域；当前该域为静态官网）
+tags:
+  - name: 健康检查
+  - name: 认证
+  - name: 用户
+  - name: OIDC
+  - name: 画布
+  - name: 素材
+  - name: 生成记录
+  - name: 社区
+  - name: 活动
+  - name: AI 生成
+  - name: 媒体
+  - name: 模型目录
+  - name: 点数与档位
+  - name: 订单与支付
+  - name: Admin-元信息
+  - name: Admin-用户
+  - name: Admin-模型
+  - name: Admin-渠道
+  - name: Admin-订单
+  - name: Admin-会员
+  - name: Admin-SSO
+  - name: Admin-审核
+  - name: Admin-社区
+  - name: Admin-设置
+  - name: Admin-角色与权限
+  - name: Admin-审计
+  - name: Admin-分析
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 登录/刷新接口返回的 accessToken（HS256，15 分钟）。
+    mediaCookie:
+      type: apiKey
+      in: cookie
+      name: ic_media
+      description: 媒体只读 cookie（Path=/api/v1/media，HttpOnly），登录/刷新时下发轮换；仅 GET/HEAD 可代替 Bearer。
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+      description: 页码，从 1 开始。
+    SizeParam:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      description: 每页数量，1-100，默认 20；越界 400 VALIDATION_FAILED。
+    CursorParam:
+      name: cursor
+      in: query
+      schema: { type: string }
+      description: 不透明游标（上一页响应的 nextCursor）。
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: true
+          properties:
+            code: { type: string, description: 错误码，如 VALIDATION_FAILED }
+            message: { type: string, description: 中文错误消息 }
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              description: 字段级错误说明（键为字段名）。
+    UserPayload:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        username: { type: string }
+        displayName: { type: string, nullable: true }
+        avatarUrl: { type: string, nullable: true }
+        role: { type: string, description: 兼容字段（admin/user） }
+        emailVerified: { type: boolean }
+        mustChangePassword: { type: boolean, description: 管理员建号/重置后为 true，登录后须先改密 }
+    SessionPayload:
+      type: object
+      description: 注册/登录/刷新共用响应体；同时下发 ic_refresh 与 ic_media 两枚 HttpOnly cookie。
+      properties:
+        user: { $ref: '#/components/schemas/UserPayload' }
+        accessToken: { type: string, description: HS256 JWT，15 分钟 }
+        mustChangePassword: { type: boolean }
+        plan:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+    MeResponse:
+      type: object
+      properties:
+        user:
+          allOf:
+            - $ref: '#/components/schemas/UserPayload'
+            - type: object
+              properties:
+                createdAt: { type: string }
+        plan: { $ref: '#/components/schemas/PlanDef' }
+        credits:
+          type: object
+          properties:
+            purchasedMicros: { type: integer, format: int64 }
+            grantedMicros: { type: integer, format: int64 }
+            totalMicros: { type: integer, format: int64 }
+            paidUntil: { type: string, nullable: true }
+        usage:
+          type: object
+          properties:
+            storageBytes: { type: integer, format: int64 }
+            freeImageTrialsUsed: { type: integer }
+            freeVideoTrialsUsed: { type: integer }
+        mediaExpiry:
+          type: object
+          properties:
+            nearestAt: { type: string, nullable: true }
+            expiringCount: { type: integer }
+        deletion:
+          type: object
+          properties:
+            status: { type: string, enum: [none, pending] }
+            scheduledAt: { type: string, nullable: true }
+        readOnly: { type: boolean, description: 用量超档位上限时为 true，上传被拒 }
+        graceEndsAt: { type: string, nullable: true, description: 会员日落宽限截止时间 }
+    PlanDef:
+      type: object
+      properties:
+        id: { type: string, description: free / paid / sunset 等档位标识 }
+        name: { type: string }
+        storageBytes: { type: integer, format: int64 }
+        maxFileBytes: { type: integer, format: int64 }
+        retentionDays: { type: integer }
+        priceMicros: { type: integer, format: int64, nullable: true, description: 仅可购买档位（durationDays>0）返回 }
+        durationDays: { type: integer, nullable: true, description: 仅可购买档位返回 }
+    CreditsBalance:
+      type: object
+      properties:
+        purchasedMicros: { type: integer, format: int64, description: 购入桶余额（微元） }
+        grantedMicros: { type: integer, format: int64, description: 赠送桶余额（微元） }
+        totalMicros: { type: integer, format: int64 }
+        paidUntil: { type: string, nullable: true, description: 会员权益期截止（来自最近订阅） }
+        recent:
+          type: array
+          items: { $ref: '#/components/schemas/CreditTransaction' }
+          description: 最近 5 条流水
+    CreditTransaction:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        bucket: { type: string, enum: [purchased, granted] }
+        type: { type: string, enum: [purchase, consume, refund, grant, expire] }
+        amountMicros: { type: integer, format: int64, description: 正增负减 }
+        balanceAfterMicros: { type: integer, format: int64, description: 该桶写入后余额 }
+        createdAt: { type: string }
+        refType: { type: string, enum: [generation, order, admin], description: 有值才输出 }
+        refId: { type: string, description: 有值才输出 }
+        note: { type: string, description: 有值才输出 }
+    CreditPackage:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        priceMicros: { type: integer, format: int64 }
+        purchasedMicros: { type: integer, format: int64, description: 恒等于 priceMicros（1:1 入账购入桶） }
+        bonusMicros: { type: integer, format: int64, description: 附赠金额，入赠送桶 }
+        entitlementDays: { type: integer, description: 形状保留，恒为 0 }
+        currency: { type: string }
+    OrderPayload:
+      type: object
+      description: 所有订单接口共用的订单形状；会员订单 packageId 为空串、payload 不含 planId 键。
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string, enum: [alipay, wechat, easypay] }
+        packageId: { type: string, description: 会员订单为空串 }
+        priceMicros: { type: integer, format: int64, description: 建单时快照价 }
+        currency: { type: string }
+        purchasedMicros: { type: integer, format: int64 }
+        grantedMicros: { type: integer, format: int64 }
+        entitlementDays: { type: integer, description: 点数包 0、会员为周期天数快照 }
+        status: { type: string, enum: [pending, paid, failed, refunded] }
+        paidAt: { type: string, nullable: true }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        providerOrderId: { type: string, description: 渠道单号，有值才输出 }
+    CanvasSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        nodeCount: { type: integer }
+        connectionCount: { type: integer }
+        coverKey: { type: string, nullable: true, description: 封面媒体 storageKey }
+        updatedAt: { type: string }
+    CanvasDetail:
+      allOf:
+        - $ref: '#/components/schemas/CanvasSummary'
+        - type: object
+          properties:
+            data:
+              type: object
+              description: 画布正文，顶层键 nodes[] / connections[]；上限 2MB
+              additionalProperties: true
+            revision: { type: integer, description: 乐观锁版本，保存时须回传 }
+            createdAt: { type: string }
+    SaveCanvasResult:
+      type: object
+      properties:
+        revision: { type: integer, description: 保存后的最新 revision }
+        updatedAt: { type: string }
+    AssetItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [text, image, video] }
+        title: { type: string }
+        tags: { type: array, items: { type: string } }
+        data: { type: object, additionalProperties: true, description: 素材正文（文本内容、媒体引用等） }
+        storageKey: { type: string, nullable: true }
+        bytes: { type: integer, format: int64 }
+        isAIGC: { type: boolean, description: 工作台生成存入为 true，手动上传为 false }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    GenerationItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [image, video] }
+        status: { type: string, enum: [pending, success, failed] }
+        prompt: { type: string }
+        model: { type: string }
+        config: { type: object, additionalProperties: true, description: 报价参数快照 }
+        result: { type: object, additionalProperties: true, description: 产物引用（含 task/storageKey 等） }
+        durationMs: { type: integer }
+        isAIGC: { type: boolean, description: 恒为 true }
+        moderationStatus: { type: string, enum: [skipped, passed, rejected] }
+        createdAt: { type: string }
+    WorkAuthor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string, nullable: true }
+        avatarUrl: { type: string, nullable: true }
+    CommunityWork:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        tags: { type: array, items: { type: string } }
+        kind: { type: string, enum: [image, video] }
+        storageKey: { type: string, description: 作品媒体 storageKey }
+        coverKey: { type: string, nullable: true }
+        isAIGC: { type: boolean }
+        likeCount: { type: integer }
+        remixCount: { type: integer }
+        reportCount: { type: integer, description: 仅管理端列表返回 }
+        createdAt: { type: string }
+        author: { $ref: '#/components/schemas/WorkAuthor' }
+        sourceWorkId: { type: string, description: 复刻来源作品 id，仅复刻件返回 }
+    MediaItem:
+      type: object
+      properties:
+        storageKey: { type: string }
+        bytes: { type: integer, format: int64 }
+        mimeType: { type: string }
+    AiCredits:
+      type: object
+      description: 生成接口的计费摘要；不同接口可选键略有差异，全部在下方列出。
+      properties:
+        baseCostMicros: { type: integer, format: int64 }
+        finalCostMicros: { type: integer, format: int64 }
+        finalCostYuan: { type: string, description: 两位小数的元字符串 }
+        remainingMicros: { type: integer, format: int64, description: 生成后余额 }
+        refundedMicros: { type: integer, format: int64, description: 视频任务失败时等于 finalCostMicros，否则 0 }
+        discount:
+          type: object
+          nullable: true
+          properties:
+            promotionId: { type: string }
+            name: { type: string }
+            discountBps: { type: integer, description: 折扣基点，如 2000 = 8 折 }
+            endsAt: { type: string }
+    QuoteResponse:
+      type: object
+      properties:
+        billingMode: { type: string, enum: [credits, free_trial] }
+        baseCostMicros: { type: integer, format: int64 }
+        discount: { type: object, nullable: true }
+        finalCostMicros: { type: integer, format: int64 }
+        finalCostPoints: { type: integer, format: int64 }
+        finalCostYuan: { type: string }
+        availableMicros: { type: integer, format: int64, description: 当前双桶合计余额 }
+        affordable: { type: boolean }
+        shortfallMicros: { type: integer, format: int64 }
+        priceVersion: { type: integer }
+        promotionVersion: { type: integer, nullable: true }
+        quoteToken: { type: string, description: 报价凭证，5 分钟内随生成请求回传 }
+        expiresAt: { type: string }
+        freeTrialsLeft: { type: integer, format: int64, description: 命中免费试用时返回 }
+    ImageGenResponse:
+      type: object
+      properties:
+        model: { type: string }
+        credits: { $ref: '#/components/schemas/AiCredits' }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/MediaItem' }
+        generationId: { type: string }
+        durationMs: { type: integer }
+    VideoCreateResponse:
+      type: object
+      properties:
+        taskId: { type: string, description: 异步任务句柄，用于后续查询 }
+        status: { type: string, enum: [pending] }
+        credits: { $ref: '#/components/schemas/AiCredits' }
+        generationId: { type: string }
+        pollAfterMs: { type: integer, description: 建议轮询间隔毫秒 }
+    VideoTaskResponse:
+      type: object
+      properties:
+        taskId: { type: string }
+        status: { type: string, enum: [pending, succeeded, failed] }
+        credits: { $ref: '#/components/schemas/AiCredits' }
+        generationId: { type: string }
+        pollAfterMs: { type: integer }
+        video: { $ref: '#/components/schemas/MediaItem', description: 仅 succeeded 时返回 }
+        error:
+          type: object
+          nullable: true
+          description: 仅 failed 时返回
+          properties:
+            code: { type: string }
+            message: { type: string }
+    AudioGenResponse:
+      type: object
+      properties:
+        model: { type: string }
+        credits: { $ref: '#/components/schemas/AiCredits' }
+        audio: { $ref: '#/components/schemas/MediaItem' }
+        durationMs: { type: integer }
+    ChatNonStreamResponse:
+      type: object
+      description: stream=false 时的非流式对话响应。
+      properties:
+        credits: { $ref: '#/components/schemas/AiCredits' }
+        content: { type: string }
+        toolCalls:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              arguments: { type: string }
+        finishReason: { type: string }
+    ModelCatalogItem:
+      type: object
+      description: 平台模型目录条目；constraints 决定前端参数表单，creditCost 为价格矩阵。
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        displayName: { type: string }
+        capability: { type: string, enum: [image, video, text, audio] }
+        provider: { type: string }
+        constraints:
+          type: object
+          additionalProperties: true
+          description: '参数约束：size/ratio/resolution/quality/duration 为取值数组（字符串或 {value,label}），n.max 为数量上限，features 为能力开关（mask/referenceImage/referenceVideo/referenceAudio）'
+        creditCost:
+          type: object
+          additionalProperties: true
+          description: 价格矩阵 {version, dimensions[], prices[{params, costMicros}]}
+        effectivePrices:
+          type: array
+          description: 命中折扣后的有效价格
+          items:
+            type: object
+            properties:
+              params: { type: object, additionalProperties: { type: string } }
+              baseCostMicros: { type: integer, format: int64 }
+              finalCostMicros: { type: integer, format: int64 }
+              discount: { type: object, nullable: true }
+        nextPricingChangeAt: { type: string, nullable: true, description: 下一次价格变更时间，到点应刷新目录 }
+        freeTrialEligible: { type: boolean }
+    DownloadTicket:
+      type: object
+      description: 两段式下载第一步的签发结果。
+      properties:
+        url:
+          type: string
+          description: 取件地址；免费档为 /api/v1/media/{storageKey}（水印版），付费且有干净原件为 /api/v1/media-download/{token}
+        expiresAt: { type: string, nullable: true, description: 签名 URL 过期时间（300 秒），免费档为 null }
+    AdminUserSummary:
+      type: object
+      description: admin 用户列表元素。
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        username: { type: string }
+        role: { type: string }
+        roleKey: { type: string, nullable: true }
+        status: { type: string, enum: [active, disabled, pending_deletion] }
+        emailVerified: { type: boolean }
+        planId: { type: string, description: free / paid / sunset（按订阅派生） }
+        purchasedMicros: { type: integer, format: int64 }
+        grantedMicros: { type: integer, format: int64 }
+        paidUntil: { type: string, nullable: true }
+        storageBytes: { type: integer, format: int64 }
+        createdAt: { type: string }
+        membership:
+          type: object
+          properties:
+            planId: { type: string, nullable: true }
+            periodEnd: { type: string, nullable: true }
+            graceEndsAt: { type: string, nullable: true }
+        storage:
+          type: object
+          properties:
+            usedBytes: { type: integer, format: int64 }
+            quotaBytes: { type: integer, format: int64 }
+        products: { type: array, items: { type: string } }
+    AdminUserDetail:
+      type: object
+      description: admin 用户详情（AdminUserSummary 之外补充档位与媒体聚合）。
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        username: { type: string }
+        role: { type: string }
+        roleKey: { type: string, nullable: true }
+        status: { type: string }
+        emailVerified: { type: boolean }
+        createdAt: { type: string }
+        lastLoginAt: { type: string, nullable: true }
+        planId: { type: string }
+        planName: { type: string }
+        storageLimit: { type: integer, format: int64 }
+        maxFileBytes: { type: integer, format: int64 }
+        retentionDays: { type: integer }
+        purchasedMicros: { type: integer, format: int64 }
+        grantedMicros: { type: integer, format: int64 }
+        paidUntil: { type: string, nullable: true }
+        storageBytes: { type: integer, format: int64 }
+        mediaCount: { type: integer, format: int64 }
+        readOnly: { type: boolean }
+        membership:
+          type: object
+          properties:
+            planId: { type: string, nullable: true }
+            periodEnd: { type: string, nullable: true }
+            graceEndsAt: { type: string, nullable: true }
+        storage:
+          type: object
+          properties:
+            usedBytes: { type: integer, format: int64 }
+            quotaBytes: { type: integer, format: int64 }
+        products: { type: array, items: { type: string } }
+    CleanupReport:
+      type: object
+      description: 用户媒体清理（预演/执行）报告。
+      properties:
+        userId: { type: string, format: uuid }
+        dryRun: { type: boolean }
+        scanned: { type: integer }
+        reclaimed: { type: integer }
+        freedBytes: { type: integer, format: int64 }
+        storageUsed: { type: integer, format: int64 }
+        storageLimit: { type: integer, format: int64 }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              storageKey: { type: string }
+              bytes: { type: integer, format: int64 }
+              reason: { type: string, enum: [orphan, expired, over_quota] }
+    ModelSummary:
+      type: object
+      description: admin 模型条目；constraints/creditCost 为原始 JSON（形状同模型目录）。
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        displayName: { type: string }
+        capability: { type: string, enum: [image, video, text, audio] }
+        provider: { type: string }
+        constraints: { type: object, additionalProperties: true, nullable: true }
+        creditCost: { type: object, additionalProperties: true, nullable: true }
+        channelIds: { type: array, items: { type: string } }
+        freeTrialEligible: { type: boolean }
+        enabled: { type: boolean }
+        sort: { type: integer }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    PromotionItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        modelId: { type: string, format: uuid }
+        name: { type: string }
+        matchParams: { type: object, additionalProperties: { type: string }, description: 折扣命中的参数组合，空对象为全模型 }
+        discountBps: { type: integer }
+        priority: { type: integer }
+        version: { type: integer, description: 每次修改递增 }
+        status: { type: string, enum: [scheduled, active, ended, disabled] }
+        startsAt: { type: string }
+        endsAt: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    AdminPackageItem:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        priceMicros: { type: integer, format: int64 }
+        purchasedMicros: { type: integer, format: int64 }
+        bonusMicros: { type: integer, format: int64 }
+        entitlementDays: { type: integer }
+        currency: { type: string }
+        enabled: { type: boolean }
+        sort: { type: integer }
+    ChannelItem:
+      type: object
+      description: 上游 AI 渠道；API Key 加密落库，接口只回 hasKey，永不回明文。
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        baseUrl: { type: string }
+        apiFormat: { type: string, enum: [openai, gemini, ark] }
+        priority: { type: integer }
+        enabled: { type: boolean }
+        hasKey: { type: boolean }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    ModerationRecord:
+      type: object
+      description: 审核记录（只存内容哈希与风险标签，不存原始提示词）。
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        stage: { type: string, enum: [upload, artifact], description: upload=上传送审，artifact=生成产物送审 }
+        contentType: { type: string }
+        contentHash: { type: string }
+        provider: { type: string }
+        providerRequestId: { type: string, nullable: true }
+        policyVersion: { type: string }
+        decision: { type: string, enum: [passed, rejected, error] }
+        riskLabels: { type: array, items: { type: string } }
+        reviewStatus: { type: string, enum: [pending, approved, rejected] }
+        reviewRevision: { type: integer, description: 人工改判乐观锁 }
+        reviewNote: { type: string, nullable: true }
+        compensatedMicros: { type: integer, format: int64 }
+        createdAt: { type: string }
+        generationId: { type: string, description: 有则返回 }
+        reviewedBy: { type: string, description: 有则返回 }
+        reviewedAt: { type: string, description: 有则返回 }
+        quarantineExpiresAt: { type: string, description: 有则返回 }
+    ModerationStats:
+      type: object
+      properties:
+        total: { type: integer, format: int64 }
+        passed: { type: integer, format: int64 }
+        rejected: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+        pendingReview: { type: integer, format: int64 }
+        rejectedRate: { type: number }
+        errorRate: { type: number }
+        labelCounts: { type: object, additionalProperties: { type: integer, format: int64 } }
+        reviewRate: { type: number }
+        quarantineCount: { type: integer, format: int64 }
+    AdminWorkItem:
+      type: object
+      description: admin 社区作品条目（含未发布/已下架状态）。
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        assetId: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        tags: { type: string, description: 逗号分隔字符串 }
+        coverKey: { type: string, nullable: true }
+        status: { type: string, enum: [published, hidden, removed] }
+        likeCount: { type: integer }
+        remixCount: { type: integer }
+        reportCount: { type: integer }
+        createdAt: { type: string }
+        sourceWorkId: { type: string, description: 复刻件才有 }
+    ReportItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workId: { type: string, format: uuid }
+        workTitle: { type: string, description: 作品已删时为空串 }
+        reason: { type: string }
+        status: { type: string, enum: [pending, handled, dismissed] }
+        createdAt: { type: string }
+    SiteSettings:
+      type: object
+      properties:
+        announcement: { type: string }
+        registrationEnabled: { type: boolean }
+        maintenanceMode: { type: boolean }
+        maintenanceNotice: { type: string }
+        communityEnabled: { type: boolean }
+        checkinEnabled: { type: boolean }
+        checkinRewardMicros: { type: integer, format: int64 }
+        inviteEnabled: { type: boolean }
+        inviteRewardMicros: { type: integer, format: int64 }
+        inviteeRewardMicros: { type: integer, format: int64 }
+        maxUploadBytes: { type: integer, format: int64 }
+        generationConcurrency: { type: integer, format: int64 }
+    AdminListItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        username: { type: string }
+        displayName: { type: string, nullable: true }
+        status: { type: string }
+        roleKey: { type: string }
+        createdAt: { type: string }
+        lastLoginAt: { type: string, nullable: true }
+    RoleItem:
+      type: object
+      properties:
+        key: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        isSystem: { type: boolean }
+        memberCount: { type: integer, format: int64 }
+        permissions: { type: array, items: { type: string } }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    PermissionModuleItem:
+      type: object
+      properties:
+        module: { type: string }
+        moduleName: { type: string }
+        permissions:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              name: { type: string }
+              description: { type: string }
+              sort: { type: integer }
+    AuditLogItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        actorUserId: { type: string, format: uuid }
+        action: { type: string }
+        targetType: { type: string }
+        targetId: { type: string }
+        requestId: { type: string }
+        reason: { type: string }
+        beforeSummary: { type: object, additionalProperties: true, nullable: true }
+        afterSummary: { type: object, additionalProperties: true, nullable: true }
+        createdAt: { type: string }
+    RevenueStats:
+      type: object
+      properties:
+        revenueMicrosToday: { type: integer, format: int64 }
+        ordersToday: { type: integer, format: int64 }
+        revenueMicrosWeek: { type: integer, format: int64 }
+        ordersWeek: { type: integer, format: int64 }
+        revenueMicrosTotal: { type: integer, format: int64 }
+        ordersTotal: { type: integer, format: int64 }
+        paidUsers: { type: integer, format: int64, description: 存在有效期的会员订阅用户数 }
+        userTotal: { type: integer, format: int64 }
+        conversionRate: { type: number }
+    SubscriptionItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        userEmail: { type: string }
+        userUsername: { type: string }
+        planId: { type: string }
+        planName: { type: string, description: 档位被删时为空串 }
+        status: { type: string, enum: [active, ended] }
+        startedAt: { type: string }
+        periodEnd: { type: string }
+        sourceRef: { type: string, nullable: true }
+        createdAt: { type: string }
+    SsoClientItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string }
+        name: { type: string }
+        clientId: { type: string }
+        redirectUris: { type: array, items: { type: string } }
+        enabled: { type: boolean }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    AnalyticsUsage:
+      type: object
+      description: 用量分析看板一次性取数响应（日界 UTC+8）。
+      properties:
+        summary:
+          type: object
+          properties:
+            requests: { type: integer, format: int64 }
+            succeeded: { type: integer, format: int64 }
+            failed: { type: integer, format: int64 }
+            successRate: { type: number }
+            costMicros: { type: integer, format: int64, description: 仅成功请求计费 }
+            activeUsers: { type: integer, format: int64 }
+            activeSessions: { type: integer, format: int64 }
+        daily:
+          type: array
+          description: 固定 days 天，缺数日期补零
+          items:
+            type: object
+            properties:
+              date: { type: string, description: YYYY-MM-DD }
+              requests: { type: integer, format: int64 }
+              succeeded: { type: integer, format: int64 }
+              failed: { type: integer, format: int64 }
+              costMicros: { type: integer, format: int64 }
+              activeUsers: { type: integer, format: int64 }
+              sessions: { type: integer, format: int64 }
+        byModel:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              requests: { type: integer, format: int64 }
+              costMicros: { type: integer, format: int64 }
+        byCapability:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              requests: { type: integer, format: int64 }
+              costMicros: { type: integer, format: int64 }
+        bySpec:
+          type: array
+          items:
+            type: object
+            properties:
+              capability: { type: string }
+              key: { type: string }
+              requests: { type: integer, format: int64 }
+              costMicros: { type: integer, format: int64 }
+        topUsers:
+          type: array
+          items:
+            type: object
+            properties:
+              userId: { type: string }
+              email: { type: string }
+              displayName: { type: string }
+              requests: { type: integer, format: int64 }
+              costMicros: { type: integer, format: int64 }
+  responses:
+    Error400:
+      description: 参数校验失败或业务校验不通过（信封见 Error schema）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error401:
+      description: 未登录或凭据无效（UNAUTHORIZED / TOKEN_EXPIRED / INVALID_CREDENTIALS 等）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error402:
+      description: 点数余额不足（INSUFFICIENT_CREDITS）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error403:
+      description: 无权限或账号状态受限（FORBIDDEN / ACCOUNT_DISABLED / EMAIL_NOT_VERIFIED / READ_ONLY 等）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error404:
+      description: 资源不存在（跨用户访问统一 404，防探测）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error409:
+      description: 业务冲突（REVISION_CONFLICT / QUOTE_STALE / ORDER_ALREADY_PAID / PROMOTION_CONFLICT 等）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error410:
+      description: 令牌无效或已过期（TOKEN_INVALID）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error413:
+      description: 文件超档位上限（FILE_TOO_LARGE）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error422:
+      description: 内容未通过审核（CONTENT_REJECTED，被拒输入不扣点）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error429:
+      description: '请求过频或并发超限（RATE_LIMITED / CONCURRENCY_LIMITED，带 Retry-After）'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error502:
+      description: 上游异常（UPSTREAM_ERROR，未产生输出时已自动退款）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error503:
+      description: 服务不可用（REGISTRATION_DISABLED / MODERATION_UNAVAILABLE / MAINTENANCE_MODE）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error504:
+      description: 上游超时（UPSTREAM_TIMEOUT，自动退款）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error507:
+      description: 存储配额不足（STORAGE_QUOTA_EXCEEDED，附 used/limit）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+paths:
+  /healthz:
+    get:
+      tags: [健康检查]
+      summary: 存活探针（仅 compose 网络内使用）
+      security: []
+      responses:
+        '200':
+          description: 服务存活
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /readyz:
+    get:
+      tags: [健康检查]
+      summary: 就绪探针（数据库可连通）
+      security: []
+      responses:
+        '200':
+          description: 就绪
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+        '503':
+          description: 数据库不可用
+  /api/v1/auth/register:
+    post:
+      tags: [认证]
+      summary: 注册并视为登录
+      description: 'IP 限流 10 次/小时。主要错误：400 VALIDATION_FAILED（fields 带字段说明）、503 REGISTRATION_DISABLED、409 EMAIL_TAKEN、409 USERNAME_TAKEN。'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, username, password]
+              properties:
+                email: { type: string, format: email }
+                username: { type: string, description: '3-32 位，[a-zA-Z0-9_-]' }
+                password: { type: string, description: 8-72 位 }
+      responses:
+        '201':
+          description: 注册成功（同登录响应）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionPayload' }
+        '400': { $ref: '#/components/responses/Error400' }
+        '409': { $ref: '#/components/responses/Error409' }
+        '503': { $ref: '#/components/responses/Error503' }
+  /api/v1/auth/login:
+    post:
+      tags: [认证]
+      summary: 登录（邮箱或用户名）
+      description: 'IP 限流 20 次/10 分钟；同账号连续 5 次失败锁定 15 分钟（429）。account 含 @ 按邮箱、否则按用户名。主要错误：401 INVALID_CREDENTIALS、403 ACCOUNT_DISABLED、429 RATE_LIMITED。'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account, password]
+              properties:
+                account: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: 登录成功，下发 ic_refresh 与 ic_media cookie
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionPayload' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/auth/refresh:
+    post:
+      tags: [认证]
+      summary: 轮换刷新会话
+      description: 凭 ic_refresh cookie 原子轮换；已撤销令牌被复用视为安全事件（撤销全部会话并清 cookie）。主要错误：401 UNAUTHORIZED。
+      security: []
+      responses:
+        '200':
+          description: 新会话（同登录响应，cookie 同步轮换）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionPayload' }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/auth/logout:
+    post:
+      tags: [认证]
+      summary: 登出
+      description: 撤销对应会话并清两枚 cookie；无 cookie 也返回 204。
+      security: []
+      responses:
+        '204': { description: 已登出 }
+  /api/v1/auth/verify-email/send:
+    post:
+      tags: [认证]
+      summary: 重发验证邮件
+      description: 'IP 限流 10 次/小时 + 同邮箱 3 次/小时；已验证邮箱同样 204。'
+      requestBody: { required: false, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '204': { description: 已发送 }
+        '401': { $ref: '#/components/responses/Error401' }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/auth/verify-email:
+    post:
+      tags: [认证]
+      summary: 邮箱验证令牌兑换
+      description: 令牌一次性、24 小时有效。主要错误：410 TOKEN_INVALID。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200':
+          description: 验证成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/UserPayload' }
+        '410': { $ref: '#/components/responses/Error410' }
+  /api/v1/auth/password/forgot:
+    post:
+      tags: [认证]
+      summary: 忘记密码发信
+      description: 'IP 限流 10 次/小时 + 同邮箱 3 次/小时；无论邮箱是否存在都 204（防枚举）。重置令牌 1 小时有效、并发打开只能用一次。'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '204': { description: 已发送（不暴露邮箱是否存在） }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/auth/password/reset:
+    post:
+      tags: [认证]
+      summary: 重置密码
+      description: 重置后撤销全部 refresh token 并递增媒体令牌版本（旧 ic_media 立即失效）。主要错误：410 TOKEN_INVALID。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, description: 8-72 位 }
+      responses:
+        '204': { description: 已重置 }
+        '410': { $ref: '#/components/responses/Error410' }
+  /api/v1/me:
+    get:
+      tags: [用户]
+      summary: 当前用户聚合档案
+      responses:
+        '200':
+          description: 用户、档位、点数、用量、媒体到期与注销状态聚合
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeResponse' }
+        '401': { $ref: '#/components/responses/Error401' }
+    patch:
+      tags: [用户]
+      summary: 更新资料（昵称/头像）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, nullable: true }
+                avatarUrl: { type: string, nullable: true }
+      responses:
+        '200':
+          description: 更新后的用户
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/UserPayload' }
+        '400': { $ref: '#/components/responses/Error400' }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/me/password:
+    post:
+      tags: [用户]
+      summary: 修改密码（强制改密白名单出口）
+      description: '成功后撤销全部旧会话、轮换两枚 cookie、媒体令牌版本 +1；响应头 X-Session-Refreshed: true。主要错误：401 INVALID_CREDENTIALS（旧密码错）。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [oldPassword, newPassword]
+              properties:
+                oldPassword: { type: string }
+                newPassword: { type: string, description: 8-72 位 }
+      responses:
+        '204': { description: 已修改 }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/me/free-grant/claim:
+    post:
+      tags: [用户]
+      summary: 领取免费体验额度（幂等）
+      description: 主要错误：403 FREE_GRANT_UNAVAILABLE（开关关闭/风控/日预算耗尽）、403 EMAIL_NOT_VERIFIED、403 ACCOUNT_PENDING_DELETION。
+      responses:
+        '200':
+          description: 领取结果（已领取返回既有记录）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaignId: { type: string }
+                  status: { type: string }
+                  imageTrials: { type: integer }
+                  videoTrials: { type: integer }
+                  grantedMicros: { type: integer, format: int64 }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/v1/me/deletion:
+    post:
+      tags: [用户]
+      summary: 申请注销（7 天冷静期，重复申请幂等）
+      description: 申请后立即无法生成与充值，仍可浏览与导出。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, description: 密码确认 }
+      responses:
+        '200':
+          description: 已进入冷静期
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scheduledAt: { type: string, description: 到期匿名化时间 }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/me/deletion/cancel:
+    post:
+      tags: [用户]
+      summary: 撤销注销
+      responses:
+        '200':
+          description: 账号恢复
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        '409': { $ref: '#/components/responses/Error409', description: 不在冷静期 DELETION_NOT_PENDING }
+  /api/v1/me/export:
+    get:
+      tags: [用户]
+      summary: 个人数据导出（JSON 附件）
+      description: 'Content-Disposition: attachment; filename="youc-export.json"；含资料/点数/订单/生成记录/画布元数据，不含媒体二进制。'
+      responses:
+        '200':
+          description: 导出 JSON
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/oidc/authorize:
+    get:
+      tags: [OIDC]
+      summary: 授权端点（授权码 + 强制 PKCE S256）
+      description: |
+        浏览器直跳 302 到 redirect_uri?code=...&state=...；请求头 Accept 含 application/json 时返回 JSON 模式
+        {"redirect": "..."} 由前端自行跳转。code 一次性、10 分钟有效。client/redirect_uri/PKCE 校验失败一律
+        400 JSON 且绝不重定向。IP 限流 20 次/10 分钟。
+      parameters:
+        - { name: client_id, in: query, required: true, schema: { type: string } }
+        - { name: redirect_uri, in: query, required: true, schema: { type: string }, description: 须与注册完全一致 }
+        - { name: response_type, in: query, required: true, schema: { type: string, enum: [code] } }
+        - { name: scope, in: query, required: true, schema: { type: string }, description: 须含 openid }
+        - { name: code_challenge, in: query, required: true, schema: { type: string } }
+        - { name: code_challenge_method, in: query, required: true, schema: { type: string, enum: [S256] } }
+        - { name: state, in: query, required: false, schema: { type: string }, description: 原样回传 }
+      responses:
+        '302':
+          description: 浏览器直跳模式，重定向到 redirect_uri
+        '200':
+          description: 'JSON 模式（Accept: application/json）'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect: { type: string, description: 完整回跳 URL（带 code 与 state） }
+        '400': { $ref: '#/components/responses/Error400' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/oidc/token:
+    post:
+      tags: [OIDC]
+      summary: 授权码换 token（RS256，15 分钟）
+      description: '客户端凭 client_secret 认证（恒时比对）；JSON 或 form 皆可。主要错误：401 INVALID_CLIENT、400 INVALID_GRANT（code 无效/已用/过期、redirect_uri 不匹配、verifier 错）、400 UNSUPPORTED_GRANT_TYPE。IP 限流 20 次/10 分钟。'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grant_type, client_id, client_secret, code, redirect_uri, code_verifier]
+              properties:
+                grant_type: { type: string, enum: [authorization_code] }
+                client_id: { type: string }
+                client_secret: { type: string }
+                code: { type: string }
+                redirect_uri: { type: string }
+                code_verifier: { type: string }
+      responses:
+        '200':
+          description: 签发成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string }
+                  expires_in: { type: integer, description: 900 秒 }
+                  scope: { type: string }
+                  id_token: { type: string, description: RS256 JWT，claims 仅 sub/aud }
+        '400': { $ref: '#/components/responses/Error400' }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/oidc/userinfo:
+    get:
+      tags: [OIDC]
+      summary: OIDC 用户信息
+      description: 验 OIDC 签发的 RS256 access token，与平台会话令牌是两套凭据，平台 Bearer 会被拒绝。
+      parameters:
+        - { name: Authorization, in: header, required: true, schema: { type: string }, description: 'Bearer <OIDC access_token>' }
+      responses:
+        '200':
+          description: 用户档案
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub: { type: string }
+                  email: { type: string }
+                  username: { type: string }
+                  displayName: { type: string, nullable: true }
+                  emailVerified: { type: boolean }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/oidc/jwks.json:
+    get:
+      tags: [OIDC]
+      summary: RS256 公钥集
+      security: []
+      responses:
+        '200':
+          description: JWKS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty: { type: string }
+                        alg: { type: string }
+                        use: { type: string }
+                        kid: { type: string }
+                        n: { type: string, description: base64url }
+                        e: { type: string, description: base64url }
+  /api/v1/canvases:
+    get:
+      tags: [画布]
+      summary: 我的画布列表（服务端分页/搜索/排序，只回摘要）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: sort, in: query, schema: { type: string }, description: '白名单 updatedAt|createdAt|title，前缀 - 倒序，默认 -updatedAt' }
+        - { name: q, in: query, schema: { type: string }, description: 标题关键字 }
+      responses:
+        '200':
+          description: 画布摘要分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/CanvasSummary' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '400': { $ref: '#/components/responses/Error400' }
+    post:
+      tags: [画布]
+      summary: 创建画布
+      description: data 顶层键 nodes[]/connections[]，服务端据此计算计数与封面，上限 2MB。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, maxLength: 200 }
+                data: { type: object }
+      responses:
+        '201':
+          description: 画布详情（revision=1）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CanvasDetail' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/v1/canvases/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [画布]
+      summary: 画布详情（仅本人）
+      responses:
+        '200':
+          description: 含 data 与 revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CanvasDetail' }
+        '404': { $ref: '#/components/responses/Error404' }
+    put:
+      tags: [画布]
+      summary: 保存画布（revision 乐观锁）
+      description: '按 revision 条件更新；版本过期返回 409 REVISION_CONFLICT 且 error 附当前最新 revision。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, revision]
+              properties:
+                data: { type: object, description: 上限 2MB }
+                revision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: 保存成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveCanvasResult' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409', description: REVISION_CONFLICT（附 revision） }
+    patch:
+      tags: [画布]
+      summary: 重命名画布
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: 已重命名
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  title: { type: string }
+                  updatedAt: { type: string }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [画布]
+      summary: 删除画布（幂等）
+      responses:
+        '204': { description: 已删除 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/assets:
+    get:
+      tags: [素材]
+      summary: 我的素材列表（服务端筛选；page=1 额外返回标签候选）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: sort, in: query, schema: { type: string }, description: '同画布白名单，默认 -updatedAt' }
+        - { name: kind, in: query, schema: { type: string, enum: [text, image, video] } }
+        - { name: q, in: query, schema: { type: string }, description: 匹配标题或正文关键词 }
+        - { name: tag, in: query, schema: { type: array, items: { type: string } }, description: 可重复参数，多标签为「同时包含」 }
+      responses:
+        '200':
+          description: 素材分页（仅 page=1 时带 tags 全量标签候选）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/AssetItem' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+                  tags: { type: array, items: { type: string }, description: 仅 page=1 返回 }
+        '400': { $ref: '#/components/responses/Error400' }
+    post:
+      tags: [素材]
+      summary: 创建素材
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, title]
+              properties:
+                kind: { type: string, enum: [text, image, video] }
+                title: { type: string, maxLength: 200 }
+                tags: { type: array, items: { type: string }, description: 单个 ≤64 字符，去空去重 }
+                data: { type: object }
+                storageKey: { type: string, description: 须匹配存储键正则 }
+                bytes: { type: integer, format: int64, minimum: 0 }
+                isAIGC: { type: boolean, description: 工作台生成结果存素材时传 true }
+      responses:
+        '201':
+          description: 素材对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetItem' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/v1/assets/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [素材]
+      summary: 素材详情
+      responses:
+        '200':
+          description: 素材对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+    patch:
+      tags: [素材]
+      summary: 部分更新素材
+      description: 至少提供一个字段；storageKey/bytes 更新时自动镜像写进 data。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, maxLength: 200 }
+                tags: { type: array, items: { type: string } }
+                data: { type: object }
+                storageKey: { type: string }
+                bytes: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: 更新后的素材
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [素材]
+      summary: 删除素材（幂等）
+      responses:
+        '204': { description: 已删除 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/generations:
+    get:
+      tags: [生成记录]
+      summary: 生成记录列表（游标分页）
+      description: '恢复未完成视频任务用法：?status=pending&kind=video（pending 一次返回全部，上限 100，nextCursor 恒为 null）。'
+      parameters:
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { $ref: '#/components/parameters/CursorParam' }
+        - { name: kind, in: query, schema: { type: string, enum: [image, video] } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, success, failed] } }
+      responses:
+        '200':
+          description: 生成记录游标分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/GenerationItem' } }
+                  nextCursor: { type: string, nullable: true }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/v1/generations/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [生成记录]
+      summary: 生成记录详情
+      responses:
+        '200':
+          description: 生成记录对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [生成记录]
+      summary: 删除生成记录（幂等）
+      responses:
+        '204': { description: 已删除 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/models:
+    get:
+      tags: [模型目录]
+      summary: 平台模型目录（前端唯一模型来源）
+      parameters:
+        - { name: capability, in: query, schema: { type: string, enum: [image, video, text, audio] }, description: 非法 400 }
+      responses:
+        '200':
+          description: 仅返回 enabled=true 的模型
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ModelCatalogItem' } }
+        '400': { $ref: '#/components/responses/Error400' }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/ai/quote:
+    post:
+      tags: [AI 生成]
+      summary: 生成前报价（纯查询，不扣费）
+      description: 报价凭证 quoteToken 5 分钟内有效；生成请求必须携带它，价格/活动版本变化后 409 QUOTE_STALE 需重新报价。免费试用判定：仅 freeTrialEligible 模型、image 且 n=1、参数组合恰为最低价组合。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, capability]
+              properties:
+                model: { type: string, description: 目录 id 或 name }
+                capability: { type: string, enum: [image, video, text, audio] }
+                params:
+                  type: object
+                  additionalProperties: true
+                  description: '白名单参数（size/ratio/quality/resolution/duration 等）；n 亦从此对象解析，缺省 1'
+      responses:
+        '200':
+          description: 报价结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuoteResponse' }
+        '400': { $ref: '#/components/responses/Error400', description: 'MODEL_NOT_SUPPORTED / PARAM_NOT_SUPPORTED' }
+        '403': { $ref: '#/components/responses/Error403', description: EMAIL_NOT_VERIFIED }
+  /api/v1/ai/images/generations:
+    post:
+      tags: [AI 生成]
+      summary: 图片生成（同步返回）
+      description: |
+        幂等键 idempotencyKey 必填（重复键命中已成功请求 409、命中进行中请求 429 CONCURRENCY_LIMITED）。
+        并发限制：全局 8、每用户每分钟 30、image 槽 3/用户（429 带 Retry-After: 5）。
+        提示词与参考图先送审：422 CONTENT_REJECTED（不扣点）；产物被拒不退点。
+        点数不足 402 INSUFFICIENT_CREDITS（附 requiredMicros/availableMicros/shortfallMicros）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt, quoteToken, idempotencyKey]
+              properties:
+                model: { type: string }
+                prompt: { type: string }
+                n: { type: integer, description: 缺省 1，受 constraints.n.max 约束 }
+                size: { type: string }
+                quality: { type: string }
+                background: { type: string }
+                references: { type: array, items: { type: string }, description: 参考图 storageKey，需模型 features 含 referenceImage }
+                mask: { type: string, description: 遮罩 storageKey，需 features 含 mask }
+                quoteToken: { type: string }
+                idempotencyKey: { type: string }
+                sessionId: { type: string, description: 标签页会话 id，用于用量分析，截断 64 }
+      responses:
+        '200':
+          description: 生成成功（图片已转存为 storageKey）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageGenResponse' }
+        '402': { $ref: '#/components/responses/Error402' }
+        '409': { $ref: '#/components/responses/Error409', description: QUOTE_STALE }
+        '422': { $ref: '#/components/responses/Error422' }
+        '429': { $ref: '#/components/responses/Error429', description: 'RATE_LIMITED / CONCURRENCY_LIMITED' }
+        '502': { $ref: '#/components/responses/Error502' }
+        '504': { $ref: '#/components/responses/Error504' }
+        '507': { $ref: '#/components/responses/Error507' }
+  /api/v1/ai/videos/generations:
+    post:
+      tags: [AI 生成]
+      summary: 创建异步视频任务（202）
+      description: |
+        幂等键必填；pending 任务上限 3/用户（429）。mode 传 frames|reference，最终由参考图数量决定
+        （1 图首帧 / 2 图首尾帧 / 更多按全能参考）。成功后 generation 记录 result 落任务句柄，刷新页面可恢复轮询。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt, quoteToken, idempotencyKey]
+              properties:
+                model: { type: string }
+                prompt: { type: string }
+                duration: { type: integer, description: 秒，缺省 5，上游裁剪 4-30 }
+                ratio: { type: string }
+                resolution: { type: string }
+                generateAudio: { type: boolean, default: true }
+                watermark: { type: boolean, default: false }
+                mode: { type: string, enum: [frames, reference] }
+                references: { type: array, items: { type: string }, description: 参考图 storageKey }
+                videoReferences: { type: array, items: { type: string }, description: 需 features 含 referenceVideo }
+                audioReferences: { type: array, items: { type: string }, description: 需 features 含 referenceAudio }
+                quoteToken: { type: string }
+                idempotencyKey: { type: string }
+                sessionId: { type: string }
+      responses:
+        '202':
+          description: 任务已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VideoCreateResponse' }
+        '402': { $ref: '#/components/responses/Error402' }
+        '409': { $ref: '#/components/responses/Error409' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '429': { $ref: '#/components/responses/Error429' }
+        '502': { $ref: '#/components/responses/Error502' }
+        '507': { $ref: '#/components/responses/Error507' }
+  /api/v1/ai/videos/tasks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: 创建任务返回的 taskId }
+    get:
+      tags: [AI 生成]
+      summary: 查询视频任务状态
+      description: 任务归属当前用户，查他人/不存在一律 404。失败自动按原桶退款（credits.refundedMicros）。
+      responses:
+        '200':
+          description: 任务状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VideoTaskResponse' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/ai/audio/speech:
+    post:
+      tags: [AI 生成]
+      summary: 语音合成（同步返回）
+      description: 幂等键必填；audio 槽 2/用户。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input, quoteToken, idempotencyKey]
+              properties:
+                model: { type: string }
+                input: { type: string, description: 待合成文本 }
+                voice: { type: string }
+                format: { type: string, default: mp3 }
+                speed: { type: number }
+                instructions: { type: string }
+                quoteToken: { type: string }
+                idempotencyKey: { type: string }
+                sessionId: { type: string }
+      responses:
+        '200':
+          description: 合成成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AudioGenResponse' }
+        '402': { $ref: '#/components/responses/Error402' }
+        '409': { $ref: '#/components/responses/Error409' }
+        '429': { $ref: '#/components/responses/Error429' }
+        '502': { $ref: '#/components/responses/Error502' }
+        '504': { $ref: '#/components/responses/Error504' }
+  /api/v1/ai/chat/completions:
+    post:
+      tags: [AI 生成]
+      summary: 文本对话（SSE 流式 / 可选非流式）
+      description: |
+        幂等键必填；text 槽 2/用户。stream 缺省 true，返回 text/event-stream，自有统一事件格式：
+        - `event: delta`，data {"text": "..."}（增量正文）
+        - `event: tool_call`，data {"id","name","arguments"}
+        - 每 15s 心跳注释行 `: ping`
+        - `event: done`，data {"credits": {...}, "finishReason": "stop"}
+        - 流开始前失败：`event: error`，data {"code","message"} 并全额退点；已产出后失败按成功处理不退点。
+        stream=false 时返回 JSON（credits/content/toolCalls/finishReason）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages, quoteToken, idempotencyKey]
+              properties:
+                model: { type: string }
+                messages:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    properties:
+                      role: { type: string }
+                      content:
+                        description: 字符串或多段数组
+                      name: { type: string }
+                      tool_call_id: { type: string }
+                reasoningEffort: { type: string }
+                tools:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: { type: string }
+                      function:
+                        type: object
+                        properties:
+                          name: { type: string }
+                          description: { type: string }
+                          parameters: { type: object }
+                toolChoice: { description: 任意 JSON }
+                stream: { type: boolean, default: true }
+                quoteToken: { type: string }
+                idempotencyKey: { type: string }
+                sessionId: { type: string }
+      responses:
+        '200':
+          description: SSE 事件流（text/event-stream）或非流式 JSON
+          content:
+            text/event-stream:
+              schema: { type: string, description: delta/tool_call/done/error 事件流，见描述 }
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatNonStreamResponse' }
+        '402': { $ref: '#/components/responses/Error402' }
+        '409': { $ref: '#/components/responses/Error409' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/media/{storageKey}:
+    parameters:
+      - { name: storageKey, in: path, required: true, schema: { type: string }, description: '形如 image:xxx / video:xxx / audio:xxx' }
+    head:
+      tags: [媒体]
+      summary: 媒体元信息探测
+      description: Bearer 或 ic_media cookie；返回 Content-Type/Content-Length/X-Checksum/ETag 与 Cache-Control（水印字节 no-cache、稳定字节 immutable）。非本人 404。
+      security:
+        - bearerAuth: []
+        - mediaCookie: []
+      responses:
+        '200': { description: 元信息头 }
+        '404': { $ref: '#/components/responses/Error404' }
+    get:
+      tags: [媒体]
+      summary: 媒体读取（按归属者档位选字节）
+      description: |
+        免费档返回水印版主对象；付费档存在干净原件时下发干净版。local 驱动 200 直流并支持 If-None-Match 304；
+        s3 驱动 302 到预签名 URL。展示（画布/工作台/社区）与下载前的普通读取都走本端点。
+      security:
+        - bearerAuth: []
+        - mediaCookie: []
+      responses:
+        '200':
+          description: 媒体字节（Content-Type 按嗅探）
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '304': { description: ETag 命中 }
+        '302': { description: s3 驱动重定向到预签名 URL }
+        '404': { $ref: '#/components/responses/Error404' }
+    put:
+      tags: [媒体]
+      summary: 媒体上传（原始 body 直传）
+      description: |
+        仅认 Bearer。Content-Type 必填且在白名单（image/jpeg|png|webp|gif、video/mp4|webm、
+        audio/mpeg|wav|x-wav|ogg、application/octet-stream）；可选 X-Checksum（sha256，不符 409）。
+        服务端按文件头嗅探校验，伪装文件 400；单文件上限按档位 413；配额 507、只读 403 READ_ONLY；
+        审核开启时先入隔离区（422 拒绝）。重复 PUT 为覆盖语义。
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  storageKey: { type: string }
+                  bytes: { type: integer, format: int64 }
+                  checksum: { type: string }
+                  mimeType: { type: string }
+        '400': { $ref: '#/components/responses/Error400' }
+        '403': { $ref: '#/components/responses/Error403', description: 'READ_ONLY / EMAIL_NOT_VERIFIED' }
+        '409': { $ref: '#/components/responses/Error409', description: CHECKSUM_MISMATCH }
+        '413': { $ref: '#/components/responses/Error413' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '507': { $ref: '#/components/responses/Error507' }
+    delete:
+      tags: [媒体]
+      summary: 硬删除媒体（幂等）
+      description: 同步回退存储计数并补删干净原件。
+      responses:
+        '204': { description: 已删除 }
+  /api/v1/media/{storageKey}/download:
+    parameters:
+      - { name: storageKey, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [媒体]
+      summary: 申请下载（两段式第一步：签发短期取件链接）
+      description: |
+        仅认 Bearer；限流 60 次/小时/用户。严格归属校验（他人/不存在一律 404）。
+        免费档或无干净原件返回 {"url":"/api/v1/media/{storageKey}","expiresAt":null}（本就水印版）；
+        付费档且有干净原件返回签名取件 URL，TTL 300 秒。
+      responses:
+        '200':
+          description: 取件票据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadTicket' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/media-download/{token}:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [媒体]
+      summary: 取件干净原件（两段式第二步）
+      description: |
+        Bearer 或 ic_media cookie（防盗链第二道闸）。签名、过期、归属任一校验失败一律 404（防探测）。
+        成功回流原始字节，Content-Disposition attachment; filename="ic-{对象id}.{扩展名}"；s3 驱动 302 预签名。
+      security:
+        - bearerAuth: []
+        - mediaCookie: []
+      responses:
+        '200':
+          description: 干净原件字节
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/community/works:
+    get:
+      tags: [社区]
+      summary: 公开作品流（最新/热门/搜索/标签）
+      description: 热门按点赞数取前 50（nextCursor 恒 null）；社区关闭时 400。
+      parameters:
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { $ref: '#/components/parameters/CursorParam' }
+        - { name: sort, in: query, schema: { type: string, enum: [latest, hot] }, default: latest }
+        - { name: q, in: query, schema: { type: string }, description: 匹配标题/描述/标签 }
+        - { name: tag, in: query, schema: { type: string }, description: 标签子串 }
+        - { name: userId, in: query, schema: { type: string, format: uuid }, description: 按作者过滤 }
+        - { name: hours, in: query, schema: { type: integer }, description: 仅 hot 生效，默认 168 }
+      responses:
+        '200':
+          description: 作品流
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/CommunityWork' } }
+                  nextCursor: { type: string, nullable: true }
+    post:
+      tags: [社区]
+      summary: 发布作品（复用素材媒体）
+      description: '限流 12 次/小时 + 每日 20 条上限（429 RATE_LIMITED）；同素材同日同标题 409。tags 为逗号分隔字符串（单个 ≤16 字符，最多 8 个）。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetId, title]
+              properties:
+                assetId: { type: string, format: uuid, description: 须为自己的 image/video 素材 }
+                title: { type: string }
+                description: { type: string }
+                tags: { type: string, description: 逗号分隔 }
+                sourceWorkId: { type: string, format: uuid, description: 复刻来源作品，发布后其 remixCount+1 }
+      responses:
+        '201':
+          description: 已发布
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  work: { $ref: '#/components/schemas/CommunityWork' }
+        '400': { $ref: '#/components/responses/Error400' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/community/works/mine:
+    get:
+      tags: [社区]
+      summary: 我的作品（最新 100 条，含未过审/已下架）
+      responses:
+        '200':
+          description: 作品列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/CommunityWork' } }
+  /api/v1/community/works/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [社区]
+      summary: 作品详情
+      responses:
+        '200':
+          description: 作品（含 liked 点赞状态）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  work:
+                    allOf:
+                      - $ref: '#/components/schemas/CommunityWork'
+                      - type: object
+                        properties:
+                          liked: { type: boolean }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [社区]
+      summary: 删除自己的作品（软删）
+      responses:
+        '204': { description: 已删除 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/community/works/{id}/like:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [社区]
+      summary: 点赞（幂等）
+      responses:
+        '200':
+          description: 点赞后计数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  likeCount: { type: integer }
+                  liked: { type: boolean }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/community/works/{id}/unlike:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [社区]
+      summary: 取消点赞（幂等）
+      responses:
+        '200':
+          description: 取消后计数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  likeCount: { type: integer }
+                  liked: { type: boolean }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/community/works/{id}/report:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [社区]
+      summary: 举报作品（每用户每作品一次）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '201':
+          description: 已受理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        '409': { $ref: '#/components/responses/Error409', description: 已举报过 }
+  /api/v1/community/users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [社区]
+      summary: 用户主页（最新 60 条公开作品与统计）
+      responses:
+        '200':
+          description: 用户主页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      username: { type: string }
+                      displayName: { type: string, nullable: true }
+                      avatarUrl: { type: string, nullable: true }
+                      createdAt: { type: string }
+                  stats:
+                    type: object
+                    properties:
+                      works: { type: integer }
+                      likes: { type: integer }
+                  items: { type: array, items: { $ref: '#/components/schemas/CommunityWork' } }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/activity/checkin:
+    get:
+      tags: [活动]
+      summary: 签到状态
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  checkedIn: { type: boolean, description: 今日是否已签 }
+                  streakDays: { type: integer }
+                  rewardMicros: { type: integer, format: int64 }
+                  today: { type: string, description: UTC 日期 YYYY-MM-DD }
+    post:
+      tags: [活动]
+      summary: 每日签到（同日幂等）
+      description: 站点开关关闭时 400 VALIDATION_FAILED。奖励只进赠送桶、不改变付费身份。
+      responses:
+        '200':
+          description: 签到结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkedIn: { type: boolean }
+                  granted: { type: boolean, description: 本次是否首次发放 }
+                  rewardMicros: { type: integer, format: int64 }
+                  streakDays: { type: integer }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/v1/activity/invite:
+    get:
+      tags: [活动]
+      summary: 邀请信息（无邀请码时懒生成）
+      responses:
+        '200':
+          description: 邀请信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  code: { type: string }
+                  invitedCount: { type: integer }
+                  rewardMicros: { type: integer, format: int64, description: 累计奖励 }
+                  rewardPerInviteMicros: { type: integer, format: int64 }
+  /api/v1/activity/invite/bind:
+    post:
+      tags: [活动]
+      summary: 绑定邀请码（一人一次）
+      description: '校验：邮箱已验证、注册满 1 小时、非本人邀请码、风控与每日名额。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '200':
+          description: 双方奖励
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inviterRewardMicros: { type: integer, format: int64 }
+                  inviteeRewardMicros: { type: integer, format: int64 }
+        '400': { $ref: '#/components/responses/Error400' }
+        '409': { $ref: '#/components/responses/Error409', description: 已绑定过 }
+  /api/v1/settings/public:
+    get:
+      tags: [活动]
+      summary: 站点公开设置（公告与功能开关）
+      security: []
+      responses:
+        '200':
+          description: 公开设置子集
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  announcement: { type: string }
+                  maintenanceMode: { type: boolean }
+                  maintenanceNotice: { type: string }
+                  registrationEnabled: { type: boolean }
+                  communityEnabled: { type: boolean }
+                  checkinEnabled: { type: boolean }
+                  inviteEnabled: { type: boolean }
+  /api/v1/credits:
+    get:
+      tags: [点数与档位]
+      summary: 双桶点数余额与最近 5 条流水
+      responses:
+        '200':
+          description: 余额
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreditsBalance' }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/credits/transactions:
+    get:
+      tags: [点数与档位]
+      summary: 点数流水（游标分页，只读）
+      parameters:
+        - { $ref: '#/components/parameters/CursorParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: type, in: query, schema: { type: string, enum: [purchase, consume, refund, grant, expire] } }
+      responses:
+        '200':
+          description: 流水分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/CreditTransaction' } }
+                  nextCursor: { type: string, nullable: true }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/v1/credit-packages:
+    get:
+      tags: [点数与档位]
+      summary: 已上架充值档位与可用支付渠道
+      responses:
+        '200':
+          description: 档位与渠道
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/CreditPackage' } }
+                  providers:
+                    type: array
+                    items: { type: string }
+                    description: 已配置渠道，如 alipay/wechat/easypay
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/plans:
+    get:
+      tags: [点数与档位]
+      summary: 会员档位定义（存储/单文件/保留期）
+      responses:
+        '200':
+          description: 档位列表（可购买档位附价格与周期）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/PlanDef' } }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/orders:
+    get:
+      tags: [订单与支付]
+      summary: 我的订单列表（游标分页）
+      parameters:
+        - { $ref: '#/components/parameters/CursorParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: status, in: query, schema: { type: string, enum: [pending, paid, failed, refunded] } }
+      responses:
+        '200':
+          description: 订单分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/OrderPayload' } }
+                  nextCursor: { type: string, nullable: true }
+        '400': { $ref: '#/components/responses/Error400' }
+    post:
+      tags: [订单与支付]
+      summary: 下单并获取支付参数
+      description: |
+        packageId（点数包）与 planId（会员档位）二选一；provider 须为已配置渠道。
+        限流 10 次/小时/用户；注销冷静期 403 ACCOUNT_PENDING_DELETION。
+        响应即携带支付参数：alipay/easypay 为 redirect（收银台 URL）、wechat 为 qrcode（CodeUrl）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                packageId: { type: string, description: 与 planId 二选一 }
+                planId: { type: string, description: 与 packageId 二选一 }
+                provider: { type: string, enum: [alipay, wechat, easypay] }
+      responses:
+        '201':
+          description: 订单与支付参数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: { $ref: '#/components/schemas/OrderPayload' }
+                  payment:
+                    type: object
+                    properties:
+                      type: { type: string, enum: [qrcode, redirect, clientSecret] }
+                      payload: { type: string, description: 收银台 URL 或二维码内容 }
+        '400': { $ref: '#/components/responses/Error400' }
+        '429': { $ref: '#/components/responses/Error429' }
+  /api/v1/orders/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [订单与支付]
+      summary: 订单详情（他人一律 404）
+      responses:
+        '200':
+          description: 订单
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: { $ref: '#/components/schemas/OrderPayload' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/v1/orders/{id}/cancel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [订单与支付]
+      summary: 取消待支付订单（取消后置 failed）
+      responses:
+        '200':
+          description: 订单（status=failed）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: { $ref: '#/components/schemas/OrderPayload' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409', description: ORDER_ALREADY_PAID }
+  /api/v1/payments/webhook/{provider}:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [alipay, wechat, easypay] } }
+    post:
+      tags: [订单与支付]
+      summary: 支付异步回调（唯一公开写接口，验签不鉴权）
+      description: |
+        alipay/easypay 为表单通知（MD5/SDK 验签），wechat 为 APIv3 JSON 报文（Wechatpay-* 头验签）。
+        幂等到账：同渠道单号重复回调只入账一次；金额与快照不一致拒绝到账。
+        成功响应：alipay/easypay 裸文本 success；wechat {"code":"SUCCESS"}。验签失败 400 INVALID_SIGNATURE。
+      security: []
+      responses:
+        '200':
+          description: 渠道要求的成功响应
+        '400': { $ref: '#/components/responses/Error400', description: INVALID_SIGNATURE }
+        '404': { $ref: '#/components/responses/Error404', description: 渠道未配置或订单不存在（让渠道重试） }
+  /api/admin/meta:
+    get:
+      tags: [Admin-元信息]
+      summary: 多产品后台元信息（免权限点，需后台角色）
+      description: modules 按调用者已授权限过滤；产品切换器与两层菜单数据源。
+      responses:
+        '200':
+          description: 产品与模块清单
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  product:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      name: { type: string }
+                      version: { type: string }
+                  modules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        label: { type: string }
+                        permissions: { type: array, items: { type: object } }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/me:
+    get:
+      tags: [Admin-元信息]
+      summary: 后台当前用户（免权限点，需后台角色）
+      responses:
+        '200': { description: 当前管理员信息 }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/stats:
+    get:
+      tags: [Admin-分析]
+      summary: 后台总览统计（stats.read）
+      responses:
+        '200': { description: 总览 KPI }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/stats/revenue:
+    get:
+      tags: [Admin-分析]
+      summary: 收入与转化总览（stats.revenue）
+      responses:
+        '200':
+          description: 今日/近 7 天/累计充值、订单数、付费用户与转化率
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RevenueStats' }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/analytics/usage:
+    get:
+      tags: [Admin-分析]
+      summary: 用量分析看板（stats.usage）
+      description: days 仅支持 7/30/90（缺省 30），日界 UTC+8；消费点数只计成功请求。
+      parameters:
+        - { name: days, in: query, schema: { type: integer, enum: [7, 30, 90] }, default: 30 }
+      responses:
+        '200':
+          description: KPI/趋势/分布/排行
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyticsUsage' }
+        '400': { $ref: '#/components/responses/Error400' }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/users:
+    get:
+      tags: [Admin-用户]
+      summary: 用户列表（users.read）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: q, in: query, schema: { type: string }, description: 模糊匹配 email/username }
+        - { name: status, in: query, schema: { type: string, enum: [active, disabled, pending_deletion] } }
+        - { name: planId, in: query, schema: { type: string, enum: [free, paid, sunset] } }
+        - { name: sort, in: query, schema: { type: string }, description: '白名单 createdAt|purchasedMicros|grantedMicros|storageBytes，默认 -createdAt' }
+      responses:
+        '200':
+          description: 用户分页（含会员与存储聚合）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/AdminUserSummary' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-用户]
+      summary: 管理员建号（roles.manage，一次性临时密码仅此返回一次）
+      description: 建号即邮箱已验证并置 must_change_password，登录后强制改密。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, roleKey]
+              properties:
+                email: { type: string, format: email }
+                displayName: { type: string, maxLength: 64 }
+                roleKey: { type: string }
+      responses:
+        '201':
+          description: 用户与临时密码
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { type: object }
+                  temporaryPassword: { type: string, description: 明文仅此一次，不入库 }
+        '409': { $ref: '#/components/responses/Error409', description: 'EMAIL_TAKEN / USERNAME_TAKEN' }
+  /api/admin/users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Admin-用户]
+      summary: 用户详情（users.read）
+      responses:
+        '200':
+          description: 用户详情
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/AdminUserDetail' }
+        '404': { $ref: '#/components/responses/Error404' }
+    patch:
+      tags: [Admin-用户]
+      summary: 封禁/解封（users.write，封禁撤销全部 refresh token）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200':
+          description: 已变更
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+        '400': { $ref: '#/components/responses/Error400' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/users/{id}/password:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Admin-用户]
+      summary: 重置密码（users.write，踢下线；非本人重置置强制改密）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, description: 8-72 位 }
+      responses:
+        '204': { description: 已重置 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/users/{id}/credits:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Admin-用户]
+      summary: 加点/扣点（users.credits，写审计）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bucket, amountMicros, note]
+              properties:
+                bucket: { type: string, enum: [purchased, granted] }
+                amountMicros: { type: integer, format: int64, description: ≠0，负数为扣 }
+                note: { type: string, description: 必填说明 }
+      responses:
+        '200':
+          description: 调整后双桶余额
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purchasedMicros: { type: integer, format: int64 }
+                  grantedMicros: { type: integer, format: int64 }
+        '402': { $ref: '#/components/responses/Error402', description: 扣成负数 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/users/{id}/usage/recalculate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Admin-用户]
+      summary: 重算存储用量（users.write）
+      responses:
+        '200':
+          description: 重算后用量
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  storageBytes: { type: integer, format: int64 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/users/{id}/media/reclaim:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Admin-用户]
+      summary: 清理孤儿/过期/超配额媒体（users.write）
+      parameters:
+        - { name: dryRun, in: query, schema: { type: string, enum: ['true'] }, description: 'true 只扫描不执行' }
+      responses:
+        '200':
+          description: 清理报告
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CleanupReport' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/users/{id}/role:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin-用户]
+      summary: 修改后台角色（roles.manage，变更后撤销其会话）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                roleKey: { type: string, nullable: true, description: null/空串=清空角色 }
+      responses:
+        '200':
+          description: 已变更
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  roleKey: { type: string, nullable: true }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/models:
+    get:
+      tags: [Admin-模型]
+      summary: 模型目录全量列表（models.read）
+      responses:
+        '200':
+          description: 模型列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ModelSummary' } }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-模型]
+      summary: 新建模型（models.write）
+      description: constraints/creditCost 校验：价格组合须完整、唯一、非负；无维度时必须且只能一条价格。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, displayName, capability, provider]
+              properties:
+                name: { type: string }
+                displayName: { type: string }
+                capability: { type: string, enum: [image, video, text, audio] }
+                provider: { type: string }
+                constraints: { type: object, additionalProperties: true }
+                creditCost: { type: object, additionalProperties: true }
+                channelIds: { type: array, items: { type: string } }
+                freeTrialEligible: { type: boolean, default: false }
+                enabled: { type: boolean, default: true }
+                sort: { type: integer, default: 0 }
+      responses:
+        '201':
+          description: 模型
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelSummary' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/models/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin-模型]
+      summary: 更新模型（models.write，部分更新）
+      description: channelIds 传 null 不改动、空数组清空。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                displayName: { type: string }
+                capability: { type: string }
+                provider: { type: string }
+                constraints: { type: object, additionalProperties: true, nullable: true }
+                creditCost: { type: object, additionalProperties: true, nullable: true }
+                channelIds: { type: array, items: { type: string }, nullable: true }
+                freeTrialEligible: { type: boolean }
+                enabled: { type: boolean }
+                sort: { type: integer }
+      responses:
+        '200':
+          description: 模型
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelSummary' }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [Admin-模型]
+      summary: 删除模型（models.write；已有流水禁止删除，只能下架）
+      responses:
+        '204': { description: 已删除 }
+        '400': { $ref: '#/components/responses/Error400' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/model-promotions:
+    get:
+      tags: [Admin-模型]
+      summary: 折扣活动列表（models.read）
+      parameters:
+        - { name: modelId, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [scheduled, active, ended, disabled] } }
+      responses:
+        '200':
+          description: 活动列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/PromotionItem' } }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-模型]
+      summary: 创建折扣活动（models.write）
+      description: '折扣命中按具体度再按优先级取一条、不叠加；与既有规则完全同具体度同优先级时 409 PROMOTION_CONFLICT。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modelId, name, discountBps, startsAt, endsAt]
+              properties:
+                modelId: { type: string, format: uuid }
+                name: { type: string }
+                matchParams: { type: object, additionalProperties: { type: string }, description: 键须在模型 constraints 内，空对象=全模型 }
+                discountBps: { type: integer, minimum: 1, maximum: 9999 }
+                priority: { type: integer, default: 0 }
+                startsAt: { type: string, format: date-time }
+                endsAt: { type: string, format: date-time }
+                reason: { type: string, description: 审计备注 }
+      responses:
+        '201':
+          description: 活动
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PromotionItem' }
+        '409': { $ref: '#/components/responses/Error409', description: PROMOTION_CONFLICT }
+  /api/admin/model-promotions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin-模型]
+      summary: 更新折扣活动（models.write，每次 version+1）
+      description: '"status":"disabled" 为显式停用。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                matchParams: { type: object, additionalProperties: { type: string } }
+                discountBps: { type: integer }
+                priority: { type: integer }
+                startsAt: { type: string, format: date-time }
+                endsAt: { type: string, format: date-time }
+                status: { type: string, enum: [disabled] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 活动
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PromotionItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409' }
+  /api/admin/credit-packages:
+    get:
+      tags: [Admin-订单]
+      summary: 充值档位列表（packages.read）
+      responses:
+        '200':
+          description: 档位列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/AdminPackageItem' } }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-订单]
+      summary: 新建充值档位（packages.write；价格须为一分钱整数倍）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name, priceMicros]
+              properties:
+                id: { type: string }
+                name: { type: string }
+                priceMicros: { type: integer, format: int64 }
+                bonusMicros: { type: integer, format: int64 }
+                enabled: { type: boolean, default: true }
+                sort: { type: integer, default: 0 }
+      responses:
+        '201':
+          description: 档位
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPackageItem' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/credit-packages/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Admin-订单]
+      summary: 更新充值档位（packages.write；无删除入口）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                priceMicros: { type: integer, format: int64 }
+                bonusMicros: { type: integer, format: int64 }
+                enabled: { type: boolean }
+                sort: { type: integer }
+      responses:
+        '200':
+          description: 档位
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPackageItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/orders:
+    get:
+      tags: [Admin-订单]
+      summary: 全站订单查询（orders.read）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: sort, in: query, schema: { type: string }, description: '白名单 createdAt|priceMicros，默认 -createdAt' }
+        - { name: status, in: query, schema: { type: string, enum: [pending, paid, failed, refunded] } }
+        - { name: provider, in: query, schema: { type: string } }
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 订单分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/OrderPayload'
+                        - type: object
+                          properties:
+                            userId: { type: string, format: uuid }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/requests/refunds/retry:
+    post:
+      tags: [Admin-订单]
+      summary: 重试全部退款失败的生成请求（orders.refund）
+      responses:
+        '200':
+          description: 重试条数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  retried: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/channels:
+    get:
+      tags: [Admin-渠道]
+      summary: 上游渠道列表（channels.read，Key 只写不读）
+      responses:
+        '200':
+          description: 渠道列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ChannelItem' } }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-渠道]
+      summary: 新建渠道（channels.write，API Key 加密落库）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, baseUrl, apiFormat, apiKey]
+              properties:
+                name: { type: string }
+                baseUrl: { type: string }
+                apiFormat: { type: string, enum: [openai, gemini, ark] }
+                apiKey: { type: string, description: 只写不读 }
+                priority: { type: integer, default: 0 }
+                enabled: { type: boolean, default: true }
+      responses:
+        '201':
+          description: 渠道
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelItem' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/channels/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin-渠道]
+      summary: 更新渠道（channels.write；传 apiKey 才换 Key，空白保留原值）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                baseUrl: { type: string }
+                apiFormat: { type: string, enum: [openai, gemini, ark] }
+                apiKey: { type: string, description: 只写不读 }
+                priority: { type: integer }
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: 渠道
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [Admin-渠道]
+      summary: 删除渠道（channels.write；仍被模型引用则 400）
+      responses:
+        '204': { description: 已删除 }
+        '400': { $ref: '#/components/responses/Error400' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/membership/subscriptions:
+    get:
+      tags: [Admin-会员]
+      summary: 会员订阅列表（membership.read）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+        - { name: planId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [active, ended] } }
+      responses:
+        '200':
+          description: 订阅分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/SubscriptionItem' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '400': { $ref: '#/components/responses/Error400' }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/membership/grant:
+    post:
+      tags: [Admin-会员]
+      summary: 发放/续期会员（membership.write，不走过单）
+      description: 从 max(当前 period_end, now) 起叠加一个档位周期并回写存储配额；补偿发放走 /membership/compensate（同一实现，审计动作不同）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, planId, reason]
+              properties:
+                userId: { type: string, format: uuid }
+                planId: { type: string, description: 须为可购买档位，时长由档位 durationDays 决定 }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 订阅
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscription: { $ref: '#/components/schemas/SubscriptionItem' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/membership/compensate:
+    post:
+      tags: [Admin-会员]
+      summary: 补偿发放会员（membership.write）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, planId, reason]
+              properties:
+                userId: { type: string, format: uuid }
+                planId: { type: string }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 订阅
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscription: { $ref: '#/components/schemas/SubscriptionItem' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/membership/subscriptions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Admin-会员]
+      summary: 作废订阅（membership.write；作废后立即失去付费身份并同步配额）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已作废
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [ended] }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409', description: 已作废不能重复作废 }
+  /api/admin/sso/clients:
+    get:
+      tags: [Admin-SSO]
+      summary: OAuth 客户端列表（sso.read）
+      responses:
+        '200':
+          description: 客户端列表（永不回传密钥）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/SsoClientItem' } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-SSO]
+      summary: 新增客户端（sso.write，明文密钥仅本次返回）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, redirectUris]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+                redirectUris:
+                  type: array
+                  minItems: 1
+                  items: { type: string }
+                  description: 须 https（仅 localhost 允许 http）；不得带 fragment
+                productId: { type: string, default: canvas }
+      responses:
+        '201':
+          description: 客户端与一次性密钥
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client: { $ref: '#/components/schemas/SsoClientItem' }
+                  clientSecret: { type: string, description: 48 位 hex 明文，仅此一次 }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/sso/clients/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin-SSO]
+      summary: 编辑客户端（sso.write，至少一项字段）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                redirectUris: { type: array, items: { type: string } }
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: 客户端
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client: { $ref: '#/components/schemas/SsoClientItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [Admin-SSO]
+      summary: 删除客户端（sso.write，授权即刻失效）
+      responses:
+        '204': { description: 已删除 }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/sso/clients/{id}/reset-secret:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Admin-SSO]
+      summary: 重置客户端密钥（sso.write，旧密钥立即失效）
+      responses:
+        '200':
+          description: 新明文密钥（仅此一次）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clientSecret: { type: string }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/moderation/records:
+    get:
+      tags: [Admin-审核]
+      summary: 审核记录筛选（moderation.read）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: stage, in: query, schema: { type: string, enum: [upload, artifact] } }
+        - { name: decision, in: query, schema: { type: string, enum: [passed, rejected, error] } }
+        - { name: reviewStatus, in: query, schema: { type: string, enum: [pending, approved, rejected] } }
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+        - { name: label, in: query, schema: { type: string }, description: 风险标签包含匹配 }
+        - { name: sort, in: query, schema: { type: string }, description: '白名单 createdAt|decision，默认 -createdAt' }
+      responses:
+        '200':
+          description: 审核记录分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ModerationRecord' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/moderation/records/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Admin-审核]
+      summary: 审核详情（moderation.read，附隔离原件预览信息）
+      responses:
+        '200':
+          description: 记录详情与隔离状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  record:
+                    allOf:
+                      - $ref: '#/components/schemas/ModerationRecord'
+                      - type: object
+                        properties:
+                          providerResult: { type: object, additionalProperties: true }
+                  quarantine:
+                    type: object
+                    properties:
+                      available: { type: boolean }
+                      previewPath: { type: string }
+                      expiresAt: { type: string }
+                      reason: { type: string, description: 不可用时给出原因 }
+        '404': { $ref: '#/components/responses/Error404' }
+    patch:
+      tags: [Admin-审核]
+      summary: 人工改判（moderation.review，revision 乐观锁；approved 释放隔离原件）
+      description: 生成件释放时按物主档位烧录水印（免费/日落档烧水印并留存干净原件，付费档落原始字节）；失败 fail-closed 保留隔离原件。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, note, revision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                note: { type: string }
+                revision: { type: integer, description: 须等于当前 reviewRevision }
+      responses:
+        '200':
+          description: 改判结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  released: { type: boolean }
+                  releaseError: { type: string }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409', description: MODERATION_ALREADY_REVIEWED }
+  /api/admin/moderation/records/{id}/preview:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Admin-审核]
+      summary: 隔离原件预览（moderation.read，二进制流）
+      responses:
+        '200':
+          description: 原件字节（application/octet-stream，no-store）
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/moderation/records/{id}/compensate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Admin-审核]
+      summary: 误判补偿点数（moderation.compensate，同一记录仅一次，只进赠送桶）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountMicros, note]
+              properties:
+                amountMicros: { type: integer, format: int64, minimum: 1 }
+                note: { type: string }
+      responses:
+        '200':
+          description: 补偿后余额
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purchasedMicros: { type: integer, format: int64 }
+                  grantedMicros: { type: integer, format: int64 }
+        '402': { $ref: '#/components/responses/Error402' }
+        '409': { $ref: '#/components/responses/Error409', description: 已补偿 }
+  /api/admin/moderation/stats:
+    get:
+      tags: [Admin-审核]
+      summary: 审核统计（moderation.read：命中率/失败率/标签分布/复核积压/隔离区用量）
+      responses:
+        '200':
+          description: 统计
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModerationStats' }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/community/works:
+    get:
+      tags: [Admin-社区]
+      summary: 作品管理列表（community.read，含未发布/已下架）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: status, in: query, schema: { type: string, enum: [published, hidden, removed] } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 作品分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/AdminWorkItem' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/community/works/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin-社区]
+      summary: 下架/恢复作品（community.write）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [published, hidden, removed] }
+      responses:
+        '200':
+          description: 已变更
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/community/reports:
+    get:
+      tags: [Admin-社区]
+      summary: 举报列表（community.read）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: status, in: query, schema: { type: string, enum: [pending, handled, dismissed] } }
+      responses:
+        '200':
+          description: 举报分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ReportItem' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/community/reports/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin-社区]
+      summary: 处理举报（community.write；handled+removeWork 同时下架作品）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [handled, dismissed] }
+                removeWork: { type: boolean }
+      responses:
+        '200':
+          description: 已处理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/settings:
+    get:
+      tags: [Admin-设置]
+      summary: 站点设置快照（settings.read）
+      responses:
+        '200':
+          description: 设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteSettings' }
+        '403': { $ref: '#/components/responses/Error403' }
+    patch:
+      tags: [Admin-设置]
+      summary: 批量更新站点设置（settings.write，整单写一条审计）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                announcement: { type: string }
+                registrationEnabled: { type: boolean }
+                maintenanceMode: { type: boolean }
+                maintenanceNotice: { type: string }
+                communityEnabled: { type: boolean }
+                checkinEnabled: { type: boolean }
+                checkinRewardMicros: { type: integer, format: int64, minimum: 0 }
+                inviteEnabled: { type: boolean }
+                inviteRewardMicros: { type: integer, format: int64, minimum: 0 }
+                inviteeRewardMicros: { type: integer, format: int64, minimum: 0 }
+                maxUploadBytes: { type: integer, format: int64 }
+                generationConcurrency: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: 更新后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteSettings' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/admins:
+    get:
+      tags: [Admin-角色与权限]
+      summary: 管理员列表（roles.read）
+      responses:
+        '200':
+          description: 管理员列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/AdminListItem' } }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-角色与权限]
+      summary: 提升已有用户为管理员（roles.manage，变更后撤销其全部会话）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: 已提升
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  role: { type: string }
+                  roleKey: { type: string }
+        '400': { $ref: '#/components/responses/Error400' }
+        '409': { $ref: '#/components/responses/Error409', description: 已是管理员 }
+  /api/admin/admins/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Admin-角色与权限]
+      summary: 撤销管理员权限（roles.manage；不能撤销自己，须保留至少一个 active 管理员）
+      responses:
+        '204': { description: 已撤销 }
+        '400': { $ref: '#/components/responses/Error400' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/roles:
+    get:
+      tags: [Admin-角色与权限]
+      summary: 角色列表（roles.read，含成员数与已分配权限）
+      responses:
+        '200':
+          description: 角色列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/RoleItem' } }
+        '403': { $ref: '#/components/responses/Error403' }
+    post:
+      tags: [Admin-角色与权限]
+      summary: 新建角色（roles.manage）
+      description: key 规则 ^[a-z][a-z0-9._-]{1,63}$，不得为 admin 或 admin. 前缀。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name]
+              properties:
+                key: { type: string }
+                name: { type: string, minLength: 1, maxLength: 64 }
+                description: { type: string, maxLength: 200 }
+      responses:
+        '201':
+          description: 角色
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleItem' }
+        '400': { $ref: '#/components/responses/Error400' }
+  /api/admin/roles/{key}:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Admin-角色与权限]
+      summary: 编辑角色（roles.manage；系统角色权限不可编辑，权限为全量替换）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 64 }
+                description: { type: string, maxLength: 200 }
+                permissions: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: 角色
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleItem' }
+        '404': { $ref: '#/components/responses/Error404' }
+    delete:
+      tags: [Admin-角色与权限]
+      summary: 删除角色（roles.manage；系统角色、仍有成员的角色不可删）
+      responses:
+        '204': { description: 已删除 }
+        '400': { $ref: '#/components/responses/Error400' }
+        '404': { $ref: '#/components/responses/Error404' }
+  /api/admin/permissions:
+    get:
+      tags: [Admin-角色与权限]
+      summary: 权限点目录（roles.read，按模块分组，只读）
+      responses:
+        '200':
+          description: 权限目录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/PermissionModuleItem' } }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/audit-logs:
+    get:
+      tags: [Admin-审计]
+      summary: 管理操作审计日志（audit.read，created_at 倒序分页）
+      parameters:
+        - { $ref: '#/components/parameters/PageParam' }
+        - { $ref: '#/components/parameters/SizeParam' }
+        - { name: action, in: query, schema: { type: string }, description: 精确匹配 }
+        - { name: targetType, in: query, schema: { type: string }, description: 精确匹配 }
+      responses:
+        '200':
+          description: 审计分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/AuditLogItem' } }
+                  total: { type: integer, format: int64 }
+                  page: { type: integer }
+                  size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }

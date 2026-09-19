@@ -1,0 +1,21 @@
+{
+ "users": {
+  "exec_api_0919": "0aaf2134-e9a5-44dc-aa68-9cb4868a396c",
+  "exec_b_0919": "359f883e-c044-4fde-a25c-9c65e76e9a5d",
+  "exec_gen_0919": "664d9dd2-de15-4a0a-bde6-c2aa55997a0d",
+  "exec_bd_0919": "a9da6487-61f8-434c-952d-acc37b77b6d0",
+  "exec_rl_0919": "44e94ba8-fb02-43d6-b760-9db1627fe021",
+  "exec_sup_0919": "5f2afaf4-4bff-4df3-8c59-4181aee4ae4d",
+  "exec_admin_0919": "8c8af230-7e80-4063-9b4f-0ea4a17eaa70"
+ },
+ "generations": {
+  "GEN_API": "3c88b68c-72a5-4f17-ae6c-c7f6b53c63f2",
+  "GEN_API2": "e071808d-e082-4618-a2af-7e52d8c59513",
+  "GEN_API3": "4e1b4996-a3b7-48f0-af26-ed1b6dc70843",
+  "GEN_API_FAIL": "d1bc3e13-af64-40d9-8658-3be181ea507d",
+  "GEN_B": "11519d39-8af7-4cc8-be5e-79a585c6092d",
+  "GEN_GEN": "76e5e688-3d35-47de-9d9a-fbd5a993df32",
+  "GEN_GEN2": "3ffd584c-195a-4963-8abc-f8020e674134",
+  "GEN_GEN3": "96d36a17-70f3-45a9-b8c6-e5aea0b5f61c"
+ }
+}

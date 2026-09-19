@@ -54,6 +54,10 @@ export function setGenerationFeedback(id: string, input: { rating: 1 | -1; label
     return apiRequest<GenerationFeedback>(`/generations/${id}/feedback`, { method: "PUT", body: input });
 }
 
+export function getGenerationFeedback(id: string, signal?: AbortSignal) {
+    return apiRequest<{ feedback: GenerationFeedback | null }>(`/generations/${id}/feedback`, { signal });
+}
+
 export function deleteGenerationFeedback(id: string) {
     return apiRequest<void>(`/generations/${id}/feedback`, { method: "DELETE" });
 }

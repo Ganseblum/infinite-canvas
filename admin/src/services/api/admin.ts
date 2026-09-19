@@ -720,3 +720,179 @@ export function resetAdminSsoClientSecret(id: string) {
 export function deleteAdminSsoClient(id: string) {
     return apiRequest<void>(`/admin/sso/clients/${id}`, { method: "DELETE" });
 }
+
+// ===== 反馈工单 =====
+
+export type AdminFeedbackTicket = {
+    id: string;
+    category: string;
+    status: string;
+    content: string;
+    replyCount: number;
+    createdAt: string;
+    updatedAt: string;
+    resolvedAt?: string | null;
+    user?: { email?: string; username?: string; displayName?: string };
+};
+
+export type AdminFeedbackReply = { id: string; isStaff: boolean; content: string; createdAt: string };
+
+export type AdminGenerationFeedback = {
+    generationId: string;
+    rating: number;
+    labels: string[];
+    note: string;
+    updatedAt: string;
+    user?: { email?: string; username?: string };
+    generation?: { kind?: string; model?: string; status?: string };
+};
+
+export function listAdminFeedbackTickets(params: { page?: number; size?: number; status?: string; category?: string }, signal?: AbortSignal) {
+    return apiRequest<{ items: AdminFeedbackTicket[]; total: number; page: number; size: number }>("/admin/feedback/tickets", { query: params, signal });
+}
+
+export function getAdminFeedbackTicket(id: string, signal?: AbortSignal) {
+    return apiRequest<{ ticket: AdminFeedbackTicket; replies: AdminFeedbackReply[]; user?: { email?: string; username?: string; displayName?: string } }>(`/admin/feedback/tickets/${id}`, { signal });
+}
+
+export function replyAdminFeedbackTicket(id: string, content: string) {
+    return apiRequest<{ reply: AdminFeedbackReply }>(`/admin/feedback/tickets/${id}/replies`, { method: "POST", body: { content } });
+}
+
+export function updateAdminFeedbackTicketStatus(id: string, status: string) {
+    return apiRequest<{ id: string; status: string }>(`/admin/feedback/tickets/${id}/status`, { method: "PATCH", body: { status } });
+}
+
+export function listAdminGenerationFeedbacks(params: { page?: number; size?: number; rating?: string }, signal?: AbortSignal) {
+    return apiRequest<{ items: AdminGenerationFeedback[]; total: number; page: number; size: number }>("/admin/feedback/generations", { query: params, signal });
+}
+
+// ===== 博客管理（深夜排字房） =====
+
+export type AdminBlogPost = {
+    id: string;
+    slug: string;
+    title: string;
+    summary: string;
+    topicId: number;
+    topicName: string;
+    topicEnName: string;
+    volNo: number;
+    coverSeed: string;
+    isAigcCover: boolean;
+    isPinned: boolean;
+    originUrl: string;
+    tags: string[];
+    wordCount: number;
+    status: "draft" | "published";
+    publishedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type AdminBlogPostInput = {
+    slug: string;
+    title: string;
+    summary?: string;
+    topicId: number;
+    volNo?: number;
+    coverSeed?: string;
+    isAigcCover?: boolean;
+    isPinned?: boolean;
+    originUrl?: string;
+    tags?: string;
+    contentMd: string;
+};
+
+export type AdminBlogTopic = {
+    id: number;
+    slug: string;
+    name: string;
+    enName: string;
+    description: string;
+    sort: number;
+    postCount: number;
+};
+
+export type AdminBlogComment = {
+    id: string;
+    postId: string;
+    postTitle: string;
+    postSlug: string;
+    author: { id: string; name: string; avatarUrl: string; isAdmin: boolean };
+    replyToId: string | null;
+    contentMd: string;
+    contentHtml: string;
+    status: "visible" | "hidden" | "quarantined";
+    pinned: boolean;
+    likeCount: number;
+    createdAt: string;
+};
+
+export function listAdminBlogPosts(params: { page?: number; size?: number; status?: string; topicId?: string; q?: string }, signal?: AbortSignal) {
+    return apiRequest<{ posts: AdminBlogPost[]; total: number; page: number; size: number }>("/admin/blog/posts", { query: params, signal });
+}
+
+export function getAdminBlogPost(id: string, signal?: AbortSignal) {
+    return apiRequest<{ post: AdminBlogPost; contentMd: string }>(`/admin/blog/posts/${id}`, { signal });
+}
+
+export function createAdminBlogPost(input: AdminBlogPostInput) {
+    return apiRequest<{ post: { id: string; slug: string; status: string } }>("/admin/blog/posts", { method: "POST", body: input });
+}
+
+export function updateAdminBlogPost(id: string, input: AdminBlogPostInput) {
+    return apiRequest<{ post: { id: string; slug: string; status: string } }>(`/admin/blog/posts/${id}`, { method: "PUT", body: input });
+}
+
+export function publishAdminBlogPost(id: string) {
+    return apiRequest<{ post: { id: string; status: string } }>(`/admin/blog/posts/${id}/publish`, { method: "POST" });
+}
+
+export function unpublishAdminBlogPost(id: string) {
+    return apiRequest<{ post: { id: string; status: string } }>(`/admin/blog/posts/${id}/unpublish`, { method: "POST" });
+}
+
+export function deleteAdminBlogPost(id: string) {
+    return apiRequest<void>(`/admin/blog/posts/${id}`, { method: "DELETE" });
+}
+
+export function listAdminBlogTopics(signal?: AbortSignal) {
+    return apiRequest<{ topics: AdminBlogTopic[] }>("/admin/blog/topics", { signal });
+}
+
+export function createAdminBlogTopic(input: { slug: string; name: string; enName?: string; description?: string; sort?: number }) {
+    return apiRequest<{ topic: { id: number; slug: string } }>("/admin/blog/topics", { method: "POST", body: input });
+}
+
+export function updateAdminBlogTopic(id: number, input: { slug: string; name: string; enName?: string; description?: string; sort?: number }) {
+    return apiRequest<{ topic: { id: number; slug: string } }>(`/admin/blog/topics/${id}`, { method: "PUT", body: input });
+}
+
+export function deleteAdminBlogTopic(id: number) {
+    return apiRequest<void>(`/admin/blog/topics/${id}`, { method: "DELETE" });
+}
+
+export function previewAdminBlogPost(markdown: string, signal?: AbortSignal) {
+    return apiRequest<{ html: string; toc: { id: string; text: string; level: number }[]; wordCount: number }>("/admin/blog/preview", { method: "POST", body: { markdown }, signal });
+}
+
+export function listAdminBlogComments(params: { page?: number; size?: number; status?: string; postId?: string }, signal?: AbortSignal) {
+    return apiRequest<{ comments: AdminBlogComment[]; total: number; page: number; size: number }>("/admin/blog/comments", { query: params, signal });
+}
+
+export function hideAdminBlogComment(id: string) {
+    return apiRequest<{ comment: { id: string; status: string } }>(`/admin/blog/comments/${id}/hide`, { method: "POST" });
+}
+
+export function restoreAdminBlogComment(id: string) {
+    return apiRequest<{ comment: { id: string; status: string } }>(`/admin/blog/comments/${id}/restore`, { method: "POST" });
+}
+
+export function deleteAdminBlogComment(id: string) {
+    return apiRequest<void>(`/admin/blog/comments/${id}`, { method: "DELETE" });
+}
+
+export function pinAdminBlogComment(id: string, pinned: boolean) {
+    return apiRequest<{ comment: { id: string; pinned: boolean } }>(`/admin/blog/comments/${id}/pinned`, { method: "PUT", body: { pinned } });
+}

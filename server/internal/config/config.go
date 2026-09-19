@@ -23,6 +23,11 @@ type Config struct {
 	CredentialKey string // 本期不用，但按规划一并校验
 	AppBaseURL    string
 
+	// 博客前台按需再验证：Go 内容变更后回调 blog-web /api/revalidate。
+	// 两者都可选：未配置（本地只跑 Go）时为 no-op，不影响任何写路径。
+	BlogRevalidateURL    string
+	BlogRevalidateSecret string
+
 	AdminEmail    string
 	AdminPassword string
 
@@ -134,6 +139,8 @@ func Load() (*Config, error) {
 		JWTSecret:            os.Getenv("JWT_SECRET"),
 		CredentialKey:        os.Getenv("CREDENTIAL_MASTER_KEY"),
 		AppBaseURL:           os.Getenv("APP_BASE_URL"),
+		BlogRevalidateURL:    os.Getenv("BLOG_REVALIDATE_URL"),
+		BlogRevalidateSecret: os.Getenv("BLOG_REVALIDATE_SECRET"),
 		AdminEmail:           os.Getenv("ADMIN_EMAIL"),
 		SeedTestData:         getenvBool("SEED_TEST_DATA", false),
 		SeedTestDataEmail:    getenv("SEED_TEST_DATA_EMAIL", "test@example.com"),

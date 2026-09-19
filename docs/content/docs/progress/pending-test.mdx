@@ -7,6 +7,41 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 
 以下为本版本需要人工验证确认的事项：
 
+## 博客站「深夜排字房」（本版本新增，待验收）
+
+架构与选型见 `docs/content/docs/overview/blog-architecture.mdx` 与 `docs/content/docs/development/blog-plan.mdx`；设计稿 `design/html/blog-draft-*.html` 与后台稿 `admin-blog.html`。本轮 P1–P3、P5 代码全部落地（29 个端点 + Next 前台 + admin 三界面），验收清单如下：
+
+- **迁移注意（硬性）**：`blog_topics` / `blog_posts` / `blog_comments` / `blog_reactions` / `blog_bookmarks` 五张新表，按仓库经验必须在真实 MySQL 上跑一次启动迁移确认（SQLite 单测测不出列长/保留字问题）。SQLite 侧 21 包单测已全绿。
+- **Go 内容域**：管理面 17 端点（文章 CRUD/发布/下架/删除、栏目 CRUD、同源预览、评论管理 hide/restore/delete/pin）+ 公共读 3 端点（列表/详情含 `content_html`+`toc`+上下篇/栏目计数）。验收：admin 建栏目 → 建文章（存草稿）→ 发布 → 前台可见 → 下架 → 前台 404 → 删除；slug 重复 409、被引用栏目禁删 409。
+- **goldmark 渲染管线**：GFM 表格/任务列表/删除线、脚注、标题锚点目录、Chroma monokai 服务端高亮、`> [!TIP]/[!WARNING]` Callout（自写渲染后重写，goldmark 1.8 无内建 Alert）。验收：在编辑器「同源预览」对照前台实际渲染是否一致。
+- **Next 前台（blog/ 目录，端口 3101）**：首页（头条/筛选 chips/混合网格/分页/栏目索引）、文章页（目录/上下篇/标签/转载标注/最后更新）、栏目页（列表+分页）、栏目索引、关于页、404、RSS 全文（/feed.xml）、sitemap/robots、逐页 head + JSON-LD（WebSite/Blog/BlogPosting/BreadcrumbList 缺 Breadcrumb——发布时补）、明暗双主题（跟随系统 + 手动切换 + 防闪）。验收：`cd blog && npm install && npm run dev`（需 Go API 在 8080），逐页走查 + Lighthouse。
+- **互动（P5）**：评论（登录、回复、短 Markdown、先发后审命中进隔离）、点赞（文章/评论幂等）、收藏 + 我的收藏页。admin 评论台隐藏/恢复/删除/置顶，冗余计数（like/comment/bookmark_count）随写路径增减。验收：登录发评 → 列表可见 → 隐藏后列表消失为占位 → 恢复；重复点赞计数只加一；删他人评论 404。
+- **按需再验证**：api 侧 `BLOG_REVALIDATE_URL`/`BLOG_REVALIDATE_SECRET` 与 blog-web 侧 `REVALIDATE_SECRET` 一致时，发布/下架/删除/评论管理后回调失效缓存；回调失败兜底 300s 过期。验收：改文章标题 → 发布 → 前台文章页秒级更新。
+- **管理后台**：侧边栏新增「博客管理」（blog.read/write 权限点，admin 角色默认全有）；文章列表筛选/搜索/分页、编辑器（元信息 + Markdown 双栏 + 同源预览）、栏目管理（引用禁删）、评论管理（状态筛选/展开预览/操作）。验收：无 blog 权限的角色登录后台应看不到该菜单且直输 URL 落无权限页。
+- **部署物**：compose 新增 `blog-web` 服务（BLOG_WEB_IMAGE/BLOG_WEB_PORT），nginx 模板 `deploy/nginx-blog.youc.online.conf`（/_next/static 长缓存、/api/v1/blog 同域代理），env 示例补 BLOG_* 变量。上线还差：DNS blog A 记录、certbot 补证书、nginx 落地（P4，需真实环境）。
+- **订阅功能按约定暂缓**：设计稿与页面无订阅入口（RSS 全文保留）；后续想清楚形态再评估。
+
+## 用户反馈工单与生成点踩（本版本新增，待验收）
+
+- **support 系统角色**：启动同步后角色表出现「客服」系统角色（绑定反馈工单两个权限点、不可删除）；admin 用户管理可把账号任命为客服，该账号登录后台只见「反馈工单」模块。
+- **用户端反馈页**：用户菜单「意见反馈」→ 提交工单（类别：生成效果/功能建议/充值支付/账号问题/其他，正文 2-1000 字）→ 「我的工单」列表按状态筛选 → 详情抽屉可见客服回复并继续对话 → 可关闭工单；在已解决/已关闭工单上回复会自动重新打开。工单提交限流 10 次/小时/用户，超限 429。
+- **admin 反馈工单台**：侧边栏「反馈工单」→ 工单列表（状态/类别筛选 + 分页，带提交人）→ 详情抽屉回复、标记已解决/关闭/重新打开；「生成点踩反馈」页签按点赞/点踩筛选，列表带问题标签、补充说明、用户与生成记录。
+- **生成结果点赞点踩**：图像/视频工作台结果卡信息行出现赞/踩按钮——点赞直接提交；点踩弹反馈弹窗（预设标签多选 + 补充说明，可全空只提交点踩）；再点已选中的按钮撤销；换选先覆盖旧反馈。历史生成记录（从日志恢复）同样可评；旧记录里没有生成 id 的视频结果不可评。
+- **迁移注意**：`feedback_tickets` / `feedback_ticket_replies` / `generation_feedbacks` 三张新表，按仓库经验需在真实 MySQL 上跑一次启动迁移确认。
+
+## 浏览器自动化首轮验收（本版本新增，首轮已完成）
+
+本地起真实 server（SQLite）+ vite dev 主站与 admin + 假 OpenAI 上游 + fake 审核通道，按 `records/tests/infinite-canvas-acceptance/README.md` 用浏览器逐流程执行了一轮：
+
+- **通过**：未登录重定向与登录/登出；画布列表与示例画布渲染；工作台按模型约束渲染并显示预估点数；图片生成全链路（报价 → 假上游参数逐项正确 → 媒体落盘 → 扣点与报价一致）；结果卡下载/加参考/存为素材；素材列表与发布；社区卡片与详情的「AI 生成」标签；复刻完整链路（详情跳工作台自动加载原作为参考图 → URL 参数清除 → 发布弹窗「复刻自《原作》」→ 透传 sourceWorkId → 原作 remix +1）；复刻来源可取消；admin 非管理员说明页；用户列表 0 用量显示「0 B / 50 MB」；审核记录 stage=upload/artifact 正确落库；OIDC 承接页登录态自动回跳（redirect 带 code 与 state）与未登录落 /login；authorize 第 21 次 429 带 Retry-After；跨端口共享 refresh cookie 的轮换接管行为正常。
+- **发现并已修复两处缺陷**（详见 CHANGELOG）：admin 面接口被共享请求层误加 `/api/v1` 前缀导致后台整站不可用（服务端测试全绿未能发现，属前端拼接回归）；限流器 Retry-After 写成纳秒值。
+- **本轮未覆盖（环境限制，留待 sim 环境）**：真实 AI 渠道、真实邮件投递、支付渠道回调、MySQL 真库迁移（本机 docker 异常未起成）、水印链路（需 ffmpeg+字体，WATERMARK 关闭）、视频生成。
+
+## 全站接口规范（本版本新增，待验收）
+
+- **OpenAPI 规范落库**：`docs/api/openapi.yaml`（OpenAPI 3.0.3，由服务端各域路由代码逐 handler 提取生成），覆盖 `/api/v1` 用户面与 `/api/admin` 管理面共 100 个路径、131 个操作，含鉴权方式、统一错误信封、分页口径与字段级 schema。验收方式：在 Apifox「项目设置 → 导入数据 → OpenAPI/Swagger」导入该文件，核对接口目录与字段展示是否完整可用；测试环境已选为默认 server（正式环境 server 预留 youc.online）。
+- 校验基线：YAML 语法/重复键/`$ref` 引用脚本校验通过；登录、公开设置、jwks 等抽样端点已对测试环境实测（见「server 结构重构与 API 版本前缀」节的 HTTP 冒烟记录）。
+
 ## 功能收尾批（本版本新增，待验收）
 
 - **admin 存储配额 0 值**：admin 用户列表/详情里已用量为 0 时显示「0 B / 1.0 GB」而不是「/ 1.0 GB」；web 端各处 0 字节场景同样显示「0 B」。
@@ -23,6 +58,7 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 
 - **API 路径变更**：用户面接口从 `/api/...` 变为 `/api/v1/...`（如 `/api/v1/auth/login`、`/api/v1/canvases`、`/api/v1/media/{key}`）；管理面保持 `/api/admin/...` 不变。web 与 admin 前端统一 client、媒体直链、AI 流式请求已同步，浏览器侧应无感知；如有外部脚本直调旧路径需自行更新。
 - **回归验证点**：登录/注册/刷新、画布 CRUD、素材、AI 生成（报价/图片/视频/音频/对话流式）、媒体上传与下发（`ic_media` cookie）、点数余额/充值档位/下单购买会员、订单与支付回调、个人中心导出，全链路确认 `/api/v1` 前缀无遗漏。服务端 20 个测试包全绿、web/admin typecheck 与 import 边界检查通过，但真库与浏览器链路仍需人工过一遍。
+- **HTTP 层冒烟（2026-09-19 已过）**：测试环境实测旧路径 `/api/auth/*` 404、`/api/v1/settings/public` 与 `/api/v1/oidc/jwks.json` 200、登录 200 且 cookie 口径正确（`ic_refresh` Path=/api、`ic_media` Path=/api/v1/media）、me/canvases/assets/models/credits/plans/orders/generations/community/activity 全部 200、查他人视频任务 404、非管理员访问 `/api/admin/*` 403、未登录媒体 401。浏览器逐页回归仍待做。
 - **纯结构重构**：`server/internal/handler` 已拆分为 account/canvas/ai/billing/admin 五域包 + httpx/testutil 共享件，无行为变化；落地规则已写入 AGENTS.md「Server 结构规范」。
 - **部署注意**：仓库内 `nginx.conf` 的 SSE/媒体 location 已同步为 `/api/v1/ai/`、`/api/v1/media/`；sim 环境主站域的 `/api` 反代在仓库外的 nginx 配置（`sub2api-http.conf`）里，其中若有按 `/api/ai/` 前缀做的 SSE 特殊处理（proxy_buffering / gzip 豁免），需同步改为 `/api/v1/ai/`，否则对话流式输出会被缓冲。
 
@@ -73,7 +109,7 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 - 375px 手机宽度下五页布局不破、无横向溢出。
 - 内容更新流程演练：改 `src/data/site.ts`（如新增一张作品）→ `npm run build` → `out/` 生效。
 - 上线前替换占位资源（清单见 `main-site/README.md`）：Hero 视频、picsum 占位图、og.png、社媒与下载链接。
-- 官网已部署服务器：产物在 `/var/www/youc.online`，nginx 站点 `youc.online` / `www.youc.online`；DNS A 记录（@ 与 www）已指向服务器，证书已签发（2026-12-18 到期，certbot 自动续期），80→443 跳转生效，五页 + sitemap + robots 全路径 HTTPS 200——待浏览器正式访问验收。
+- 官网已部署服务器：产物在 `/var/www/youc.online`，nginx 站点 `youc.online` / `www.youc.online`；DNS A 记录（@ 与 www）已指向服务器，证书已签发（2026-12-18 到期，certbot 自动续期），80→443 跳转生效，五页 + sitemap + robots 全路径 HTTPS 200——待浏览器正式访问验收。2026-09-19 已复核五页跟随斜杠 301 后全部 200，剩余浏览器视觉验收。浏览器实测（375px 与桌面）：五页内容渲染完整、图片 0 加载失败；`/works` `/films` `/templates` `/blog` 无横向溢出，**首页在 375px 下 documentElement 溢出约 6px（疑似跑马灯轨道未裁剪），待修复确认**；BILIBILI 与小红书两个页脚外链仍是 `#` 占位。
 
 ## 多产品后台与模型能力分区（本版本新增）
 
@@ -101,6 +137,7 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 - 强制改密闭环：管理员重置 → 登录置位 → 业务 403 `PASSWORD_CHANGE_REQUIRED` → 改密 → 业务恢复，旧密码失效。
 - 数据导出：`GET /api/me/export` 返回 200 与 `youc-export.json` 附件，含 profile/credits/orders/generations/canvases。
 - 顺手修复并验收：`/assets` 直开被应用内 nginx 目录重定向打到内部端口 3000 的问题（`nginx.conf` try_files 去掉 `$uri/`）。
+- **定时备份（2026-09-19 落地）**：服务器 root crontab 每天04:00 执行 `scripts/backup.sh --yes`（库 + 媒体 + env 三件套 → `/opt/backups/infinite-canvas-test/`，日志 `cron.log`）；实跑验证 dump 完整（36 张表），脚本补 `--no-tablespaces` 解决低权限账号的 PROCESS privilege 报错。验收方式：次日在服务器查看 `/opt/backups/infinite-canvas-test/` 新增目录与 `cron.log`。
 
 **仍待真环境验收**（依赖真实渠道/邮件/sidecar/商户配置）：真实生成扣费链路（自动化测试已覆盖）、视频审核链路（测试环境未开 `MODERATION_ENABLED`）、真实邮件投递（当前 `MAIL_DRIVER=log`）、易支付端到端（未配置商户）。
 

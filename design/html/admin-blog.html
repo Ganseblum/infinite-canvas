@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>无限画布 · 博客管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<script>
+  if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  .btn-primary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-stone-900 px-4 text-sm font-medium text-white transition hover:bg-stone-900/85 active:bg-stone-900/75 disabled:pointer-events-none disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-100/85; }
+  .btn-secondary { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 px-4 text-sm font-medium text-stone-700 transition hover:bg-black/[0.08] active:bg-black/[0.14] dark:border-stone-700 dark:text-stone-300 dark:hover:bg-white/[0.12]; }
+  .btn-danger { @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 text-sm font-medium text-red-600 transition hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-950/70; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .icon-btn { @apply inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .card { @apply rounded-xl border border-stone-200 dark:border-stone-800; }
+  .side-link { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white; }
+  .side-link.active { @apply bg-black/[0.06] font-medium text-stone-950 dark:bg-white/[0.12] dark:text-stone-50; }
+  .side-group { @apply mb-1 px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500; }
+  .chip { @apply inline-flex h-6 items-center rounded-md border border-stone-200 px-1.5 text-xs leading-none text-stone-500 dark:border-stone-700 dark:text-stone-400; }
+  .chip-green { @apply inline-flex h-6 items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 text-xs leading-none text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400; }
+  .chip-orange { @apply inline-flex h-6 items-center rounded-md border border-orange-200 bg-orange-50 px-1.5 text-xs leading-none text-orange-600 dark:border-orange-900/60 dark:bg-orange-950/40 dark:text-orange-400; }
+  .chip-red { @apply inline-flex h-6 items-center rounded-md border border-red-200 bg-red-50 px-1.5 text-xs leading-none text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400; }
+  .th { @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500; }
+  .td { @apply px-4 py-3 text-sm; }
+  .filter-tag { @apply cursor-pointer rounded-md border border-transparent px-2.5 py-1.5 text-sm leading-none text-stone-500 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/10; }
+  .filter-tag.active { @apply bg-stone-900 font-semibold text-white dark:bg-stone-100 dark:text-stone-900; }
+  .input { @apply h-9 w-full rounded-lg border border-stone-200 bg-white px-3 text-sm outline-none transition focus:border-stone-400 dark:border-stone-700 dark:bg-stone-900 dark:focus:border-stone-500; }
+  .label { @apply mb-1.5 block text-xs font-medium text-stone-500 dark:text-stone-400; }
+  /* 编辑器预览（深夜排字房文章页缩影） */
+  .pv { background:#0b0b0d; color:#f2f2ef; }
+  .pv h2 { font-family:'Noto Serif SC',serif; font-size:15px; font-weight:700; margin:1.4em 0 .6em; padding-bottom:8px; border-bottom:1px solid rgba(242,242,239,.14); }
+  .pv p { font-family:'Noto Serif SC',serif; font-size:12.5px; line-height:2; margin:0 0 1.1em; color:rgba(242,242,239,.86); }
+  .pv code { font-family:ui-monospace,monospace; font-size:11px; background:rgba(242,242,239,.08); border:1px solid rgba(242,242,239,.14); padding:1px 5px; color:#ff7847; }
+  .pv pre { background:#191712; border:1px solid rgba(242,242,239,.14); border-radius:8px; padding:12px 14px; margin:1.1em 0; overflow-x:auto; }
+  .pv pre code { background:none; border:none; color:#d9e2dd; line-height:1.8; }
+  .pv blockquote { margin:1.1em 0; padding-left:14px; border-left:3px solid #ff4d00; font-size:12.5px; line-height:2; color:rgba(242,242,239,.6); }
+  .pv table { width:100%; border-collapse:collapse; font-size:11.5px; margin:1.1em 0; }
+  .pv th { text-align:left; font-size:10px; letter-spacing:.1em; color:rgba(242,242,239,.55); border-bottom:2px solid #f2f2ef; padding:6px 8px; }
+  .pv td { border-bottom:1px solid rgba(242,242,239,.14); padding:6px 8px; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+
+<div class="flex h-dvh overflow-hidden">
+  <!-- 左侧导航（同 admin.html，内容组新增「博客管理」） -->
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex dark:border-stone-800 dark:bg-[#1c1917]">
+    <a href="admin.html" class="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 px-5 text-sm font-semibold tracking-tight dark:border-stone-800">
+      <span class="size-5 rounded bg-current"></span>
+      <span class="text-base font-medium">管理后台</span>
+    </a>
+    <nav class="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div class="side-group">运营</div>
+      <a href="admin.html" class="side-link"><i data-lucide="layout-dashboard" class="size-4"></i>总览</a>
+      <a href="admin-users.html" class="side-link"><i data-lucide="users" class="size-4"></i>用户管理</a>
+      <a href="admin-billing.html" class="side-link"><i data-lucide="credit-card" class="size-4"></i>订单与收入</a>
+      <div class="side-group">内容</div>
+      <a href="admin-content.html" class="side-link"><i data-lucide="library" class="size-4"></i>提示词与社区</a>
+      <a href="admin-blog.html" class="side-link active"><i data-lucide="notebook-pen" class="size-4"></i>博客管理</a>
+      <a href="admin-docs-mgr.html" class="side-link"><i data-lucide="file-text" class="size-4"></i>文档管理</a>
+      <div class="side-group">服务端</div>
+      <a href="admin-models.html" class="side-link"><i data-lucide="boxes" class="size-4"></i>模型与渠道</a>
+      <a href="admin-system.html" class="side-link"><i data-lucide="settings-2" class="size-4"></i>系统设置</a>
+    </nav>
+    <div class="shrink-0 border-t border-stone-200 p-3 dark:border-stone-800">
+      <a href="home.html" class="side-link"><i data-lucide="arrow-left" class="size-4"></i>返回前台</a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 dark:border-stone-800 dark:bg-[#1c1917]/90">
+      <div class="flex items-center gap-3">
+        <button class="icon-btn md:hidden" onclick="toggleDrawer(true)"><i data-lucide="menu" class="size-5"></i></button>
+        <h1 class="text-lg font-semibold">博客管理</h1>
+        <span class="chip">blog.read</span><span class="chip">blog.write</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <a href="blog-draft-pressroom.html" target="_blank" class="btn-secondary btn-sm"><i data-lucide="external-link" class="size-3.5"></i>看前台效果</a>
+        <button class="icon-btn" onclick="toggleTheme()"><i data-lucide="sun" class="size-4 hidden dark:block"></i><i data-lucide="moon" class="size-4 dark:hidden"></i></button>
+        <img src="https://i.pravatar.cc/64?img=60" alt="" class="size-7 rounded-full object-cover" />
+      </div>
+    </header>
+
+    <!-- ================= 界面一：文章列表 ================= -->
+    <main id="screen-list" class="min-h-0 flex-1 overflow-y-auto">
+      <div class="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-1">
+            <button class="filter-tag active" onclick="pick(this)">全部 43</button>
+            <button class="filter-tag" onclick="pick(this)">已发布 39</button>
+            <button class="filter-tag" onclick="pick(this)">草稿 4</button>
+            <span class="mx-2 h-5 w-px bg-stone-200 dark:bg-stone-700"></span>
+            <button class="filter-tag" onclick="pick(this)">AI 工作流</button>
+            <button class="filter-tag" onclick="pick(this)">独立开发</button>
+            <button class="filter-tag" onclick="pick(this)">模板配色</button>
+            <button class="filter-tag" onclick="pick(this)">创作方法</button>
+            <button class="filter-tag" onclick="pick(this)">碎念</button>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="relative">
+              <i data-lucide="search" class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-stone-400"></i>
+              <input class="input !w-56 !pl-8" placeholder="搜标题 / slug" />
+            </div>
+            <button class="btn-primary" onclick="showScreen('editor')"><i data-lucide="plus" class="size-4"></i>新建文章</button>
+          </div>
+        </div>
+
+        <div class="card overflow-hidden">
+          <table class="w-full">
+            <thead class="border-b border-stone-200 dark:border-stone-800">
+              <tr><th class="th">标题 / slug</th><th class="th">栏目</th><th class="th">期号</th><th class="th">状态</th><th class="th">字数</th><th class="th">更新时间</th><th class="th text-right">操作</th></tr>
+            </thead>
+            <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+              <tr class="transition hover:bg-black/[0.02] dark:hover:bg-white/[0.03]">
+                <td class="td"><p class="font-medium">把画布搬进浏览器之后</p><p class="text-xs text-stone-400">canvas-in-browser · 2026-08-30 发布</p></td>
+                <td class="td"><span class="chip-orange">AI 工作流</span></td>
+                <td class="td text-stone-500">VOL.014</td>
+                <td class="td"><span class="chip-green">已发布</span></td>
+                <td class="td text-stone-500">4,288</td>
+                <td class="td text-stone-500">2026-08-30 22:41</td>
+                <td class="td">
+                  <div class="flex justify-end gap-1">
+                    <button class="icon-btn" title="编辑" onclick="showScreen('editor')"><i data-lucide="pencil" class="size-4"></i></button>
+                    <button class="icon-btn" title="看前台" ><i data-lucide="eye" class="size-4"></i></button>
+                    <button class="icon-btn text-red-500 dark:text-red-400" title="删除" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button>
+                  </div>
+                </td>
+              </tr>
+              <tr class="transition hover:bg-black/[0.02] dark:hover:bg-white/[0.03]">
+                <td class="td"><p class="font-medium">AI 插画的工作流重组</p><p class="text-xs text-stone-400">ai-illustration-workflow · 2026-07-14 发布</p></td>
+                <td class="td"><span class="chip-orange">AI 工作流</span></td>
+                <td class="td text-stone-500">VOL.013</td>
+                <td class="td"><span class="chip-green">已发布</span></td>
+                <td class="td text-stone-500">3,102</td>
+                <td class="td text-stone-500">2026-07-14 21:03</td>
+                <td class="td"><div class="flex justify-end gap-1"><button class="icon-btn" title="编辑" onclick="showScreen('editor')"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn" title="看前台"><i data-lucide="eye" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" title="删除" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td>
+              </tr>
+              <tr class="transition hover:bg-black/[0.02] dark:hover:bg-white/[0.03]">
+                <td class="td"><p class="font-medium">模板是怎么被做出来的</p><p class="text-xs text-stone-400">how-templates-are-made · 2026-06-02 发布</p></td>
+                <td class="td"><span class="chip">模板配色</span></td>
+                <td class="td text-stone-500">VOL.012</td>
+                <td class="td"><span class="chip-green">已发布</span></td>
+                <td class="td text-stone-500">2,877</td>
+                <td class="td text-stone-500">2026-06-02 20:15</td>
+                <td class="td"><div class="flex justify-end gap-1"><button class="icon-btn" title="编辑" onclick="showScreen('editor')"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn" title="看前台"><i data-lucide="eye" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" title="删除" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td>
+              </tr>
+              <tr class="bg-orange-50/40 dark:bg-orange-950/10">
+                <td class="td"><p class="font-medium">视频短片的节奏笔记</p><p class="text-xs text-stone-400">film-rhythm-notes · 未发布</p></td>
+                <td class="td"><span class="chip">创作方法</span></td>
+                <td class="td text-stone-500">VOL.015</td>
+                <td class="td"><span class="chip">草稿</span></td>
+                <td class="td text-stone-500">1,936</td>
+                <td class="td text-stone-500">2026-09-12 23:58</td>
+                <td class="td"><div class="flex justify-end gap-1"><button class="icon-btn" title="编辑" onclick="showScreen('editor')"><i data-lucide="pencil" class="size-4"></i></button><button class="btn-secondary btn-sm">发布</button><button class="icon-btn text-red-500 dark:text-red-400" title="删除" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td>
+              </tr>
+              <tr class="transition hover:bg-black/[0.02] dark:hover:bg-white/[0.03]">
+                <td class="td"><p class="font-medium">个人站的第二次重建</p><p class="text-xs text-stone-400">site-rebuild-2 · 2026-04-19 发布</p></td>
+                <td class="td"><span class="chip">独立开发</span></td>
+                <td class="td text-stone-500">VOL.011</td>
+                <td class="td"><span class="chip-green">已发布</span></td>
+                <td class="td text-stone-500">2,540</td>
+                <td class="td text-stone-500">2026-04-19 19:22</td>
+                <td class="td"><div class="flex justify-end gap-1"><button class="icon-btn" title="编辑" onclick="showScreen('editor')"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn" title="看前台"><i data-lucide="eye" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" title="删除" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="flex items-center justify-between border-t border-stone-200 px-4 py-3 text-xs text-stone-500 dark:border-stone-800">
+            <span>共 43 篇 · 每页 20 篇</span>
+            <div class="flex gap-1"><button class="btn-secondary btn-sm" disabled>上一页</button><button class="btn-secondary btn-sm">下一页</button></div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ================= 界面二：文章编辑器 ================= -->
+    <main id="screen-editor" class="hidden min-h-0 flex-1 overflow-y-auto">
+      <div class="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <button class="icon-btn" onclick="showScreen('list')" title="返回列表"><i data-lucide="arrow-left" class="size-4"></i></button>
+            <h2 class="text-base font-semibold">编辑文章 · VOL.015</h2>
+            <span class="chip">草稿</span>
+            <span class="chip">自动保存于 23:58</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="btn-secondary" onclick="showScreen('list')">取消</button>
+            <button class="btn-secondary"><i data-lucide="save" class="size-4"></i>存草稿</button>
+            <button class="btn-primary"><i data-lucide="send" class="size-4"></i>发布</button>
+          </div>
+        </div>
+
+        <div class="grid gap-4 lg:grid-cols-[340px_1fr]">
+          <!-- 元信息 -->
+          <div class="card space-y-4 self-start p-4">
+            <div>
+              <label class="label">标题</label>
+              <input class="input" value="视频短片的节奏笔记" />
+            </div>
+            <div>
+              <label class="label">slug（留空按标题自动生成）</label>
+              <input class="input" value="film-rhythm-notes" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">栏目</label>
+                <select class="input"><option>AI 工作流</option><option>独立开发</option><option>模板配色</option><option selected>创作方法</option><option>碎念</option></select>
+              </div>
+              <div>
+                <label class="label">期号 VOL.</label>
+                <input class="input" value="015" />
+              </div>
+            </div>
+            <div>
+              <label class="label">摘要（列表页展示，留空截取正文）</label>
+              <textarea class="input h-20 !h-20 py-2" >卡点不是万能的：先定呼吸感，再谈转场。</textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">封面 seed（留空无封面）</label>
+                <input class="input" value="hang-blog-3" />
+              </div>
+              <div>
+                <label class="label">封面为 AI 生成</label>
+                <label class="flex h-9 items-center gap-2 text-sm"><input type="checkbox" checked class="size-4" />带 AI 角标</label>
+              </div>
+            </div>
+            <div>
+              <label class="label">标签（逗号分隔）</label>
+              <input class="input" value="创作方法, 节奏, 剪辑" />
+            </div>
+            <p class="text-xs text-stone-400">字数 1,936 · 预计阅读 6 分钟（保存时自动统计）</p>
+          </div>
+          <!-- Markdown 编辑 + 预览 -->
+          <div class="card min-h-[480px] overflow-hidden">
+            <div class="flex items-center justify-between border-b border-stone-200 px-4 py-2.5 dark:border-stone-800">
+              <span class="text-sm font-medium">正文 Markdown</span>
+              <div class="flex items-center gap-1 text-xs text-stone-400">
+                <span class="chip">GFM</span><span class="chip">脚注</span><span class="chip">&gt; [!TIP] Callout</span><span class="chip">~~删~~ 不解析</span>
+              </div>
+            </div>
+            <div class="grid min-h-[440px] lg:grid-cols-2 lg:divide-x lg:divide-stone-200 dark:lg:divide-stone-800">
+              <textarea class="h-full min-h-[440px] w-full resize-none bg-transparent p-4 font-mono text-[13px] leading-7 outline-none" spellcheck="false">## 一、先定呼吸感
+
+卡点不是万能的。一支 90 秒短片被剪了 **11 版**之后，我把节奏拆成三张表：
+先定呼吸感，再谈转场。
+
+> 「观众原谅慢，但不原谅乱。」—— 剪辑笔记第 9 版
+
+> [!TIP]
+> 每个镜头先问它借了观众几秒钟，还得出利息再留下。
+
+## 二、三张表
+
+| 表 | 管什么 | 粒度 |
+| --- | --- | --- |
+| 呼吸表 | 长短镜头交替 | 段落 |
+| 重音表 | 信息峰值 | 镜头 |
+| 停顿表 | 留白与呼吸 | 帧区间 |
+
+- [x] 呼吸表定稿
+- [x] 重音表对齐音乐
+- [ ] 停顿表逐帧复核
+
+```ts
+// 按缩放级别决定加载哪一档
+const src = scale < 0.4 ? thumb768 : original;
+```
+
+脚注也支持：三段式工作流[^1]。
+
+[^1]: 与《AI 插画的工作流重组》同一套。</textarea>
+              <div class="pv hidden overflow-y-auto p-5 lg:block" id="pv">
+                <h2>一、先定呼吸感</h2>
+                <p>卡点不是万能的。一支 90 秒短片被剪了 <b>11 版</b>之后，我把节奏拆成三张表：先定呼吸感，再谈转场。</p>
+                <blockquote>「观众原谅慢，但不原谅乱。」—— 剪辑笔记第 9 版</blockquote>
+                <p><code>&gt; [!TIP]</code> Callout 在前台渲染为橙色提示框</p>
+                <h2>二、三张表</h2>
+                <table><thead><tr><th>表</th><th>管什么</th><th>粒度</th></tr></thead><tbody><tr><td>呼吸表</td><td>长短镜头交替</td><td>段落</td></tr><tr><td>重音表</td><td>信息峰值</td><td>镜头</td></tr><tr><td>停顿表</td><td>留白与呼吸</td><td>帧区间</td></tr></tbody></table>
+                <p>任务列表渲染为 <code>[x]</code> 方勾；代码块服务端高亮（深夜配色）。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ================= 界面三：栏目管理 ================= -->
+    <main id="screen-topics" class="hidden min-h-0 flex-1 overflow-y-auto">
+      <div class="mx-auto max-w-4xl px-4 py-6 sm:px-6">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="text-base font-semibold">栏目管理</h2>
+          <button class="btn-primary"><i data-lucide="plus" class="size-4"></i>新增栏目</button>
+        </div>
+        <div class="card overflow-hidden">
+          <table class="w-full">
+            <thead class="border-b border-stone-200 dark:border-stone-800">
+              <tr><th class="th">名称</th><th class="th">slug</th><th class="th">英文名（前台展示）</th><th class="th">文章数</th><th class="th">排序</th><th class="th text-right">操作</th></tr>
+            </thead>
+            <tbody class="divide-y divide-stone-100 dark:divide-stone-800/60">
+              <tr><td class="td font-medium">AI 工作流</td><td class="td text-stone-500">ai-workflow</td><td class="td text-stone-500">AI WORKFLOW</td><td class="td text-stone-500">12</td><td class="td text-stone-500">1</td><td class="td"><div class="flex justify-end gap-1"><button class="icon-btn"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td></tr>
+              <tr><td class="td font-medium">独立开发</td><td class="td text-stone-500">building</td><td class="td text-stone-500">BUILD</td><td class="td text-stone-500">9</td><td class="td text-stone-500">2</td><td class="td"><div class="flex justify-end gap-1"><button class="icon-btn"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td></tr>
+              <tr><td class="td font-medium">模板配色</td><td class="td text-stone-500">templates</td><td class="td text-stone-500">TEMPLATE</td><td class="td text-stone-500">7</td><td class="td text-stone-500">3</td><td class="td"><div class="flex justify-end gap-1"><button class="icon-btn"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td></tr>
+              <tr><td class="td font-medium">创作方法</td><td class="td text-stone-500">method</td><td class="td text-stone-500">METHOD</td><td class="td text-stone-500">6</td><td class="td text-stone-500">4</td><td class="td"><div class="flex justify-end gap-1"><button class="icon-btn"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td></tr>
+              <tr><td class="td font-medium">碎念</td><td class="td text-stone-500">murmur</td><td class="td text-stone-500">MURMUR</td><td class="td text-stone-500">9</td><td class="td text-stone-500">5</td><td class="td"><div class="flex justify-end gap-1"><button class="icon-btn"><i data-lucide="pencil" class="size-4"></i></button><button class="icon-btn text-red-500 dark:text-red-400" onclick="openModal()"><i data-lucide="trash-2" class="size-4"></i></button></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="mt-3 text-xs text-stone-400">栏目被文章引用时不可删除（返回 409 并提示引用数）；删除为物理删除，仅限空栏目。</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 删除确认 -->
+<div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center">
+  <div class="absolute inset-0 bg-black/40" onclick="closeModal()"></div>
+  <div class="relative w-[min(92vw,420px)] rounded-xl border border-stone-200 bg-white p-5 dark:border-stone-700/60 dark:bg-[#1c1917]">
+    <div class="mb-2 flex items-center gap-2 text-red-600 dark:text-red-400"><i data-lucide="triangle-alert" class="size-5"></i><span class="font-semibold">确认删除</span></div>
+    <p class="text-sm text-stone-500 dark:text-stone-400">将永久删除《把画布搬进浏览器之后》，前台文章页与列表会立即消失（RSS 随下次刷新更新）。该操作不可撤销。</p>
+    <div class="mt-4 flex justify-end gap-2">
+      <button class="btn-secondary" onclick="closeModal()">取消</button>
+      <button class="btn-danger" onclick="closeModal()">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 移动端抽屉 -->
+<div id="drawer" class="fixed inset-0 z-50 hidden md:hidden">
+  <div class="absolute inset-0 bg-black/40" onclick="toggleDrawer(false)"></div>
+  <div class="absolute inset-y-0 left-0 w-64 bg-white p-4 dark:bg-[#1c1917]">
+    <div class="mb-4 flex items-center justify-between"><span class="font-medium">管理后台</span><button class="icon-btn" onclick="toggleDrawer(false)"><i data-lucide="x" class="size-5"></i></button></div>
+    <nav class="flex flex-col gap-1">
+      <a href="admin.html" class="side-link">总览</a><a href="admin-users.html" class="side-link">用户管理</a><a href="admin-billing.html" class="side-link">订单与收入</a><a href="admin-content.html" class="side-link">提示词与社区</a><a href="admin-blog.html" class="side-link active">博客管理</a><a href="admin-docs-mgr.html" class="side-link">文档管理</a><a href="admin-models.html" class="side-link">模型与渠道</a><a href="admin-system.html" class="side-link">系统设置</a>
+    </nav>
+  </div>
+</div>
+
+<script>
+  function toggleTheme() {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }
+  function toggleDrawer(open) { document.getElementById('drawer').classList.toggle('hidden', !open); }
+  function openModal() { const m = document.getElementById('modal'); m.classList.remove('hidden'); m.classList.add('flex'); }
+  function closeModal() { const m = document.getElementById('modal'); m.classList.add('hidden'); m.classList.remove('flex'); }
+  function showScreen(name) {
+    document.getElementById('screen-list').classList.toggle('hidden', name !== 'list');
+    document.getElementById('screen-editor').classList.toggle('hidden', name !== 'editor');
+    document.getElementById('screen-topics').classList.toggle('hidden', name !== 'topics');
+  }
+  function pick(el) {
+    el.parentElement.querySelectorAll('.filter-tag').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  lucide.createIcons();
+</script>
+</body>
+</html>

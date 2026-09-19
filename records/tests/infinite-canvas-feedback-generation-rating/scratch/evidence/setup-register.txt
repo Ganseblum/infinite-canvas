@@ -1,0 +1,5 @@
+register exec-api-0919@test.local -> 503 : {"error":{"code":"REGISTRATION_DISABLED","message":"注册暂时关闭"}}
+register exec-b-0919@test.local -> 503 : {"error":{"code":"REGISTRATION_DISABLED","message":"注册暂时关闭"}}
+register exec-gen-0919@test.local -> 503 : {"error":{"code":"REGISTRATION_DISABLED","message":"注册暂时关闭"}}
+register exec-bd-0919@test.local -> 503 : {"error":{"code":"REGISTRATION_DISABLED","message":"注册暂时关闭"}}
+register exec-rl-0919@test.local -> 503 : {"error":{"code":"REGISTRATION_DISABLED","message":"注册暂时关闭"}}

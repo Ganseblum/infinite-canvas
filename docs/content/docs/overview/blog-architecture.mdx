@@ -1,0 +1,179 @@
+---
+title: 博客站架构（深夜排字房）
+description: blog.youc.online 博客站的页面清单、渲染方案、数据模型、API、Markdown 管线、部署拓扑与实施分期
+---
+
+> 设计稿：`design/html/blog-draft-pressroom.html`（全页面套件：首页 / 文章 / 栏目 / 关于 / 404，右下角切换器预览）、亮色变体 `blog-draft-pressroom-light.html`、后台管理稿 `design/html/admin-blog.html`、四风格对比 `blog-draft-index.html`。风格「深夜排字房」已选定，与主站「暗色放映厅」同一品牌基因。
+> 开源选型（goldmark / md-editor-rt / 评论系统对比）、互动功能（评论 / 点赞 / 收藏）与 SEO 的完整规划见 [博客站实施计划](/docs/development/blog-plan)。
+
+## 一、定位与总体结论
+
+- **博客是独立站点** `blog.youc.online`，与主站 `youc.online` 同品牌、同服务器；主站 `/blog/` 页在开张后改为导流入口。
+- **内容存 MySQL，由现有管理后台 CRUD**（新增 / 编辑 / 发布 / 下架 / 删除），文章以 Markdown 起稿。
+- **服务端（Go）新增 `internal/blog` 产品域**，自包含 handler / service / model，按 canvas 包模板；路由表由域包 `Mount*Routes` 维护。
+- **前台为独立 Next.js 应用**（App Router，ISR + 按需再验证），内容与互动由 Go 提供；Markdown 渲染在 Go 侧完成，Next 只做展示层。
+
+## 二、页面清单
+
+| 页面 | 路由 | 设计稿视图 | 说明 |
+| --- | --- | --- | --- |
+| 首页（手记列表） | `/` 与 `/page/{n}` | view-home | 头条 + 栏目筛选 + 混合卡片网格 + 短记 + 栏目索引；分页在此页 |
+| 文章详情页 | `/posts/{slug}` | view-post | Markdown 全组件渲染 + 侧边目录 + 上下篇 + 标签 |
+| 栏目页 | `/topics/{slug}`（列表 `/topics`） | view-topics | 栏目头 + 该栏目文章分页 + 其他栏目 |
+| 关于页 | `/about` | view-about | 关于文案 + 排字房铭牌（colophon）|
+| 404 | 兜底 | view-404 | 描边大字 404 |
+| RSS | `/feed.xml` | — | Next 生成（数据来自内容 API），最近 20 篇已发布文章 |
+| Sitemap | `/sitemap.xml`、`/robots.txt` | — | Next 生成（`sitemap.ts` / `robots.ts`） |
+| 静态资源 | `/_next/static`、`/assets/*` | — | 字体 / CSS / 封面占位图，长缓存 + 文件名指纹 |
+
+后台三界面（文章列表 / 编辑器 / 栏目管理）见 `admin-blog.html`，落在现有 React 管理后台。
+
+## 三、渲染方案（已定：Next 前台 + Go 后端）
+
+前台为**独立 Next.js 应用**（目录 `blog/`，App Router + TypeScript），后端沿用 Go 产品域；主站 `main-site` 保持静态导出不动，二者互不影响。
+
+### 3.1 渲染与再验证（后台即改即生效的关键）
+
+- 页面采用 **ISR**：文章页、首页、栏目页均带缓存标签（`posts`、`post:{slug}`、`topic:{slug}`），Next 服务端经内网拉取 Go 内容 API 渲染并缓存。
+- 管理后台发布 / 下架 / 删除 / 栏目变更后，Go 调 `POST blog-web /api/revalidate`（共享密钥 `REVALIDATE_SECRET`）按需失效对应标签，前台秒级更新。
+- 兜底：回调失败时缓存按固定窗口自动过期（建议 300 秒，**待确认**），不会出现「改了永远不生效」。
+
+### 3.2 Markdown 渲染契约（渲染在 Go，展示在 Next）
+
+- goldmark + Chroma 在 Go 侧把 `content_md` 渲染为 `content_html`（深夜配色、Alert Callout、脚注、锚点）并抽取 `toc`，随内容 API 一起返回；Next 只做展示层，无第二套渲染逻辑。
+- admin 编辑器（md-editor-rt）双轨预览：编辑时的即时预览用组件内置；**发布前预览走 `POST /api/admin/blog/preview`**（同一条 goldmark 管线），所见即前台所得。
+- 安全：Go 侧默认转义 raw HTML，Next 注入 `content_html` 时内容受信面仅限自家渲染器。
+
+### 3.3 同域代理与会话
+
+- 浏览器互动请求（评论 / 点赞 / 收藏，P5）走 **Next rewrite `/api/v1/blog/*` → 内网 Go**，请求同源，登录态 Set-Cookie 自然落在 `blog.youc.online`（host-only），无跨站问题；内容读 API 仅 Next 服务端内网调用，不经公网。
+- 登录：blog 顶栏「登录」跳转现有登录页，成功后仅回跳 `blog.youc.online` 前缀（回跳地址白名单校验）。
+
+### 3.4 为什么不并入 main-site
+
+main-site 是 `output: "export"` 静态导出（服务器零 Node 运行时是其部署哲学）；博客内容 DB 驱动、需要 Node 运行时，并入就得整体放弃静态导出。独立 `blog/` 应用让两者各取所长，品牌 CSS 独立移植设计稿（不引 Tailwind，减少转换损耗）。
+
+## 四、数据模型（MySQL）
+
+项目未上线，不做旧数据兼容；删除均为物理删除。
+
+```sql
+-- 栏目（数量级：个位数，全量缓存）
+CREATE TABLE blog_topics (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  slug        VARCHAR(64)  NOT NULL UNIQUE,          -- ai-workflow
+  name        VARCHAR(64)  NOT NULL,                 -- AI 工作流
+  en_name     VARCHAR(64)  NOT NULL,                 -- AI WORKFLOW（前台展示）
+  description VARCHAR(255) NOT NULL DEFAULT '',
+  sort        INT          NOT NULL DEFAULT 0,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 文章
+CREATE TABLE blog_posts (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  slug          VARCHAR(128) NOT NULL UNIQUE,          -- 前台 URL；唯一性冲突走 errs 判断
+  title         VARCHAR(255) NOT NULL,
+  summary       VARCHAR(500) NOT NULL DEFAULT '',      -- 列表/SEO 摘要，空则服务端截取正文
+  topic_id      INT UNSIGNED NOT NULL,
+  vol_no        INT UNSIGNED NOT NULL DEFAULT 0,       -- 期号 VOL.014
+  cover_seed    VARCHAR(64)  NOT NULL DEFAULT '',      -- 封面占位 seed，空 = 无封面纯文字卡
+  is_aigc_cover TINYINT(1)   NOT NULL DEFAULT 0,       -- 封面 AI 角标（合规要求）
+  is_pinned     TINYINT(1)   NOT NULL DEFAULT 0,       -- 置顶（首页/栏目优先展示）
+  origin_url    VARCHAR(500) NOT NULL DEFAULT '',      -- 转载原文链接，空 = 原创
+  tags          VARCHAR(255) NOT NULL DEFAULT '',      -- 逗号分隔，保持单表最少行数
+  content_md    MEDIUMTEXT   NOT NULL,                 -- Markdown 正文（无 frontmatter，元数据全在列）
+  word_count    INT UNSIGNED NOT NULL DEFAULT 0,       -- 保存时服务端统计
+  status        ENUM('draft','published') NOT NULL DEFAULT 'draft',
+  published_at  DATETIME     NULL,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_blog_topic FOREIGN KEY (topic_id) REFERENCES blog_topics(id)
+);
+CREATE INDEX idx_posts_pub ON blog_posts (status, published_at DESC);
+CREATE INDEX idx_posts_topic ON blog_posts (topic_id, status, published_at DESC);
+```
+
+约定：`word_count` 与阅读时长在保存时由服务端统计（剥除 Markdown 语法，CJK 按字、拉丁按词）；`published_at` 仅在 draft→published 时写入，下架不清空（重新上架保留首发时间）；slug 全小写连字符，服务端校验 `^[a-z0-9]+(-[a-z0-9]+)*$`；列表排序置顶（`is_pinned`）优先于发布时间；`origin_url` 非空时前台显示「转载」标注并链向原文。互动相关表（`blog_comments` / `blog_reactions` / `blog_bookmarks`）与冗余计数列见实施计划 3.1。
+
+## 五、API 与权限
+
+### 管理面 `/api/admin/blog/*`（JSON，进 OpenAPI）
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /api/admin/blog/posts?status=&topic=&page=` | 分页列表（标题/栏目/期号/状态/字数/时间） |
+| `GET /api/admin/blog/posts/{id}` | 详情（含 `content_md`） |
+| `POST /api/admin/blog/posts` | 新建（默认草稿） |
+| `PUT /api/admin/blog/posts/{id}` | 更新（存草稿与发布共用，按 `status` 区分） |
+| `POST /api/admin/blog/posts/{id}/publish` / `unpublish` | 发布 / 下架 |
+| `DELETE /api/admin/blog/posts/{id}` | 删除（物理删除，需二次确认） |
+| `GET/POST/PUT/DELETE /api/admin/blog/topics` | 栏目 CRUD；被文章引用的栏目删除返回 409 并带引用数 |
+| `POST /api/admin/blog/preview` | Markdown → HTML 预览（与前台同源 goldmark 管线） |
+
+权限点：`blog.read`、`blog.write`，随现有权限体系初始化；写操作全部要求 `blog.write`。slug 唯一冲突统一用 `errs` 判断返回 409；删除与发布写审计日志（沿用 admin 日志口径）。
+
+### 公共面
+
+- HTML 页面路由（由 Next 承载）：`/`、`/page/{n}`、`/posts/{slug}`、`/topics`、`/topics/{slug}`、`/about`、404 兜底。文章页渲染 `status='published'` 的文章，草稿访问一律 404（不预告存在性）；`/feed.xml`、`/sitemap.xml`、`/robots.txt` 由 Next 生成（数据来自内容 API）。
+- 内容读 API（`/api/v1/blog/*`，供 Next 服务端内网拉取，亦可作未来消费方）：
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /api/v1/blog/posts?page=&topic=` | 已发布列表（分页元数据 + 列表字段） |
+| `GET /api/v1/blog/posts/{slug}` | 详情：`content_html`（goldmark 渲染）、`toc`、字数 / 时长、上下篇 slug |
+| `GET /api/v1/blog/topics` | 栏目列表（含文章计数） |
+
+- 互动 API（评论 / 点赞 / 收藏）在 P5 加入 `/api/v1/blog/*`（见实施计划 3.4）；管理面另有 `POST /api/admin/blog/preview` 预览端点，与前台同源渲染。
+
+## 六、Markdown 渲染管线（服务端）
+
+选型 **goldmark**（CommonMark 参考实现，Go 生态标准）：
+
+- 扩展：GFM（表格 / 任务列表 / 删除线 / 自动链接）、**Footnote**（脚注）、**Anchor**（标题锚点，供侧边目录）；
+- 代码高亮：**Chroma** 服务端高亮，配色对齐设计稿「深夜配色」（橙 / 蓝 / 绿 token 色 + `#191712` 底），代码块标题栏由 info string 的文件名渲染；
+- **Callout**：goldmark 内建 GFM Alert 扩展直接渲染 `> [!TIP]` / `> [!WARNING]`（v1.7+；旧版回退方案为自定义渲染钩子约几十行）；
+- 目录：渲染时收集 h2/h3 锚点生成右侧粘性 TOC；
+- 安全：goldmark 默认不透传 raw HTML（转义），链接协议白名单沿用渲染器默认，无存储型 XSS 面；
+- 一致性：设计稿文章页的全部组件样式（标题层级 / 引用 / Callout / 带文件名代码块 / 表格 / 任务列表 / 图注 / 脚注 / 标签）即本管线的视觉规格。
+
+## 七、部署拓扑与上线步骤
+
+```text
+youc.online（主站静态 out/，nginx 直托管）            ── 不变
+blog.youc.online ── nginx server block ──> blog-web（Next，ISR）
+                                            ├─ 页面渲染：内网拉 Go 内容 API，缓存标签按需失效
+                                            └─ /api/v1/blog/* 同域代理 ──> Go server:8080（内容 + 互动 + admin）
+Go 发布/下架/删除/栏目变更 → POST blog-web /api/revalidate（REVALIDATE_SECRET）
+admin（React 管理后台）                              ── 不变，新增「博客管理」页面
+MySQL（blog_topics / blog_posts 迁移）                ── docker compose 增加 blog-web 服务
+```
+
+上线顺序：
+
+1. DNS 增加 `blog` A 记录指向服务器；
+2. `certbot --expand -d blog.youc.online` 补证书；
+3. compose 新增 `blog-web` 服务（Next standalone 构建，内网访问 Go server），注入 `REVALIDATE_SECRET` 与内部 API 地址；
+4. nginx 新增 server block（80→443 跳转同主站）：页面与 `/api/v1/blog/*` 反代 blog-web，`/_next/static` 与 `/assets/*` 长缓存；
+5. 服务端镜像重建（api + blog-web 两个服务）；
+6. 主站 `/blog/`（FLIGHTLOG 占位页）改为导流：近期文章摘要 + 「去 blog.youc.online 阅读」。
+
+## 八、实施分期（对应 todo.mdx）
+
+| 阶段 | 内容 | 交付物 |
+| --- | --- | --- |
+| P1 服务端域 | `internal/blog`（model/service/handler）、两张表迁移、admin 路由挂载、路由条数测试、域内单测 | OpenAPI 增量、真实 MySQL 迁移验证 |
+| P2 管理后台 | 「博客管理」页面三界面（列表 / 编辑器 / 栏目）、api client、权限点接入、删除确认与空态 | 可用后台 CRUD |
+| P3 前台站点 | `blog/` 独立 Next 应用（App Router）：五页 + 设计稿 CSS 移植、ISR + 缓存标签、内容读 API 对接（`content_html` / `toc`）、RSS / sitemap / robots、分页、双主题（暗色默认，跟随系统 + 手动切换 + 防闪） | blog.youc.online 全站（测试环境） |
+| P4 上线 | compose 增加 blog-web 与 `REVALIDATE_SECRET`、DNS / 证书 / nginx server block、按需再验证联调、主站导流、pending-test 清单走查 | 正式环境发布 |
+| P5 互动 | 评论 / 点赞 / 收藏：三张互动表 + 冗余计数、`/api/v1/blog/*` 互动端点、评论列表 RSC + 互动 client 组件、审核接入与限流、我的收藏页 | 登录发评 → 隔离 → 放行端到端；幂等与 429（细则见实施计划第三、五节） |
+| P6 运营打磨（可选） | OG 分享图生成、归档页 / 全文搜索、阅读量统计 | 按需排期 |
+
+## 九、测试与验收要点
+
+- 新表必须在一台真实 MySQL 上跑迁移再交付（SQLite 测不出列长 / 保留字问题，已有两次前车之鉴）；
+- 域路由挂载进「路由条数测试」防止意外暴露；
+- 发布流端到端：新建草稿 → 编辑保存（字数/slug 校验）→ 发布（`published_at` 写入、前台可见、RSS 收录）→ 下架（前台 404、RSS 下一轮消失）→ 删除（列表消失）；
+- slug 冲突 409、非法 slug 422、未授权 403、草稿前台 404；
+- 404 页、空栏目页、无封面纯文字卡等空态逐一走查设计稿。

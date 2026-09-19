@@ -148,10 +148,32 @@ i18n.addResourceBundle(
         admin: {
             tabs: {
                 analytics: "Usage analytics",
+                feedback: "Feedback",
+                blog: "Blog",
                 membership: "Membership",
                 sso: "SSO clients",
                 // Capability shortcuts under the sidebar "Models" submenu.
                 modelCapabilities: { image: "Image models", video: "Video models", audio: "Audio models", text: "Text models" },
+            },
+            feedback: {
+                title: "Feedback tickets",
+                description: "Handle user feedback tickets and review generation like/dislike feedback.",
+                ticketsTab: "Tickets",
+                generationsTab: "Generation feedback",
+                filter: { all: "All", category: "Filter by category" },
+                statuses: { open: "Open", resolved: "Resolved", closed: "Closed" },
+                categories: { quality: "Generation quality", suggestion: "Feature suggestion", payment: "Billing", account: "Account", other: "Other" },
+                columns: { user: "User", category: "Category", content: "Content", status: "Status", replies: "Replies", labels: "Labels", note: "Note", generation: "Generation", updatedAt: "Updated" },
+                detailTitle: "Ticket details",
+                staffLabel: "Support",
+                userLabel: "User",
+                replyPlaceholder: "Reply to the user…",
+                sendReply: "Send reply",
+                markResolved: "Mark resolved",
+                markClosed: "Close ticket",
+                reopen: "Reopen",
+                like: "Like",
+                dislike: "Dislike",
             },
             membership: {
                 loadFailed: "Failed to load subscriptions",
