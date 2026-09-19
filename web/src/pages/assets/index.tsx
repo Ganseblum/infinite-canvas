@@ -7,10 +7,12 @@ import { useTranslation } from "react-i18next";
 
 import { useAssetSearch } from "@/hooks/use-asset-library";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { useMediaDownload } from "@/hooks/use-media-download";
 import { assetCoverUrl, assetHeight, assetMimeType, assetNote, assetSource, assetText, assetUrl, assetWidth } from "@/lib/asset";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { peekRemixSource, setRemixSource as persistRemixSource, type RemixSource } from "@/lib/remix-source";
+import { deleteImagePreview } from "@/services/image-preview";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
-import { fetchMediaDownload, requestDownload } from "@/services/api/media";
 import { createAsset, deleteAsset, patchAsset } from "@/services/api/assets";
 import { publishCommunityWork, getPublicSettings } from "@/services/api/community";
 import type { AssetItem, AssetKind } from "@/services/data/types";
@@ -37,10 +39,12 @@ export default function AssetsPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const copyText = useCopyText();
+    const { download: downloadMedia, isDownloading } = useMediaDownload();
     const queryClient = useQueryClient();
     const [form] = Form.useForm<AssetFormValues>();
     const [publishForm] = Form.useForm<{ title: string; description: string; tags: string }>();
     const [publishAsset, setPublishAsset] = useState<AssetItem | null>(null);
+    const [remixSource, setRemixSourceState] = useState<RemixSource | null>(null);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const assetInputRef = useRef<HTMLInputElement>(null);
@@ -153,19 +157,16 @@ export default function AssetsPage() {
 
     const downloadAsset = async (asset: AssetItem) => {
         if (asset.kind === "text") return;
+        const ext = assetMimeType(asset).split("/")[1]?.split("+")[0] || (asset.kind === "video" ? "mp4" : "png");
+        const filename = `${asset.title || "asset"}.${ext}`;
+        if (asset.storageKey) {
+            await downloadMedia({ key: asset.id, storageKey: asset.storageKey, filename });
+            return;
+        }
         try {
-            let blob: Blob;
-            if (asset.storageKey) {
-                // 先向服务端申请取件链接（按档位返回水印版或干净件），再凭链接取件。
-                const { url } = await requestDownload(asset.storageKey);
-                blob = await fetchMediaDownload(url);
-            } else {
-                blob = await (await fetch(assetUrl(asset))).blob();
-            }
-            const ext = assetMimeType(asset).split("/")[1]?.split("+")[0] || (asset.kind === "video" ? "mp4" : "png");
-            saveAs(blob, `${asset.title || "asset"}.${ext}`);
-        } catch {
-            message.error(t("assets.downloadFailed"));
+            saveAs(await (await fetch(assetUrl(asset))).blob(), filename);
+        } catch (error) {
+            message.error(getApiErrorMessage(error));
         }
     };
 
@@ -204,10 +205,13 @@ export default function AssetsPage() {
                 title: values.title,
                 description: values.description,
                 tags: values.tags,
+                sourceWorkId: remixSource?.workId,
             }),
         onSuccess: async () => {
             message.success(t("assets.publishSuccess"));
             setPublishAsset(null);
+            setRemixSourceState(null);
+            persistRemixSource(null);
             publishForm.resetFields();
             await queryClient.invalidateQueries({ queryKey: ["community"] });
         },
@@ -217,6 +221,8 @@ export default function AssetsPage() {
     const deleteMutation = useMutation({
         mutationFn: (id: string) => deleteAsset(id),
         onSuccess: async () => {
+            // 素材删除后同步清掉本地缩略图缓存。
+            void deleteImagePreview(deletingAsset?.storageKey);
             await refreshAssets();
             message.success(t("assets.deleted"));
             setDeletingAsset(null);
@@ -304,6 +310,7 @@ export default function AssetsPage() {
                             <AssetCard
                                 key={asset.id}
                                 asset={asset}
+                                downloading={isDownloading(asset.storageKey)}
                                 onOpen={() => setPreviewAsset(asset)}
                                 onEdit={() => openEdit(asset)}
                                 onCopy={copyAssetText}
@@ -312,6 +319,8 @@ export default function AssetsPage() {
                                 onPublish={() => {
                                     setPublishAsset(asset);
                                     publishForm.setFieldsValue({ title: asset.title, description: "", tags: (asset.tags || []).join(",") });
+                                    // 发布弹窗打开时读取复刻来源（工作台 ?remix= 写入），展示并随发布透传。
+                                    setRemixSourceState(peekRemixSource());
                                 }}
                             />
                         ))}
@@ -351,6 +360,16 @@ export default function AssetsPage() {
                     }}
                 >
                     <p className="mb-4 text-sm text-stone-500 dark:text-stone-400">{t("assets.publishHint")}</p>
+                    {remixSource ? (
+                        <div className="mb-4 flex items-center gap-2">
+                            <Tag color="geekblue" className="m-0">
+                                {t("assets.remixFrom", { title: remixSource.title || remixSource.workId })}
+                            </Tag>
+                            <Button size="small" type="text" onClick={() => setRemixSourceState(null)}>
+                                {t("common.cancel")}
+                            </Button>
+                        </div>
+                    ) : null}
                     <Form form={publishForm} layout="vertical">
                         <Form.Item name="title" label={t("assets.publishFields.title")} rules={[{ required: true, message: t("assets.publishFields.titleRequired") }]}>
                             <Input maxLength={200} />
@@ -473,7 +492,7 @@ export default function AssetsPage() {
                 />
             </Modal>
 
-            <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadAsset} />
+            <AssetDrawer asset={previewAsset} downloading={isDownloading(previewAsset?.storageKey)} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadAsset} />
 
             <input ref={assetInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importAssetZip(event.target.files?.[0])} />
 
@@ -495,6 +514,7 @@ export default function AssetsPage() {
 
 function AssetCard({
     asset,
+    downloading,
     onOpen,
     onEdit,
     onCopy,
@@ -503,6 +523,7 @@ function AssetCard({
     onPublish,
 }: {
     asset: AssetItem;
+    downloading: boolean;
     onOpen: () => void;
     onEdit: () => void;
     onCopy: (asset: AssetItem) => void;
@@ -568,7 +589,7 @@ function AssetCard({
                     </Button>
                 ) : null}
                 {asset.kind === "image" || asset.kind === "video" ? (
-                    <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(asset)}>
+                    <Button size="small" icon={<Download className="size-3.5" />} loading={downloading} onClick={() => onDownload(asset)}>
                         {t("common.download")}
                     </Button>
                 ) : null}
@@ -585,7 +606,7 @@ function AssetCard({
     );
 }
 
-function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: AssetItem | null; onClose: () => void; onCopy: (asset: AssetItem) => void; onDownload: (asset: AssetItem) => void }) {
+function AssetDrawer({ asset, downloading, onClose, onCopy, onDownload }: { asset: AssetItem | null; downloading: boolean; onClose: () => void; onCopy: (asset: AssetItem) => void; onDownload: (asset: AssetItem) => void }) {
     const { t } = useTranslation();
     const cover = asset ? assetCoverUrl(asset) : "";
     const note = asset ? assetNote(asset) : "";
@@ -636,7 +657,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: AssetItem 
                             </Button>
                         ) : null}
                         {asset.kind === "image" || asset.kind === "video" ? (
-                            <Button type="primary" icon={<Download className="size-4" />} onClick={() => onDownload(asset)}>
+                            <Button type="primary" icon={<Download className="size-4" />} loading={downloading} onClick={() => onDownload(asset)}>
                                 {asset.kind === "video" ? t("assets.downloadVideo") : t("assets.downloadImage")}
                             </Button>
                         ) : null}

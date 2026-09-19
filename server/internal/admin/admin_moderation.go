@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -16,8 +18,10 @@ import (
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/storage"
 )
 
 // SetModeration 注入审核服务，启用管理端的复核、预览与统计接口。
@@ -204,6 +208,9 @@ func (h *AdminHandler) ReviewModerationRecord(c *gin.Context) {
 }
 
 // releaseQuarantined 把隔离原件提交到正式存储，并回填 media_files 与生成记录。
+// 水印归属（评审 E-4）：生成产物（stage=artifact）按物主档位烧录水印，上传件
+// （stage=upload）不烧录。生成件与生成链路同 fail-closed 口径：水印或干净原件写入
+// 失败即释放失败，隔离原件保留待人工重试，绝不落无水印字节。
 func (h *AdminHandler) releaseQuarantined(record *model.ModerationRecord) error {
 	data, err := h.moderation.Quarantine().Get(context.Background(), record.UserID, record.QuarantineKey)
 	if err != nil {
@@ -223,6 +230,12 @@ func (h *AdminHandler) releaseQuarantined(record *model.ModerationRecord) error 
 		}
 	}
 	if mimeType == "application/octet-stream" {
+		// 上传被拒时 media_files 行尚未写入，按字节探测真实类型，探测不出再按前缀兜底。
+		if detected := http.DetectContentType(data); detected != "application/octet-stream" {
+			mimeType = detected
+		}
+	}
+	if mimeType == "application/octet-stream" {
 		if prefix == "video" {
 			mimeType = "video/mp4"
 		} else if prefix == "audio" {
@@ -231,14 +244,56 @@ func (h *AdminHandler) releaseQuarantined(record *model.ModerationRecord) error 
 			mimeType = "image/png"
 		}
 	}
+	storageKey := prefix + ":" + randomStorageID()
+	saveData := data
+	origPath := ""
+	if record.Stage == string(moderation.StageArtifact) && h.wm != nil && h.wmEnabled() {
+		planID, _, err := h.membership.ActivePlan(context.Background(), record.UserID, time.Now())
+		if err != nil {
+			slog.Error("watermark_failed", "kind", "release", "record", record.ID, "err", err)
+			return fmt.Errorf("读取水印档位失败: %w", err)
+		}
+		if planID != "paid" {
+			var wmBytes []byte
+			var wmMime string
+			switch prefix {
+			case "image":
+				wmBytes, wmMime, err = h.wm.Image(data, mimeType)
+			case "video":
+				wmBytes, err = h.wm.Video(context.Background(), data, mimeType)
+				wmMime = mimeType
+			default:
+				// 音频等没有水印能力的类型直接落原件。
+			}
+			if err != nil {
+				slog.Error("watermark_failed", "kind", "release", "record", record.ID, "err", err)
+				return fmt.Errorf("释放水印烧录失败: %w", err)
+			}
+			if wmBytes != nil {
+				// 与生成落盘同序：先写干净原件再落正式对象，失败补偿删除，避免可下发窗口。
+				origPath = storage.OrigPath(record.UserID.String(), storageKey)
+				if _, _, err := h.store.Put(context.Background(), origPath, bytes.NewReader(data), mimeType); err != nil {
+					slog.Error("watermark_failed", "kind", "release", "record", record.ID, "err", err)
+					return fmt.Errorf("留存干净原件失败: %w", err)
+				}
+				saveData = wmBytes
+				mimeType = wmMime
+			}
+		}
+	}
 	file, err := h.media.SaveWithGeneration(context.Background(), service.SaveGeneratedMediaInput{
 		UserID:     record.UserID,
-		StorageKey: prefix + ":" + randomStorageID(),
+		StorageKey: storageKey,
 		MimeType:   mimeType,
-		Data:       data,
+		Data:       saveData,
 		Moderation: "passed",
 	}, nil)
 	if err != nil {
+		if origPath != "" {
+			if delErr := h.store.Delete(context.Background(), origPath); delErr != nil {
+				slog.Error("补偿删除干净原件失败", "path", origPath, "err", delErr)
+			}
+		}
 		return err
 	}
 	if record.GenerationID != nil {

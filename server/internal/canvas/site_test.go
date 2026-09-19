@@ -98,6 +98,52 @@ func seedCommunityAsset(t *testing.T, g *gorm.DB, userID uuid.UUID) model.Asset 
 	return asset
 }
 
+// TestCommunityWorkCarriesAIGCTag 作品的 AIGC 标识随来源素材派生：
+// 素材带 IsAIGC（工作台存为素材写入）时作品 payload 输出 isAIGC=true，手动上传素材为 false。
+func TestCommunityWorkCarriesAIGCTag(t *testing.T) {
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r, _ := newSiteRouter(t, g, cfg)
+	user := testutil.CreateUser(t, g, "aigc@example.com", "aigcuser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
+
+	aigcAsset := model.Asset{ID: uuid.New(), UserID: user.ID, Kind: "image", Title: "AI 作品素材", Data: []byte(`{}`), StorageKey: "image:AigcAsset1", Bytes: 10, IsAIGC: true}
+	plainAsset := model.Asset{ID: uuid.New(), UserID: user.ID, Kind: "image", Title: "上传素材", Data: []byte(`{}`), StorageKey: "image:PlainAsset1", Bytes: 10}
+	for _, asset := range []model.Asset{aigcAsset, plainAsset} {
+		if err := g.Create(&asset).Error; err != nil {
+			t.Fatalf("写入素材失败: %v", err)
+		}
+	}
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works", token, map[string]any{
+		"assetId": aigcAsset.ID.String(), "title": "AI 作品", "tags": "ai",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("发布 AIGC 作品失败: %d %s", w.Code, w.Body.String())
+	}
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works", token, map[string]any{
+		"assetId": plainAsset.ID.String(), "title": "普通作品",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("发布普通作品失败: %d %s", w.Code, w.Body.String())
+	}
+
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/community/works", token, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("读取作品列表失败: %d", w.Code)
+	}
+	items := testutil.DecodeItems(t, w)
+	if len(items) != 2 {
+		t.Fatalf("应有两件作品: %d", len(items))
+	}
+	aigcFlags := map[string]bool{}
+	for _, item := range items {
+		aigcFlags[item["title"].(string)] = item["isAIGC"] == true
+	}
+	if !aigcFlags["AI 作品"] || aigcFlags["普通作品"] {
+		t.Fatalf("AIGC 标识应随来源素材派生: %v", aigcFlags)
+	}
+}
+
 func TestSiteSettingsPersistAndGateRegistration(t *testing.T) {
 	g := testutil.NewTestDB(t)
 	cfg := testutil.TestConfig()

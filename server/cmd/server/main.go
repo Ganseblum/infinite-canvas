@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/account"
 	"github.com/infinite-canvas/server/internal/admin"
@@ -231,6 +233,8 @@ func main() {
 	adminHandler := admin.NewAdminHandlerWithUpstream(gormDB, cfg, mediaStorage, upstreamService)
 	adminHandler.SetModeration(moderationService)
 	adminHandler.SetSettings(siteSettings)
+	// 人工释放隔离件时按物主档位烧录水印（评审 E-4），与生成链路共用同一服务与开关。
+	adminHandler.SetWatermark(wmService, watermark.Enabled)
 	communityHandler := canvas.NewCommunityHandler(gormDB, siteSettings)
 	activityHandler := canvas.NewActivityHandler(gormDB, siteSettings, grantService, cfg)
 
@@ -280,6 +284,10 @@ func main() {
 	publishLimiter := middleware.NewLimiter(time.Hour, 12)
 	// 申请下载限流：签发端无状态，按用户限流防刷短时效链接（60 次/小时）。
 	downloadLimiter := middleware.NewLimiter(time.Hour, 60)
+	// OIDC 授权端点限流：authorize/token 对齐登录端点口径（20 次/10 分钟/IP），
+	// token 无会话只能按 IP 键；authorize 浏览器直跳场景同样按 IP 拦截刷码。
+	oidcAuthLimiter := middleware.NewLimiter(10*time.Minute, 20)
+	oidcTokenLimiter := middleware.NewLimiter(10*time.Minute, 20)
 
 	api := router.Group("/api/v1")
 
@@ -302,8 +310,8 @@ func main() {
 	// 与平台 HS256 会话是两套凭据，不走 middleware.Auth。/api/v1/oidc/ 也在维护模式豁免前缀内
 	// （token 是 POST，不能被维护模式拦断）。T09 不含 admin 管理端点（T10 再挂 sso.read/write）。
 	oidc := api.Group("/oidc")
-	oidc.GET("/authorize", middleware.Auth(secret), active, oidcHandler.Authorize)
-	oidc.POST("/token", oidcHandler.Token)
+	oidc.GET("/authorize", middleware.RateLimit(oidcAuthLimiter, func(c *gin.Context) string { return "oidc-auth:" + middleware.ClientIP(c) }), middleware.Auth(secret), active, oidcHandler.Authorize)
+	oidc.POST("/token", middleware.RateLimit(oidcTokenLimiter, func(c *gin.Context) string { return "oidc-token:" + middleware.ClientIP(c) }), oidcHandler.Token)
 	oidc.GET("/userinfo", oidcHandler.Userinfo)
 	oidc.GET("/jwks.json", oidcHandler.JWKS)
 
@@ -450,13 +458,16 @@ func main() {
 		}
 	})
 	// T08：夜间存储记账对账——三层比对（media_files 聚合 / storage_usage / storage_accounts），
-	// 不平走 storage.Recalculate 以事实源重算收敛并落结构化日志（告警通道 D9 拍板后接线）。
+	// 不平走 storage.Recalculate 以事实源重算收敛并落结构化日志；发现漂移同时邮件告警全部
+	// admin 角色账号（D9），发送走异步 Mailer，失败仅记日志不阻塞对账。
 	reconcileService := service.NewReconcileService(gormDB, storageService)
 	go runScheduled(ctx, "存储记账对账", 24*time.Hour, func() {
 		if checked, fixed, err := reconcileService.ReconcileStorage(ctx, time.Now()); err != nil {
 			slog.Error("存储记账对账失败", "err", err)
 		} else if fixed > 0 {
 			slog.Warn("storage_reconcile_drift", "checked", checked, "fixed", fixed)
+			notifyAdmins(gormDB, mailer, "存储记账对账发现漂移并已自动收敛",
+				fmt.Sprintf("夜间对账检查了 %d 个账号，发现并已按事实源自动收敛 %d 处存储记账漂移。\n逐账号明细见 api 容器日志中的 storage_reconcile_drift 记录。\n", checked, fixed))
 		}
 	})
 
@@ -489,5 +500,21 @@ func runScheduled(ctx context.Context, name string, interval time.Duration, task
 		case <-ticker.C:
 			task()
 		}
+	}
+}
+
+// notifyAdmins 向全部 admin 角色账号邮箱投递告警邮件（D9 对账告警通道）。
+// 没有管理员或发送失败都不影响主流程；Mailer 自身异步且失败仅记日志。
+func notifyAdmins(db *gorm.DB, mailer *mail.Mailer, subject, body string) {
+	if mailer == nil {
+		return
+	}
+	var emails []string
+	if err := db.Model(&model.PlatformUser{}).Where("role_key = ?", authz.SystemRoleKey).Order("created_at").Pluck("email", &emails).Error; err != nil {
+		slog.Error("查询告警管理员邮箱失败", "err", err)
+		return
+	}
+	for _, to := range emails {
+		mailer.Send(mail.Message{To: to, Subject: subject, Body: body})
 	}
 }

@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { getMediaBlob, mediaUrl, putMedia } from "@/services/api/media";
+import { storeImagePreviewFromBlob } from "@/services/image-preview";
 import { withLocalProxy } from "@/stores/use-config-store";
 
 // 媒体写入统一入口：远端下载或本地文件先变成 Blob，再 PUT /api/media/{storageKey}，
@@ -50,6 +51,8 @@ async function storeImage(blob: Blob, options?: ReadOptions): Promise<UploadedIm
         const storageKey = `image:${nanoid()}`;
         await putMedia(storageKey, blob);
         throwIfAborted(options?.signal);
+        // 上传时手里就有原始字节，顺手生成 768px WebP 预览（失败不影响上传主流程）。
+        void storeImagePreviewFromBlob(storageKey, blob);
         return { url: mediaUrl(storageKey), storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
     } finally {
         URL.revokeObjectURL(objectUrl);

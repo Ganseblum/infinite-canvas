@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
@@ -19,11 +20,14 @@ import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { setRemixSource } from "@/lib/remix-source";
 import { uploadImage } from "@/services/media-ingest";
 import { useAddAsset } from "@/hooks/use-asset-library";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
-import { fetchMediaDownload, mediaUrl, requestDownload } from "@/services/api/media";
+import { useMediaDownload } from "@/hooks/use-media-download";
+import { getMediaBlob, mediaUrl } from "@/services/api/media";
+import { getCommunityWork } from "@/services/api/community";
 import type { GenerationItem } from "@/services/data/types";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
@@ -76,6 +80,7 @@ const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&
 export default function ImagePage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
+    const { download: downloadMedia, isDownloading } = useMediaDownload();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const config = useConfigStore((state) => state.config);
@@ -229,19 +234,38 @@ export default function ImagePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoRunToken]);
 
-    const downloadImage = async (image: GeneratedImage, index: number) => {
-        try {
-            // 无 storageKey 的是本地/外部数据，不走服务端；有 storageKey 的先申请取件链接再取件保存。
-            if (!image.storageKey) {
-                saveAs(image.dataUrl, `image-${index + 1}.png`);
-                return;
+    // 社区复刻：读取 ?remix= 指向的作品，拉取媒体并作为参考图加载，
+    // 同时记住复刻来源供「我的素材」发布弹窗透传 sourceWorkId。
+    const [searchParams, setSearchParams] = useSearchParams();
+    const remixConsumedRef = useRef(false);
+    useEffect(() => {
+        const remixId = searchParams.get("remix");
+        if (!remixId || remixConsumedRef.current) return;
+        remixConsumedRef.current = true;
+        setSearchParams({}, { replace: true });
+        void (async () => {
+            try {
+                const { work } = await getCommunityWork(remixId);
+                setRemixSource({ workId: work.id, title: work.title });
+                const blob = await getMediaBlob(work.storageKey);
+                if (!blob) throw new Error(t("apiErrors.noContent"));
+                const stored = await uploadImage(blob);
+                setReferences((value) => [...value, { id: nanoid(), name: work.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+                message.success(t("imageWorkbench.remixLoaded", { title: work.title }));
+            } catch (error) {
+                message.error(getApiErrorMessage(error));
             }
-            const { url } = await requestDownload(image.storageKey);
-            const blob = await fetchMediaDownload(url);
-            saveAs(blob, `image-${index + 1}.png`);
-        } catch (error) {
-            message.error(getApiErrorMessage(error));
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
+
+    const downloadImage = async (image: GeneratedImage, index: number) => {
+        // 无 storageKey 的是本地/外部数据，不走服务端；有 storageKey 的先申请取件链接再取件保存。
+        if (!image.storageKey) {
+            saveAs(image.dataUrl, `image-${index + 1}.png`);
+            return;
         }
+        await downloadMedia({ key: image.id, storageKey: image.storageKey, filename: `image-${index + 1}.png` });
     };
 
     const addResultToReferences = (image: GeneratedImage, index: number) => {
@@ -256,6 +280,8 @@ export default function ImagePage() {
             storageKey: image.storageKey,
             bytes: image.bytes,
             data: { url: undefined, width: image.width, height: image.height, mimeType: image.mimeType, source: t("imageWorkbench.source"), prompt },
+            // 生成结果存为素材带 AIGC 标识，发布社区作品时随素材派生。
+            isAIGC: true,
         });
     };
 
@@ -495,7 +521,7 @@ export default function ImagePage() {
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
-                                        <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                        <ResultImageCard key={result.id} image={result.image} index={index} downloading={isDownloading(result.image.storageKey)} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} />
                                     ) : (
@@ -571,12 +597,14 @@ function GenerationSettings({ config, model, updateConfig }: { config: AiConfig;
 function ResultImageCard({
     image,
     index,
+    downloading,
     onEdit,
     onDownload,
     onSaveAsset,
 }: {
     image: GeneratedImage;
     index: number;
+    downloading: boolean;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
@@ -605,7 +633,7 @@ function ResultImageCard({
                         </Button>
                     </Tooltip>
                     <Tooltip title={t("common.download")}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} loading={downloading} onClick={() => onDownload(image, index)}>
                             {t("common.download")}
                         </Button>
                     </Tooltip>

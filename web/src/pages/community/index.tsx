@@ -92,12 +92,17 @@ export default function CommunityPage() {
         onError: (error) => message.error(getApiErrorMessage(error)),
     });
 
-    // 复刻的最小闭环：复制原作素材链接并跳到对应工作台当参考图；
-    // sourceWorkId 随发布落库还需要素材发布弹窗透传（见差异清单说明）。
+    // 复刻：图片作品跳工作台并通过 query 传原作 id，工作台自动加载为参考图、
+    // 发布弹窗透传 sourceWorkId（社区复刻完整链路）；视频作品暂无参考视频槽位，
+    // 保留复制链接的最小闭环。
     const remix = (work: CommunityWork) => {
-        const media = mediaUrl(work.storageKey);
-        if (media) copyText(new URL(media, window.location.origin).toString(), work.kind === "video" ? "已复制原作视频链接，可在视频工作台作为参考视频使用" : "已复制原作图片链接，可在图片工作台作为参考图使用");
-        navigate(work.kind === "video" ? "/video" : "/image");
+        if (work.kind === "video") {
+            const media = mediaUrl(work.storageKey);
+            if (media) copyText(new URL(media, window.location.origin).toString(), "已复制原作视频链接，可在视频工作台作为参考视频使用");
+            navigate("/video");
+            return;
+        }
+        navigate(`/image?remix=${work.id}`);
     };
 
     const toggleLike = async (work: CommunityWork) => {
@@ -282,6 +287,11 @@ export default function CommunityPage() {
                                             {work.description ? <p className="mt-1 line-clamp-2 text-xs text-stone-500 dark:text-stone-400">{work.description}</p> : null}
                                         </div>
                                         <div className="flex flex-wrap gap-1">
+                                            {work.isAIGC ? (
+                                                <Tag color="geekblue" className="m-0">
+                                                    {t("community.aigcBadge")}
+                                                </Tag>
+                                            ) : null}
                                             {(work.tags ?? []).filter(Boolean).slice(0, 3).map((tag) => (
                                                 <Tag key={tag} className="m-0">
                                                     {tag}
@@ -347,6 +357,11 @@ export default function CommunityPage() {
                                     {(preview.author.displayName || preview.author.username).slice(0, 1).toUpperCase()}
                                 </Avatar>
                                 <span className="text-sm">{preview.author.displayName || preview.author.username}</span>
+                                {preview.isAIGC ? (
+                                    <Tag color="geekblue" className="m-0">
+                                        {t("community.aigcBadge")}
+                                    </Tag>
+                                ) : null}
                                 <span className="text-xs text-stone-500 dark:text-stone-400">{dayjs(preview.createdAt).format("YYYY-MM-DD HH:mm")}</span>
                             </div>
                             <div className="flex items-center gap-2">

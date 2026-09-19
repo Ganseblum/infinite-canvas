@@ -16,6 +16,7 @@ import ConfigPage from "@/pages/config";
 import HomePage from "@/pages/home";
 import ImagePage from "@/pages/image";
 import LoginPage from "@/pages/login";
+import OAuthAuthorizePage from "@/pages/oauth-authorize";
 import PrivacyPage from "@/pages/legal/privacy";
 import TermsPage from "@/pages/legal/terms";
 import ModelsPage from "@/pages/models";
@@ -68,6 +69,8 @@ export const router = createBrowserRouter([
             { path: "/login", element: <LoginPage /> },
             { path: "/verify-email", element: <VerifyEmailPage /> },
             { path: "/reset-password", element: <ResetPasswordPage /> },
+            // OIDC 浏览器直跳承接页：公开路由自带登录分支，不进统一登录守卫。
+            { path: "/oauth/authorize", element: <OAuthAuthorizePage /> },
             // 条款与隐私页公开可访问，不进登录守卫（差异清单 #113）。
             { path: "/terms", element: <TermsPage /> },
             { path: "/privacy", element: <PrivacyPage /> },

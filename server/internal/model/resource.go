@@ -32,6 +32,9 @@ type Asset struct {
 	Data             datatypes.JSON `gorm:"type:json;not null;comment:素材内容 JSON，文本存正文、图片存尺寸等元信息"`
 	StorageKey       string         `gorm:"type:varchar(80);not null;default:'';comment:原始文件的存储键，指向 media_files.storage_key，空串表示纯文本素材"`
 	Bytes            int64          `gorm:"not null;default:0;comment:原始文件占用字节数，纯文本素材为 0"`
+	// IsAIGC 标记素材是否由 AI 生成产生（工作台「存为素材」时写入，用户手动上传为 false）：
+	// 发布社区作品时随素材派生到作品 payload，供作品卡片/详情打「AI 生成」标识。
+	IsAIGC           bool           `gorm:"not null;default:false;comment:是否为 AI 生成内容，工作台存为素材时写入"`
 	ModerationStatus string         `gorm:"type:varchar(16);not null;default:skipped;comment:审核状态，skipped 未送审、pending 审核中、passed 已通过、rejected 已拒绝"`
 	CreatedAt        time.Time      `gorm:"comment:创建时间"`
 	UpdatedAt        time.Time      `gorm:"comment:最近更新时间"`

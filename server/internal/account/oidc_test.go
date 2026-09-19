@@ -386,6 +386,54 @@ func TestOIDCAuthorizeRequiresLogin(t *testing.T) {
 	}
 }
 
+// TestOIDCAuthorizeJSONModeForRelayPage 浏览器直跳承接页（/oauth/authorize）的 JSON 模式：
+// 携带 Accept: application/json 的 authorize 返回 200 {redirect} 而非 302，redirect 带
+// code 与 state；默认请求（浏览器导航口径）仍 302 直跳。
+func TestOIDCAuthorizeJSONModeForRelayPage(t *testing.T) {
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	oidcH := newOIDCHandlerForTest(t, g, cfg)
+	authH := NewAuthHandler(g, cfg, testutil.TestMailer())
+	r := newOIDCRouter(t, g, cfg, oidcH, authH)
+	user := testutil.CreateUser(t, g, "oidcjson@example.com", "oidcjson", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
+	client, _ := createOIDCClient(t, g, []string{oidcRedirectURI})
+
+	params := url.Values{
+		"client_id":             {client.ClientID},
+		"redirect_uri":          {oidcRedirectURI},
+		"response_type":         {"code"},
+		"scope":                 {"openid"},
+		"state":                 {"st-json"},
+		"code_challenge":        {s256Challenge(oidcVerifier)},
+		"code_challenge_method": {"S256"},
+	}
+	if w := authorizeGet(r, token, params); w.Code != http.StatusFound {
+		t.Fatalf("默认请求应 302, got %d", w.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/authorize?"+params.Encode(), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("JSON 模式应 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Redirect string `json:"redirect"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Redirect == "" {
+		t.Fatalf("JSON 模式应返回 redirect: %s", w.Body.String())
+	}
+	loc, err := url.Parse(body.Redirect)
+	if err != nil {
+		t.Fatalf("解析 redirect 失败: %v", err)
+	}
+	if loc.Query().Get("code") == "" || loc.Query().Get("state") != "st-json" {
+		t.Fatalf("redirect 应带 code 与 state: %s", body.Redirect)
+	}
+}
+
 // ===== token 安全用例 =====
 
 func TestOIDCTokenSecurity(t *testing.T) {

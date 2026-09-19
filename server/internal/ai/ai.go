@@ -446,7 +446,7 @@ func (h *AIHandler) moderateAndStoreArtifact(c *gin.Context, user model.Platform
 	if err != nil {
 		return nil, err
 	}
-	verdict, err := h.moderation.CheckArtifact(c.Request.Context(), user.ID, moderation.ContentType(prefix), quarantine.Key, data, mimeType)
+	verdict, err := h.moderation.CheckArtifact(c.Request.Context(), user.ID, moderation.StageArtifact, moderation.ContentType(prefix), quarantine.Key, data, mimeType)
 	h.moderation.SetQuarantineBytes(c.Request.Context(), verdict.RecordID, quarantine.Bytes)
 	if err != nil {
 		return nil, err

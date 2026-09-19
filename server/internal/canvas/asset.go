@@ -42,6 +42,8 @@ type assetCreateReq struct {
 	Data       json.RawMessage `json:"data"`
 	StorageKey string          `json:"storageKey"`
 	Bytes      int64           `json:"bytes"`
+	// IsAIGC 由前端在「工作台结果存为素材」时置 true，用户手动上传不传（false）。
+	IsAIGC bool `json:"isAIGC"`
 }
 
 type assetPatchReq struct {
@@ -182,6 +184,7 @@ func (h *AssetHandler) Create(c *gin.Context) {
 		Data:             data,
 		StorageKey:       req.StorageKey,
 		Bytes:            req.Bytes,
+		IsAIGC:           req.IsAIGC,
 		ModerationStatus: "skipped",
 	}
 	err = h.db.Transaction(func(tx *gorm.DB) error {
@@ -508,6 +511,7 @@ func assetPayload(asset model.Asset, tags []string) gin.H {
 		"data":       asset.Data,
 		"storageKey": asset.StorageKey,
 		"bytes":      asset.Bytes,
+		"isAIGC":     asset.IsAIGC,
 		"createdAt":  httpx.FormatTime(asset.CreatedAt),
 		"updatedAt":  httpx.FormatTime(asset.UpdatedAt),
 	}

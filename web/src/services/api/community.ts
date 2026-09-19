@@ -19,6 +19,7 @@ export type CommunityWork = {
     remixCount: number;
     reportCount: number;
     sourceWorkId?: string;
+    isAIGC?: boolean;
     createdAt: string;
     author: CommunityAuthor;
     liked?: boolean;

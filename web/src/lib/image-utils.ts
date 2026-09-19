@@ -2,8 +2,11 @@ import i18n from "@/i18n";
 import type { ReferenceImage } from "@/types/image";
 
 export function formatBytes(bytes: number) {
-    if (!Number.isFinite(bytes) || bytes <= 0) {
+    if (!Number.isFinite(bytes)) {
         return "";
+    }
+    if (bytes <= 0) {
+        return "0 B";
     }
     const units = ["B", "KB", "MB", "GB"];
     let value = bytes;

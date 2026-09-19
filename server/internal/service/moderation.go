@@ -186,11 +186,13 @@ type ReferenceInput struct {
 }
 
 // CheckArtifact 是平台产物后审入口：内容已在隔离区，审核通过后由调用方提交正式存储。
-func (s *ModerationService) CheckArtifact(ctx context.Context, userID uuid.UUID, contentType moderation.ContentType, quarantineKey string, data []byte, mimeType string) (Verdict, error) {
+// stage 由调用方区分来源（artifact=生成产物、upload=用户上传），admin 释放隔离件时
+// 按它判定水印归属（评审 E-4）。
+func (s *ModerationService) CheckArtifact(ctx context.Context, userID uuid.UUID, stage moderation.Stage, contentType moderation.ContentType, quarantineKey string, data []byte, mimeType string) (Verdict, error) {
 	if !s.Enabled() {
 		return Verdict{Decision: moderation.DecisionPassed}, nil
 	}
-	return s.CheckQuarantined(ctx, userID, moderation.StageArtifact, contentType, quarantineKey, data, mimeType)
+	return s.CheckQuarantined(ctx, userID, stage, contentType, quarantineKey, data, mimeType)
 }
 
 // CheckAudioArtifactPlaceholder 是音频产物的占位审核：当前没有音频审核模型，
@@ -291,6 +293,18 @@ func (s *ModerationService) SetQuarantineBytes(ctx context.Context, recordID uui
 	if err := s.db.WithContext(ctx).Model(&model.ModerationRecord{}).Where("id = ?", recordID).
 		Update("quarantine_bytes", bytes).Error; err != nil {
 		slog.Error("回填隔离字节数失败", "record", recordID, "err", err)
+	}
+}
+
+// SetArtifactSource 绑定产物审核记录与生成记录：视频任务在创建时已有 pending 生成行，
+// 管理端人工释放隔离件后据此收敛生成记录状态（releaseQuarantined 的 GenerationID 分支）。
+func (s *ModerationService) SetArtifactSource(ctx context.Context, recordID uuid.UUID, generationID uuid.UUID) {
+	if recordID == uuid.Nil || generationID == uuid.Nil {
+		return
+	}
+	if err := s.db.WithContext(ctx).Model(&model.ModerationRecord{}).Where("id = ?", recordID).
+		Update("generation_id", generationID).Error; err != nil {
+		slog.Error("回填审核记录来源失败", "record", recordID, "err", err)
 	}
 }
 

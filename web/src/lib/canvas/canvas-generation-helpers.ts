@@ -3,6 +3,7 @@ import { modelConstraints, resolveModelForCapability } from "@/stores/use-model-
 import { constraintValues } from "@/lib/model-constraints";
 import i18n from "@/i18n";
 import { mediaUrl } from "@/services/api/media";
+import { ensureImagePreview } from "@/services/image-preview";
 import { referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
@@ -41,8 +42,17 @@ export function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
-// 二进制都在服务端，还原画布只是把 storageKey 拼成可直接引用的地址，不再需要异步取 Blob。
+// 二进制都在服务端，还原画布只是把 storageKey 拼成可直接引用的地址，不再需要异步取 Blob；
+// 画布图片按需后台补 768px WebP 预览（服务端拉原件生成，失败静默），节点渲染时按缩放选用。
 export function hydrateCanvasImages(nodes: CanvasNodeData[]) {
+    for (const node of nodes) {
+        const metadata = node.metadata;
+        if (node.type !== CanvasNodeType.Image || !metadata) continue;
+        if (metadata.storageKey) void ensureImagePreview(metadata.storageKey);
+        for (const image of metadata.images || []) {
+            if (image.storageKey) void ensureImagePreview(image.storageKey);
+        }
+    }
     return nodes.map((node) => {
         const metadata = node.metadata;
         const content = metadata?.content;

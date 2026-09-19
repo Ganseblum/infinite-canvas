@@ -193,6 +193,8 @@ func (s *AITaskService) succeedTask(ctx context.Context, task *model.AITask, sta
 		} else if record != nil {
 			videoRecordID = record.ID
 			s.moderation.SetQuarantineBytes(ctx, record.ID, quarantine.Bytes)
+			// 绑定生成记录，人工释放隔离件后据此收敛状态（评审 E-4 配套）。
+			s.moderation.SetArtifactSource(ctx, record.ID, task.GenerationID)
 		}
 		switch {
 		case errors.Is(err, ErrContentRejected):

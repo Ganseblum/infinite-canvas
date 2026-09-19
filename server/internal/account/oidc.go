@@ -266,6 +266,13 @@ func (h *OIDCHandler) Authorize(c *gin.Context) {
 		qry.Set("state", state)
 	}
 	u.RawQuery = qry.Encode()
+	// 浏览器直跳承接页（/oauth/authorize）以 JSON 模式代用户换取授权码：携带
+	// Accept: application/json 的请求返回 {redirect}，由前端自行跳转；其余请求
+	// 仍 302 直跳（浏览器导航与自动化测试口径不变）。
+	if strings.Contains(c.GetHeader("Accept"), "application/json") {
+		c.JSON(http.StatusOK, gin.H{"redirect": u.String()})
+		return
+	}
 	c.Redirect(http.StatusFound, u.String())
 }
 

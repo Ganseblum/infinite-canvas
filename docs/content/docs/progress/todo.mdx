@@ -5,18 +5,9 @@ description: 已规划的后续工作
 
 # 待办
 
-## 上游同步：WebP 缩略图移植（本次同步遗留）
-
-- **WebP 本地缩略图预览移植**：upstream v0.19.0 的「画布图片按 768px WebP 预览渲染」未随本次同步合入——其实现依赖我方已删除的本地图片存储（`image-storage.ts` / `use-asset-store.ts`）。移植思路：图片经 `media-ingest` 上传完成后从服务端拉取原件生成 WebP 预览存本地 IndexedDB，`canvas-node.tsx` 按 `pickImageSource` 依缩放选择预览/原图，删除图片时同步清理预览；可直接复用 upstream 提交 `ed7e901` / `48637e5` / `52d85d6` 中的 `lib/image-thumbnail.ts` 与对应测试。
-
 ## 平台账号与会员体系：遗留与后续（本版本新增）
 
-- **OIDC token 端点限流**：authorize/token 未挂 IP 级限流（auth 的 login/register 有）；新增限流参数属行为边界值，按仓库规则需先确认再实现。
-- **authorize 浏览器直跳承接**：authorize 目前认 Bearer（自动化测试口径），第三方产品浏览器直跳需平台前端承接页或 cookie 会话兼容——新产品正式接入前必须补的设计项。
-- **会员订单支付回调端到端用例**：markPaid「加点 + 发会员同事务」的会员分支目前只有域单测，建议补一条集成用例。
-- **对账告警通道（D9）**：`storage_reconcile_drift` 已落结构化日志，通知方式（邮件/IM/admin 站内）与值守口径待拍板后接线。
 - **deletion 多产品记账**：注销清理把全部释放字节记到 canvas 产品，当前单产品无害，第二产品接入前需按 product 聚合。
-- **admin users 存储配额列 0 值展示**：已用量为 0 时渲染为「/ 1.0 GB」，补 0 值展示。
 - **测试名纠偏**：`TestMediaUploadReadOnlyReturns403` 已改名；其余「文档写 402、实码 403」的口径以 T02 奇偶清单为准。
 
 ## 媒体水印与干净原件下发：未完成与将要完成（本版本新增）
@@ -25,7 +16,6 @@ description: 已规划的后续工作
 
 - **浏览器级端到端验收**：`pending-test.mdx` 「媒体水印」节全部条目——flag=false 回归、免费链路展示/下载均水印、付费链路与升级后历史自动变干净、申请下载两步流、防盗链（过期/篡改/转借 404）、社区语义、orig 清理、限流。需真实 AI 上游与部署环境，代码层已由 HTTP 集成测试覆盖（14 包全绿、三个泄漏面与 fail-closed 均有注入测试锁死）。
 - **灰度发布（阶段③④）**：测试环境已开 `WATERMARK_ENABLED=true` 且字体已挂载（阶段② 部署完成）→ 真实 MySQL 跑一次启动/迁移确认已随平台账号部署完成 → 灰度观察 `watermark_failed` 结构化日志与下载端点 4xx 比例一周。回滚点全程是关 flag。
-- **隔离件人工放行的水印归属语义（评审 E-4）**：admin「释放隔离件」（`releaseQuarantined`）以隔离区原始字节直接落正式对象、不经生成链路的水印挂钩，免费用户被拒生成件经人工放行后为无水印版（无跨用户泄漏，操作者 gated）。需独立设计「生成件应烧录 / 上传件不应烧录」的按素材来源归属判定与用例后再修（admin 侧代码当时处于保护区未动）。
 
 ### 将要完成（后续 backlog）
 
@@ -33,8 +23,6 @@ description: 已规划的后续工作
 - **scale2ref 弃用观察**：ffmpeg 8.1 已标记 deprecated（仍可用）；未来 ffmpeg 移除该滤镜时视频水印转码会 fail-closed 失败（不泄漏干净件），需改用其它 overlay 方案。
 - **S3 真桶端到端**：302 预签名链路、360s TTL、负缓存 HeadObject 开销实测（local 驱动已全覆盖）——可与既有「S3 存储」待办合并执行。
 - **免费档历史干净素材回填**：上线前的存量干净件不做追溯烧录（免费档保留期仅 7 天，暴露窗口极短，默认接受）；如需覆盖另立任务。
-- **三页下载失败提示统一**：素材页为固定 i18n 文案、图片/视频页走 `getApiErrorMessage` 三级文案，语义不完全一致；统一需补 locales key。
-- **下载按钮 loading/防重**：当前连点会并发重复申请，后端限流 60 次/小时/用户兜底；可加按钮级防重。
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.
@@ -44,7 +32,7 @@ description: 已规划的后续工作
 - Phase 5 deployment wrap-up: `MODERATION_PROVIDER=nsfwjs+detoxify` needs the two inference sidecars (Node + Python) deployed on the compose network, and video moderation needs `ffmpeg` in the API container; the test template currently disables moderation; `fake` is available for workflow testing only.
 - Compliance gates for public launch stay open and are independent of code: algorithm filing, large-model service filing, legal review of the terms, and confirmed human review staffing must all be completed before public registration and the platform model entry are opened.
 - Design-to-API gaps: community, operations activities (daily check-in and invitations), site settings, admin management with audit logs, and the revenue metrics are delivered. Deferred by decision: verification-code sign-in, creation contests, and the support role with a feedback/ticket console (scopes are recorded in the repo-root planning docs `我的规划/后续功能备忘.md` and `我的规划/Admin后台与多产品规划.md`). OAuth sign-in, 2FA, and login-device management are dropped for now — registration plus email verification stays as the only sign-up path — and the docs CMS is recommended to be cut.
-- Next round, planned with docs written but not implemented: move the admin console onto `admin.youc.online` / `sim-admin.youc.online` with a multi-product shell design (`我的规划/Admin后台与多产品规划.md`) and add the EasyPay (易支付) payment channel (`我的规划/易支付接入规划.md`). Real moderation sidecars (NSFWJS / Detoxify) remain pending the server-resource and option decision.
+- The multi-product admin shell and the EasyPay payment channel (planned in `我的规划/Admin后台与多产品规划.md` / `我的规划/易支付接入规划.md`) are delivered and running on the test environment (`sim-admin.youc.online`); production rollout follows the accepted-main release process. Real moderation sidecars (NSFWJS / Detoxify) remain pending the server-resource and option decision.
 - Test-environment deployment: only test and production databases exist, and local development shares `infinite_canvas_test`. Compose, image/port isolation, the server checkout, keys/env, image build, test-domain Nginx and certificate are now in place — the test site runs at `https://sim-art.youc.online` (app bound to `127.0.0.1:3100`, MySQL additionally exposed on `127.0.0.1:13306`). Still open: real email delivery (the test site uses `MAIL_DRIVER=log`), S3 storage, moderation sidecars, the DBeaver tunnel check, end-to-end acceptance for container restarts, and backup. The platform channel (`ai.youc.online`, OpenAI format) and four `gpt-image-*` models are configured, and one image generation has been verified end to end through quote, generate, store and fetch. Real server details stay in the local-only runbook; production is deployed from an accepted main release tag after backup/restore preparation and domain cutover.
 - Admin console deployment is documented in `deploy/README.md` (管理后台): it ships inside the same web app (`/admin/*`) and the same api (`/api/admin/*`), so no extra service, port, domain, or image is needed, and admin APIs are enforced server-side by `Auth` + `AdminOnly`. `ADMIN_EMAIL` / `ADMIN_PASSWORD` only bootstrap the first admin — an existing account is promoted, never re-password-reset — so editing the env file cannot recover a forgotten admin password. Still open: decide whether to restrict admin access before public launch (a proxy access policy covering both `/admin` and `/api/admin/`).
 - Scheduled backup for the canvas deployment is still open: after the test environment stabilizes, add a periodic `mysqldump --single-transaction`, a media volume archive, and the env file, restored as a set. Schema upgrades rely on `AutoMigrate`, which has no rollback, so dump production before every upgrade and rehearse the new version on the test environment first.
@@ -67,8 +55,6 @@ description: 已规划的后续工作
 - **#88 密钥不分域 / `KeyVersion` 只写不读**：凭据密钥轮换需要全量重加密方案，数据量小的时候做最省。
 - **迁移真版本化**：本次只做了 `schema_migrations` 版本留痕（#104 占位），版本化迁移与回滚仍是独立工程。
 - **孤儿对象 GC**：storage 接口仍无 List，注销清理已按 objectPath 逐个删除，但历史孤儿与失败残留仍无清单扫描。
-- **社区作品 AIGC 标签**：生成记录已带 `isAIGC`，社区作品卡片/详情的展示标签需要给作品/素材补来源字段后接线。
-- **社区复刻完整链路**：详情弹窗已可跳工作台，`sourceWorkId` 随发布落库还需发布弹窗与工作台读取跳转参数。
 - **浏览器运行时验收**：本批全部改动（见 pending-test）只验到构建与自动化测试层，真环境逐项验收待做。
 
 ## 经验教训（已复现两次，已沉淀进 AGENTS.md）

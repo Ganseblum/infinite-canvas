@@ -548,7 +548,7 @@ func (h *MediaHandler) quarantineUpload(c *gin.Context, uid uuid.UUID, raw []byt
 		slog.Error("写入隔离区失败", "err", err)
 		return 0, "", err
 	}
-	verdict, err := h.moderation.CheckArtifact(c.Request.Context(), uid, moderation.ContentType("image"), quarantine.Key, raw, contentType)
+	verdict, err := h.moderation.CheckArtifact(c.Request.Context(), uid, moderation.StageUpload, moderation.ContentType("image"), quarantine.Key, raw, contentType)
 	h.moderation.SetQuarantineBytes(c.Request.Context(), verdict.RecordID, quarantine.Bytes)
 	if err != nil {
 		if !errors.Is(err, service.ErrContentRejected) {

@@ -6,7 +6,7 @@ export function listAssets(params: AssetListParams = {}, signal?: AbortSignal) {
     return apiRequest<AssetListResult>("/assets", { query: params, signal });
 }
 
-export function createAsset(payload: { kind: AssetKind; title: string; tags?: string[]; data: Record<string, unknown>; storageKey?: string; bytes?: number }) {
+export function createAsset(payload: { kind: AssetKind; title: string; tags?: string[]; data: Record<string, unknown>; storageKey?: string; bytes?: number; isAIGC?: boolean }) {
     return apiRequest<AssetItem>("/assets", { method: "POST", body: payload });
 }
 

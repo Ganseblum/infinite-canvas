@@ -459,10 +459,12 @@ func (h *CommunityHandler) payloads(works []model.CommunityWork) []gin.H {
 			"kind":        asset.Kind,
 			"storageKey":  asset.StorageKey,
 			"coverKey":    work.CoverKey,
-			"likeCount":   work.LikeCount,
-			"remixCount":  work.RemixCount,
+			// AIGC 标识随来源素材派生，前端据此打「AI 生成」标签（差异清单 #116 后续）。
+			"isAIGC":     asset.IsAIGC,
+			"likeCount":  work.LikeCount,
+			"remixCount": work.RemixCount,
 			"reportCount": work.ReportCount,
-			"createdAt":   httpx.FormatTime(work.CreatedAt),
+			"createdAt":  httpx.FormatTime(work.CreatedAt),
 			"author": gin.H{
 				"id":          author.ID.String(),
 				"username":    author.Username,

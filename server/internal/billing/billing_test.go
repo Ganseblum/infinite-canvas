@@ -175,6 +175,88 @@ func TestAccountDeletionLifecycle(t *testing.T) {
 	}
 }
 
+// TestMembershipOrderWebhookGrantsCreditsAndSubscription 会员订单支付回调端到端：
+// 渠道回调到账后同一事务完成「双桶加点 + 发会员」，订阅、流水与存储配额一次到位，重复回调只到账一次。
+func TestMembershipOrderWebhookGrantsCreditsAndSubscription(t *testing.T) {
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	provider := &fakeProvider{}
+	r := newBillingRouter(t, g, cfg, provider)
+	user := testutil.CreateUser(t, g, "member@example.com", "memberuser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
+
+	// 下单购买会员档位 paid（种子价 30 元、30 天）
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/orders", token, map[string]string{"planId": "paid", "provider": "alipay"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("创建会员订单失败: code=%d body=%s", w.Code, w.Body.String())
+	}
+	orderBody, _ := testutil.DecodeBody(t, w)["order"].(map[string]any)
+	orderID, _ := orderBody["id"].(string)
+	if orderID == "" {
+		t.Fatalf("下单响应缺少订单 id: %s", w.Body.String())
+	}
+
+	// 渠道回调到账，实付金额与订单快照一致
+	provider.callback = payment.CallbackResult{OutTradeNo: orderID, ProviderOrderID: "ch-member-1", PriceMicros: 30_000_000, Status: "paid"}
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/payments/webhook/alipay", map[string]string{"out_trade_no": orderID})
+	if w.Code != http.StatusOK || w.Body.String() != "success" {
+		t.Fatalf("支付回调应 200 success: code=%d body=%s", w.Code, w.Body.String())
+	}
+
+	var order model.Order
+	if err := g.First(&order, "id = ?", orderID).Error; err != nil {
+		t.Fatalf("读取订单失败: %v", err)
+	}
+	if order.Status != "paid" || order.PaidAt == nil {
+		t.Fatalf("订单应已到账: status=%s paidAt=%v", order.Status, order.PaidAt)
+	}
+
+	// 会员订单不加点（PurchasedMicros 只有点数包订单才设置）：无 purchase 流水、余额保持 0。
+	var txCount int64
+	if err := g.Model(&model.CreditTransaction{}).Where("user_id = ?", user.ID).Count(&txCount).Error; err != nil {
+		t.Fatalf("查询流水失败: %v", err)
+	}
+	if txCount != 0 {
+		t.Fatalf("会员订单不应产生点数流水, got %d", txCount)
+	}
+	var credits model.CreditAccount
+	if err := g.First(&credits, "user_id = ?", user.ID).Error; err != nil {
+		t.Fatalf("读取点数账户失败: %v", err)
+	}
+	if credits.PurchasedMicros != 0 || credits.GrantedMicros != 0 {
+		t.Fatalf("会员订单不应改变点数余额: %+v", credits)
+	}
+
+	var sub model.MembershipSubscription
+	if err := g.First(&sub, "user_id = ? and plan_id = ? and status = ?", user.ID, "paid", "active").Error; err != nil {
+		t.Fatalf("应生成 paid 生效订阅: %v", err)
+	}
+	if sub.SourceRef != orderID {
+		t.Fatalf("订阅来源应为订单 id, got %s", sub.SourceRef)
+	}
+
+	var storage model.StorageAccount
+	if err := g.First(&storage, "user_id = ?", user.ID).Error; err != nil {
+		t.Fatalf("读取存储账户失败: %v", err)
+	}
+	if storage.QuotaBytes != int64(1024*1024*1024) {
+		t.Fatalf("付费档位配额应回写 1GB, got %d", storage.QuotaBytes)
+	}
+
+	// 重复回调幂等：不重复加点、不重复发会员
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/payments/webhook/alipay", map[string]string{"out_trade_no": orderID})
+	if w.Code != http.StatusOK {
+		t.Fatalf("重复回调应仍返回渠道成功响应: %d", w.Code)
+	}
+	var subCount int64
+	if err := g.Model(&model.MembershipSubscription{}).Where("user_id = ? and source_ref = ?", user.ID, orderID).Count(&subCount).Error; err != nil {
+		t.Fatalf("查询订阅失败: %v", err)
+	}
+	if subCount != 1 {
+		t.Fatalf("重复回调不应重复发会员: subs=%d", subCount)
+	}
+}
+
 // TestPendingDeletionCanLoginRefreshAndCancel 冷静期全链路：
 // 申请注销后登录与刷新不再被 403 拦截（撤销入口必须可达），撤销后账号恢复 active。
 func TestPendingDeletionCanLoginRefreshAndCancel(t *testing.T) {

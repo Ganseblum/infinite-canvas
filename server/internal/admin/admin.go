@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,7 +46,16 @@ type AdminHandler struct {
 	requests   *service.AIRequestService
 	moderation *service.ModerationService
 	media      *service.MediaWriteService
+	store      storage.Storage
+	wm         releaseWatermarker
+	wmEnabled  func() bool
 	settings   *service.SiteSettingService
+}
+
+// releaseWatermarker 供隔离件人工释放按物主档位烧录水印（评审 E-4），与 ai 域共用 *watermark.Service。
+type releaseWatermarker interface {
+	Image(data []byte, mimeType string) ([]byte, string, error)
+	Video(ctx context.Context, data []byte, mimeType string) ([]byte, error)
 }
 
 func NewAdminHandler(db *gorm.DB, cfg *config.Config, stor storage.Storage) *AdminHandler {
@@ -67,7 +77,14 @@ func NewAdminHandlerWithUpstream(db *gorm.DB, cfg *config.Config, stor storage.S
 		upstream:   upstream,
 		requests:   service.NewAIRequestService(db),
 		media:      service.NewMediaWriteService(db, stor),
+		store:      stor,
 	}
+}
+
+// SetWatermark 注入水印服务：人工释放隔离件时，生成产物按物主档位烧录水印（评审 E-4）。
+func (h *AdminHandler) SetWatermark(wm releaseWatermarker, enabled func() bool) {
+	h.wm = wm
+	h.wmEnabled = enabled
 }
 
 // ===== 用户管理 =====

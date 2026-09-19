@@ -16,7 +16,8 @@ import { createVideoGenerationTask, waitForVideoGenerationTask, type VideoGenera
 import { useAddAsset } from "@/hooks/use-asset-library";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
-import { fetchMediaDownload, mediaUrl, requestDownload } from "@/services/api/media";
+import { useMediaDownload } from "@/hooks/use-media-download";
+import { mediaUrl } from "@/services/api/media";
 import type { GenerationItem } from "@/services/data/types";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -73,6 +74,7 @@ type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => 
 export default function VideoPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
+    const { download: downloadMedia, isDownloading } = useMediaDownload();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
@@ -253,18 +255,12 @@ export default function VideoPage() {
     };
 
     const downloadVideo = async (video: GeneratedVideo) => {
-        try {
-            // 无 storageKey 的记录沿用原地址直存；有 storageKey 的先申请取件链接再取件保存。
-            if (!video.storageKey) {
-                saveAs(video.url, "video.mp4");
-                return;
-            }
-            const { url } = await requestDownload(video.storageKey);
-            const blob = await fetchMediaDownload(url);
-            saveAs(blob, "video.mp4");
-        } catch (error) {
-            message.error(getApiErrorMessage(error));
+        // 无 storageKey 的记录沿用原地址直存；有 storageKey 的先申请取件链接再取件保存。
+        if (!video.storageKey) {
+            saveAs(video.url, "video.mp4");
+            return;
         }
+        await downloadMedia({ key: video.id, storageKey: video.storageKey, filename: "video.mp4" });
     };
 
     const saveResultToAssets = (video: GeneratedVideo) => {
@@ -274,6 +270,8 @@ export default function VideoPage() {
             storageKey: video.storageKey,
             bytes: video.bytes,
             data: { url: video.storageKey ? undefined : video.url, width: video.width, height: video.height, mimeType: video.mimeType, source: t("videoWorkbench.source"), prompt },
+            // 生成结果存为素材带 AIGC 标识，发布社区作品时随素材派生。
+            isAIGC: true,
         });
     };
 
@@ -500,7 +498,7 @@ export default function VideoPage() {
                             <div className="grid gap-4">
                                 {results.map((result) =>
                                     result.status === "success" && result.video ? (
-                                        <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
+                                        <ResultVideoCard key={result.id} video={result.video} downloading={isDownloading(result.video.storageKey)} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} />
                                     ) : (
@@ -573,7 +571,7 @@ function GenerationSettings({ config, model, updateConfig }: { config: AiConfig;
     );
 }
 
-function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedVideo; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
+function ResultVideoCard({ video, downloading, onDownload, onSaveAsset }: { video: GeneratedVideo; downloading: boolean; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
     const { t } = useTranslation();
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
@@ -590,7 +588,7 @@ function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedV
                     <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(video)}>
                         {t("common.addToAssets")}
                     </Button>
-                    <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(video)}>
+                    <Button size="small" icon={<Download className="size-3.5" />} loading={downloading} onClick={() => onDownload(video)}>
                         {t("common.download")}
                     </Button>
                 </div>
