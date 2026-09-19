@@ -25,12 +25,15 @@ export function clearToken() {
 }
 
 // authFetch 互动请求统一入口：带 Bearer（如有）；401 时调用方可提示登录。
-export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
+// body 接受对象或字符串：对象统一序列化（fetch 不接受普通对象，会变成 "[object Object]"）。
+type AuthFetchInit = Omit<RequestInit, "body"> & { body?: object | string | null };
+
+export async function authFetch(path: string, init: AuthFetchInit = {}): Promise<Response> {
   const token = getToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  // 对象 body 统一序列化：fetch 不接受普通对象（会变成 "[object Object]"）
-  const body = typeof init.body === "string" || init.body == null ? init.body : JSON.stringify(init.body);
+  const raw = init.body;
+  const body = typeof raw === "string" || raw == null ? raw : JSON.stringify(raw);
   if (body) headers.set("Content-Type", "application/json");
   return fetch(path, { ...init, body, headers });
 }

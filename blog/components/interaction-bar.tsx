@@ -20,7 +20,7 @@ export default function InteractionBar({ postId, postSlug, likeCount, bookmarkCo
   const [marks, setMarks] = useState(bookmarkCount);
   const [hint, setHint] = useState("");
 
-  const call = async (method: string, path: string, body?: unknown) => {
+  const call = async (method: string, path: string, body?: object) => {
     const res = await authFetch(`/api/v1/blog/${path}`, { method, body });
     if (res.status === 401) {
       setHint("登录后才能互动");
