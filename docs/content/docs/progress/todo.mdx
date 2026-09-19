@@ -5,6 +5,10 @@ description: 已规划的后续工作
 
 # 待办
 
+## 上游同步：WebP 缩略图移植（本次同步遗留）
+
+- **WebP 本地缩略图预览移植**：upstream v0.19.0 的「画布图片按 768px WebP 预览渲染」未随本次同步合入——其实现依赖我方已删除的本地图片存储（`image-storage.ts` / `use-asset-store.ts`）。移植思路：图片经 `media-ingest` 上传完成后从服务端拉取原件生成 WebP 预览存本地 IndexedDB，`canvas-node.tsx` 按 `pickImageSource` 依缩放选择预览/原图，删除图片时同步清理预览；可直接复用 upstream 提交 `ed7e901` / `48637e5` / `52d85d6` 中的 `lib/image-thumbnail.ts` 与对应测试。
+
 ## 平台账号与会员体系：遗留与后续（本版本新增）
 
 - **OIDC token 端点限流**：authorize/token 未挂 IP 级限流（auth 的 login/register 有）；新增限流参数属行为边界值，按仓库规则需先确认再实现。
