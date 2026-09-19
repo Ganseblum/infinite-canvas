@@ -1,77 +1,166 @@
 ---
-title: Features
-description: Major features available in the current project
+title: 功能介绍
+description: 当前项目已实现的主要功能
 ---
 
-# Features
+# 功能介绍
 
-## Canvas projects
+本文档记录当前项目已经实现的主要功能。
 
-- Create, rename, duplicate, delete, import, and export canvas projects.
-- Persist projects on the server; every signed-in device picks up where you left off, with autosave and conflict prompts.
-- Keep viewport, background, nodes, connections, and assistant sessions with each project.
+## 画布项目
 
-## Infinite canvas
+- 支持创建多个画布项目。
+- 支持项目重命名、删除、批量选择和批量删除。
+- 支持单个画布项目导出为 JSON，也支持从 JSON 导入画布。
+- 画布项目保存在服务端，登录后在任何设备都能继续编辑；编辑后空闲 2 秒自动保存，顶栏显示保存状态，多设备同时编辑会弹出冲突选择。
 
-- Pan, zoom, reset the view, select multiple nodes, copy and paste, undo and redo.
-- Drag files onto the canvas and use lines, dots, or a blank background.
-- Export the entire canvas or selected elements with their resources.
+## 无限画布
 
-## Nodes and workflows
+- 支持拖动画布、滚轮缩放、缩放滑杆和重置视图。
+- 支持小地图定位，可开关小地图。
+- 支持点阵、网格线、空白三种背景。
+- 支持浅色和深色主题。
+- 支持框选、多选、全选、取消选择、删除选中。
+- 支持复制粘贴节点和节点之间的连线。
+- 支持撤销和重做节点、连线、视口、背景和助手会话变化。
+- 支持节点连线，并高亮当前节点相关的上下游节点和连线。
+- 支持快捷键帮助，覆盖缩放、框选、全选、复制粘贴、撤销重做、删除、退出选择和拖入图片。
 
-- Text, image, video, and generation-configuration nodes.
-- Connect text prompts and reference media to generation nodes.
-- Generate or rewrite text, create images, edit images from references, and create videos.
-- Preserve original image ratios by default and organize batch results as connected nodes.
-- Record prompts, models, dimensions, quality, and references on generated nodes for retries.
+## 节点
 
-## AI generation
+目前画布内置六类节点，插件还可以扩展更多类型：
 
-Generation is routed through the server: the browser only talks to `/api/ai/*`, models come from the server catalog, channel keys are encrypted server-side, and no credentials exist in the browser.
+- 图片节点：展示上传图片、生成图片或我的素材图片。
+- 文本节点：保存提示词、说明文案、AI 文字回答等文本内容。
+- 生成配置节点：汇总上游文本和图片，统一配置模型、比例、数量后批量生成图片或文本。
+- 视频节点：原生播放器预览生成或上传的视频，异步任务刷新页面后可继续查询。
+- 音频节点：展示生成的语音或上传的音频。
+- 组节点：把多个节点收成一组，整组移动，也可作为生成输入一次性引用组内资源。
 
-- Quote first so the cost and any active discount are known before generating; insufficient credits are rejected before the upstream call.
-- Credits spend the granted bucket before the purchased one and refund to the original bucket on failure; an idempotency key deduplicates retries.
-- Video runs as an async task polled by the server, so closing the page still lets it finish, and failures refund automatically.
-- Chat uses a single event stream with incremental output; stopping also cancels the upstream request.
-- Generated results are stored server-side and served from `/api/media/...` instead of expiring third-party URLs.
-- In-site generation and uploads are moderated: prompts and references are checked before credits are reserved, artifacts and uploads pass through a quarantine area before normal storage, rejected inputs cost nothing, rejected artifacts are not refunded, and false rejections can be reviewed and compensated by admins.
+节点支持：
 
-## Canvas Agent
+- 拖拽移动。
+- 四角缩放。
+- 图片节点等比缩放或自由比例切换。
+- 查看节点基础信息和 JSON。
+- 删除、复制、粘贴。
+- 通过左右连接点建立上下游关系。
 
-- Connect local Codex through Canvas Agent and MCP without giving a web server direct access to browser state.
-- Read the active canvas, selection, nodes, edges, generation status, and apply structured operations.
-- Use Codex from the browser side panel with streaming responses, history, approvals, permissions, diagnostics, and local Skills.
-- Isolate active canvases and turns across multiple browser tabs.
+内置节点之外的能力以插件形式加载，支持通过 URL 动态安装、启用、更新和卸载远程节点插件（见下文「节点插件系统」）。
 
-See [Codex App Plugin](/docs/overview/codex-app-plugin) for installation and usage.
+## 图片工作流
 
-## Plugin system
+- 支持上传图片到新节点。
+- 支持拖拽图片文件到画布。
+- 支持替换已有图片节点内容。
+- 支持下载图片节点。
+- 支持把图片节点保存到“我的素材”。
+- 支持图片裁剪，并把裁剪结果生成为新的图片节点。
+- 支持本地多角度变换，并把结果生成为新的图片节点。
+- 支持生成失败后重试。
+- 批量生成多张图片时会先展示为图片组节点，支持叠卡预览、展开查看全部结果并设置主图。
 
-Canvas plugins can contribute node types, rendering, inspectors, serialization, migration, toolbar actions, and optional AI generation capabilities. Built-in and local plugins are managed through the canvas UI.
+## 账号与点数
 
-## Prompts and assets
+- 全部功能登录后使用：注册需要邮箱验证，支持找回密码、个人中心与账号注销（7 天冷静期，期间可撤销）。
+- 点数分为购入与赠送两个桶，生成时先扣赠送再扣购入，失败自动退回原桶；赠送点数不产生付费身份。
+- 充值按档位下单，支持支付宝与微信，到账金额与流水在同一事务写入，同一笔支付重复回调不会重复加点。
+- 个人中心展示当前档位、双桶余额、最近流水与存储用量；媒体到期前 2 天会在个人中心与画布列表给出提示。
 
-- Use seven built-in prompt sources from the [Image Prompts](https://github.com/yukkcat/image-prompts) registry, with independent enablement, manual refresh, and scheduled refresh.
-- Add, edit, and remove custom standard JSON sources while retaining the last successful cache when refresh fails.
-- Search across enabled sources, filter by tags, inspect prompt details, copy prompts, and insert them into the canvas.
-- Store reusable images, videos, audio, and prompt assets in the browser.
+## AI 生成
 
-See [Third-party Prompt Sources](/docs/overview/third-party-prompt-repositories) for the complete built-in list.
+生成请求统一由服务端转发：浏览器只与本站 `/api/ai/*` 通信，模型来自服务端目录，渠道 Key 加密保存在服务端，浏览器不持有任何凭据。
 
-## Accounts and credits
+- 生成前先取报价，确认本次消耗点数与命中的折扣；点数不足会在调用上游前拒绝。
+- 扣点先扣赠送桶再扣购入桶，生成失败自动按原桶退还；重复提交由幂等键去重。
+- 视频为异步任务：创建后由服务端后台轮询，关闭页面任务仍会完成，失败自动退款。
+- 文本对话使用统一事件流逐字返回；停止生成会同时取消上游请求。
+- 生成产物一律转存为 `storageKey`，通过 `/api/media/...` 展示，不依赖第三方临时链接。
+- 站内生成与上传链路都经过内容审核：提示词与参考图在扣点前预审，产物与上传先进入隔离区、通过后才进入正式存储；被拒输入不扣点，产物被拒不退点，误判可由管理员复核并补偿。
 
-- Everything requires signing in. Registration sends a verification email, and password reset, the profile page, and account deletion (7-day cooling period with undo) are available.
-- Credits are split into purchased and granted buckets. Generations spend granted first and refund to the original bucket on failure; granted credits never make an account paid.
-- Top-ups are packaged orders paid with Alipay or WeChat; credits land in the same transaction as the order state change, and repeated callbacks never credit twice.
-- The profile page shows the current plan, both buckets, recent transactions, and storage usage; media expiring within two days is surfaced on the profile and canvas list pages.
+模型与渠道全部由服务端配置：管理员在 `/admin` 维护平台模型目录、AI 渠道与价格矩阵，用户侧不需要也不能填写 Base URL 或 API Key。模型选择器为空表示管理员尚未上架模型，需要管理员先在后台配置。
 
-## Configuration and administration
+- 生成前在节点或生成配置节点上选择模型，并按服务端模型目录声明的约束填写质量、分辨率、比例、数量等参数；切换模型时非法已选值会自动回落。
+- 视频、音频参数（清晰度、时长、生成声音、水印等）同样来自服务端模型目录。
+- 站内生成请求统一由服务端按平台渠道转发，密钥管理与不同中转站、自建服务的接口适配都在服务端完成，浏览器不接触任何凭据。
 
-- Export and import channel, model, generation, and prompt-source settings.
-- The platform model catalog, promotions, and price matrix are served by the API; the models page, pricing page, and admin pages read from it.
-- Manage users, the model catalog, promotions, packages, and orders from `/admin`; non-admins are redirected and rejected by the API.
+普通图片/文本节点可以直接输入提示词生成结果。生成配置节点可以读取上游节点内容，并按节点自己的配置批量生成多个图片或文本结果。生成配置节点支持预览当前提示词和参考图输入，并调整输入顺序。
 
-## Current limitations
+节点下方对话框和组装提示词输入框都支持 `@` 引用已连接的图片、文本、视频、音频等资源；`@` 引用图片时，输入框内会直接显示该图片的真实缩略图，而不再是「图片1」这类文字编号，发送时会按当前连接自动编号交给模型理解。由于引用改在对话框内直接 `@`，画布节点右上角不再显示「图片1 / 文本1」资源角标。
 
-- Canvases, assets, generations, and media live on the server; AI requests are routed through the backend and the browser holds no channel credentials.
-- Production Docker static-resource paths still require broader deployment verification.
+视频生成可从文本节点读取 prompt，从图片节点读取参考图。生成成功后会把视频插入画布为视频节点并使用原生播放器预览。
+
+## 画布助手
+
+画布右侧助手面板支持：
+
+- 文本问答。
+- 生图。
+- 读取当前选中节点作为引用。
+- 自动把选中节点的上游节点也纳入引用。
+- 粘贴图片到助手输入框并插入画布。
+- 历史会话。
+- 删除单条或多条会话。
+- 重试回答。
+- 把助手生成的文本插入画布。
+- 把助手生成的图片插入画布。
+- 折叠和展开助手面板。
+
+## 节点插件系统
+
+画布支持通过节点插件扩展新的节点类型，内置节点之外的能力都可以以插件形式加载：
+
+- 支持通过 URL 动态安装、启用、更新和卸载远程节点插件。
+- 提供官方插件注册表，节点插件面板可从项目仓库读取官方插件列表并一键安装。
+- 提供 TypeScript 插件开发 SDK，可自行开发画布节点插件，并使用 AI 生成、面板控制等扩展能力。
+- 内置 Markdown、SVG、HTML、3D 全景、便利贴等示例插件。
+- 插件面板会显示插件版本，并对可升级的插件给出提醒。
+
+Codex App 插件的安装与使用见 [Codex App 插件](/docs/overview/codex-app-plugin)。
+
+## 提示词库
+
+前台提示词库支持：
+
+- 按标题搜索。
+- 按标签筛选。
+- 按来源筛选。
+- 查看提示词详情。
+- 查看封面和结果图。
+- 复制提示词。
+- 把提示词加入“我的素材”。
+
+提示词管理支持：
+
+- 7 个内置来源可独立启用、查看和拉取，也可按设定周期批量更新。
+- 添加、编辑和删除自定义标准 JSON 来源。
+- 拉取失败时保留上一次成功缓存，并显示来源状态和最近成功时间。
+- 跨已启用来源搜索提示词，按标签筛选，查看详情、复制提示词或插入画布。
+
+7 个内置来源为 Banana Prompt Quicker、DavidWu GPT Image 2、Freestylefly GPT Image 2、Awesome GPT Image、Awesome GPT-4o、YouMind GPT Image 2 和 YouMind Nano Banana Pro。应用从 [Image Prompts](https://github.com/yukkcat/image-prompts) 统一仓库读取标准 JSON，由浏览器前端直连并缓存到 IndexedDB。完整来源见[第三方提示词来源](/docs/overview/third-party-prompt-repositories)。
+
+## 素材
+
+“我的素材”是服务端素材库，登录后在任何设备都能使用，支持：
+
+- 新增文本素材和图片素材。
+- 编辑素材标题、封面、标签、来源、备注和内容。
+- 删除素材。
+- 按关键词搜索。
+- 按类型筛选。
+- 分页浏览。
+- 复制文本素材。
+- 下载图片素材。
+- 从提示词库和画布节点加入素材。
+- 在画布中插入素材。
+
+## 配置与管理后台
+
+- 配置弹窗提供本地代理（经本机 canvas-proxy 转发自有 OpenAI 兼容服务）、默认模型、生成偏好、提示词来源与本地存储管理；平台模型与渠道由服务端配置，浏览器不保存任何 API Key。
+- 管理员在 `/admin` 管理用户、模型目录、AI 渠道、折扣活动、充值档位与订单；非管理员访问会被重定向到首页，后端接口同样拒绝非管理员。
+- 第三方提示词来源仍由浏览器前端直连拉取并缓存；AI 生成的所有请求已改为服务端转发，浏览器不再直连任何模型接口。
+
+## 当前限制
+
+- 画布、素材、生成记录与媒体保存在服务端；AI 请求已由服务端转发，浏览器不持有任何渠道凭据。
+- 画布更适合桌面端使用，移动端触控体验还未系统完善。

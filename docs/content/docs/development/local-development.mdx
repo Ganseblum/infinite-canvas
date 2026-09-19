@@ -1,21 +1,21 @@
 ---
-title: Local Development
-description: Local code with shared server-side test data
+title: 本地开发
+description: 本地代码联调与服务器测试数据共享
 ---
 
-# Local Development
+# 本地开发
 
-`web/` is the Vite frontend and `server/` is the Go API. The deployment has two databases: test and production. Local development shares the server's `infinite_canvas_test`; media binaries are stored separately from database records.
+`web/` 是 Vite 前端，`server/` 是 Go 后端。当前约定只保留服务器测试、正式两套数据库，本地开发共用 `infinite_canvas_test`；画布、素材和生成记录存数据库，媒体文件另由存储驱动保存。
 
-## Frontend changes
+## 只改前端
 
-After deploying the server test environment, leave local Go stopped and open an API tunnel:
+服务器测试站部署完成后，不启动本地 Go，先在电脑打开 API 隧道：
 
 ```bash
-ssh -N -L 127.0.0.1:8080:127.0.0.1:3100 root@SERVER_ADDRESS
+ssh -N -L 127.0.0.1:8080:127.0.0.1:3100 root@服务器地址
 ```
 
-Start the frontend in another terminal:
+另开终端启动前端：
 
 ```bash
 cd web
@@ -23,35 +23,35 @@ bun install
 bun run dev
 ```
 
-Open `http://localhost:3000` and leave `VITE_API_BASE_URL` empty. The existing Vite `/api` proxy reaches local port `8080`, then the server test app/API through SSH. Media stays on the server. Frontend edits hot-reload without publishing another test image.
+打开 `http://localhost:3000`，保持 `VITE_API_BASE_URL` 为空。现有 Vite 把 `/api` 发到本机 `8080`，经 SSH 到服务器测试 app / api；媒体也由测试服务提供。保存前端代码即可热更新，不必每次发布测试镜像。
 
-Local port `8080` must be free. Verify refresh cookies, media and SSE; use local HTTPS if browser behavior requires it. Plain LAN HTTP addresses do not have the same behavior as localhost. The Go API currently has no CORS configuration, so do not switch browser requests directly to a cross-origin API base.
+本机 `8080` 必须空闲。需要验收 Cookie 刷新、媒体与 SSE，浏览器有差异时用本地 HTTPS；普通局域网 HTTP 地址不等同 localhost。当前后端没有 CORS 配置，不直接将浏览器 API base 改为远程跨域地址。
 
-## Inspect the test database
+## 查看测试数据库
 
-The test MySQL is published only on the server's loopback port `13306`:
+服务器测试 MySQL 只映射宿主机回环 `13306`，使用另一个隧道：
 
 ```bash
-ssh -N -L 127.0.0.1:13306:127.0.0.1:13306 root@SERVER_ADDRESS
+ssh -N -L 127.0.0.1:13306:127.0.0.1:13306 root@服务器地址
 ```
 
-In DBeaver, create a MySQL connection to `127.0.0.1:13306`, database `infinite_canvas_test`, using the actual test `MYSQL_USER` / `MYSQL_PASSWORD`. Database credentials differ from SSH credentials. Disable DBeaver's SSH option when using this terminal tunnel. Community supports table inspection, SQL and ER diagrams; analytical chart availability depends on edition.
+DBeaver 新建 MySQL 连接，填写 `127.0.0.1:13306`、库 `infinite_canvas_test`、实际 `MYSQL_USER` / `MYSQL_PASSWORD`。数据库密码不是 SSH 密码；使用终端隧道时不用再开启 DBeaver SSH。Community 版可看表格、执行 SQL 与看 ER 结构图，分析图表功能按版本提供。
 
-## Full-stack changes: planned mode
+## 改前后端：目标模式待实施
 
-Local Go can connect to the shared test database through SSH, but merely changing `DATABASE_URL` is insufficient for two complete Go processes to run together:
+本地 Go 可以通过上述数据库隧道共用测试库，但当前不能只改 `DATABASE_URL` 就与服务器测试 Go 完整并行：
 
-- Both use the same private test S3 bucket; their separate local media directories are not shared.
-- Add startup-maintenance and background-task controls first. The server test Go is the default sole executor of schema changes, seeds, admin initialization, startup request convergence and scheduled tasks. Local Go disables these actions; those controls are not implemented yet.
-- Share the test JWT and credential master keys, keep production keys independent, and keep both code versions compatible with the test schema. Define restart or refresh behavior for process-local setting caches.
+- 两端共用同一私有测试 S3 桶；各自的 `local` 媒体目录互不可见。
+- 先增加启动维护与后台任务开关，默认服务器测试 Go 负责自动改表、seed、管理员初始化、启动请求收敛和定时任务，本地 Go 关闭这些动作。当前开关未实现。
+- 共享测试 `JWT_SECRET`、`CREDENTIAL_MASTER_KEY`，与正式密钥独立；两端代码兼容同一个测试库结构，设置缓存变更需明确重启或刷新方式。
 
-Once prerequisites are complete, prepare properly quoted shell assignments in the computer's repository-root `.env.local`, with database host `127.0.0.1:13306`, local `APP_BASE_URL=http://localhost:3000` and `COOKIE_SECURE=false` for local HTTP. Go reads process environment only; explicitly load/export configuration before running `go run ./cmd/server` from `server/`.
+前置条件完成后，在本地仓库根目录 `.env.local` 准备正确引用的 shell 赋值配置，数据库主机为 `127.0.0.1:13306`，本地 `APP_BASE_URL=http://localhost:3000`，本地 HTTP `COOKIE_SECURE=false`。Go 只读进程环境，不会自动加载 `.env`；启动前明确加载/export，再到 `server/` 运行 `go run ./cmd/server`。
 
-Close the API tunnel occupying `8080` so local Go can use that port, retain the database tunnel, and keep Vite's same-origin `/api` proxy. Local data edits affect the test site. Publishing code does not copy test data into production.
+此时关闭本机 `8080` 的 API 隧道，让本地 Go 使用该端口；保留 `13306` 数据库隧道，Vite 继续同源代理 `/api`。本地修改共享测试数据会影响测试站，正式数据不随代码发布复制。
 
-See the repository's `deploy/README.md` for the rollout, DBeaver's built-in SSH option, media and backup requirements. Real server details remain in the local-only runbook. HTTPS, payment callbacks and deployment acceptance still require the server test environment.
+完整实施步骤、DBeaver 内置 SSH 方式、媒体与备份要求见仓库 `deploy/README.md`；真实服务器信息见《我的规划/部署方案（测试与正式环境）.md》。服务器 HTTPS、支付和部署验收仍需更新测试站后进行。
 
-## Documentation site
+## 文档站
 
 ```bash
 cd docs

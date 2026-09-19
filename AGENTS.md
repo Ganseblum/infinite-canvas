@@ -68,6 +68,15 @@
 - 图片节点尺寸逻辑要尊重原始比例，除非功能明确要求自由变形。
 - 批量生成、多图展示、助手面板等画布交互要尽量简洁，不要占用过多画布空间。
 
+## Server 结构规范
+
+- `server/internal` 按域组织：`account/`（认证与身份面）、`canvas/`（画布产品域）、`ai/`（AI 生成与媒体域）、`billing/`（点数与订单面）、`admin/`（管理面）各自拥有 handler 与路由表；`platform/`（billing/identity/membership/storage）是跨产品共享层；`service/`、`model/`、`db/`、`errs/`、`middleware/`、`httpx/`、`testutil/` 是共享横切层。
+- 依赖方向：基础设施 ← platform ← 产品域 ← admin 面 ← cmd。产品域之间不互相 import；确需共享的契约下沉到 `model`（如 `StorageKeyRe`、统计时区）或 `platform`，通用 HTTP 辅助进 `httpx`，唯一键冲突判断直接用 `errs`。
+- 新产品域（如 blog）落地时自包含一个新目录，handler/service/model 都放 `internal/<域>/`，照 `canvas` 包的模板长；只有确需跨域共享的能力才上移到 `platform/` 或 `service/`。
+- API 路径规范：用户面 `/api/v1/{域}/...`，全局单版本；管理面 `/api/admin/...` 不进公开版本契约。新增域直接在 `/api/v1` 下加分组，不需要加 nginx 配置（除非有 SSE、大文件等特殊传输需求才单独列 location）。
+- `cmd/server/main.go` 只做依赖注入与路由组装；各域路由表由域包的 `Mount*Routes` 维护，测试夹具与生产共用同一张表。
+- `testutil` 包禁止 import 任何业务域包，否则域包的包内测试会形成 import 环；跨域测试夹具（路由构建器、假上游）放在使用方域包的测试文件里，允许少量重复。
+
 ## 文档规范
 
 - README 保持简洁，只放项目介绍、核心功能、快速开始和文档入口。

@@ -6,6 +6,12 @@ const withMDX = createMDX();
 const config = {
   output: 'standalone',
   reactStrictMode: true,
+  async redirects() {
+    return [
+      { source: '/zh-CN', destination: '/', permanent: true },
+      { source: '/zh-CN/:path*', destination: '/:path*', permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       { source: '/', destination: '/en' },

@@ -1,59 +1,62 @@
 ---
-title: Design Implementation Notes
-description: Architecture decisions, component mapping, and known pitfalls for turning the mockups into React code
+title: 设计稿实现注意清单
+description: 从设计稿落到 React 代码时的架构决策、组件映射与已知坑位清单
 ---
 
-# Design Implementation Notes
+# 设计稿实现注意清单
 
-This document captures the architecture decisions, component mappings, and pitfalls discovered while building the `design/html/` mockups, so the React implementation does not rediscover them the hard way.
+本文档沉淀 `design/html/` 设计稿在实现为 React 代码时的架构决策、组件映射关系与实现时要注意的坑位，避免落地时重新踩一遍设计稿阶段发现的问题。
 
-## Workbench boundary (important)
+## 工作台改造边界（重要）
 
-**Image/video workbenches get style changes only — no architecture or feature changes.** The source structure to preserve:
+**图片/视频工作台只改样式，不改架构与功能**。对齐的源码结构：
 
-- Layout: the three-column grid in `web/src/pages/image/index.tsx` (left 300px log panel / middle 420px params / right results), single column with bottom drawers on mobile — unchanged.
-- Result card states: `ResultImageCard` / `PendingImageCard` (dot-grid + spinner) / `FailedImageCard` (red + retry) — structure kept, new style tokens only.
-- LogPanel / LogCard, GenerationSettings — structure kept.
-- The Agent workflow (`use-workbench-agent-store` command dispatch, `imageCommand` handling) — **untouched**; the Agent panel shown in the mockups is just a visual placeholder for the existing `AgentPanel` from `user-layout.tsx`.
+- 布局：`web/src/pages/image/index.tsx` 的三栏 grid（左 300px 生成记录 / 中 420px 参数 / 右结果），移动端单列 + 底部 Drawer（记录、设置）——保持不变
+- 结果卡三态：`ResultImageCard` / `PendingImageCard`（点阵背景 + 旋转 loader）/ `FailedImageCard`（红底 + 重试）——保持结构，仅换新样式 token
+- 生成记录 LogPanel / LogCard、参数面板 GenerationSettings——保持结构
+- Agent 工作流（`use-workbench-agent-store` 派发命令、`imageCommand` 处理链路）——**完全不动**，样式层无感
+- 设计稿里补的 Agent 面板只是右侧 `AgentPanel`（`user-layout.tsx` 已有）的视觉占位，落地时直接复用现有组件
 
-## Global component mapping
+## 全局组件映射
 
-| Mockup class | React implementation |
+设计稿的自包含 CSS class 与 React 侧的对应关系：
+
+| 设计稿 class | React 实现 |
 | --- | --- |
-| `.btn-*` / `.icon-btn` | antd Button theming in `app-theme.ts`; active `scale(0.98)`, disabled `opacity-40 + pointer-events-none`, focus-visible 2px outline |
-| `.field-input` | antd Input/Select token overrides (focus border `#a8a29e`) |
-| `.chip*` | antd Tag theming; success state is black-on-white (`chip-blue`), no colors |
-| `.filter-tag` | reuse the existing `.prompt-filter-tag` pattern |
-| `.switch` | antd Switch theming (black/white inversion) |
-| `.popover` / `.menu-*` | antd Dropdown/Menu component tokens (already configured) |
-| `.toast` | antd message theming with semantic icons |
-| `.progress` (>90% red) | small custom component |
-| `.skeleton` / `.spinner` / `.indeterminate` | antd Skeleton/Spin + custom CSS |
-| Modal/Drawer transitions | antd built-ins suffice; custom scenes use the mockup curves |
+| `.btn-primary` / `.btn-secondary` / `.btn-danger` / `.btn-sm` / `.icon-btn` | antd Button 主题定制（`app-theme.ts`）+ 少量全局 class；active 态 `scale(0.98)`、disabled `opacity-40 + pointer-events-none`、focus-visible 2px 外描边 |
+| `.field-input` | antd Input/Select 的 token 覆盖（focus 边框 `#a8a29e`，对齐现有 canvas 控件） |
+| `.chip` / `.chip-green` / `.chip-red` / `.chip-amber` | antd Tag 主题定制；成功态用黑底反白（`chip-blue`），不用彩色 |
+| `.filter-tag`（多选约束 chip） | 现有 `.prompt-filter-tag` 模式复用 |
+| `.switch` | antd Switch 主题定制（黑白反转，不引入彩色） |
+| `.popover` / `.menu-item` / `.menu-label` | antd Dropdown/Menu 的组件 Token（已在 `app-theme.ts` 配置） |
+| `.toast` | antd message 主题定制；带语义图标（成功/错误/普通），错误态仅边框和文字变红 |
+| `.progress`（>90% 变红） | 自定义小组件 |
+| `.skeleton` / `.spinner` / `.indeterminate` | antd Skeleton/Spin + 自定义 CSS |
+| Modal/Drawer 过渡 | antd 自带动画已足够；自定义场景用设计稿的 `modal-in`/`drawer-in` 曲线 |
 
-## Pitfalls already hit (watch for the same)
+## 已踩过的坑（实现时同样注意）
 
-1. **z-index table**: drawers/modals `z-[60]`, popovers inside them `z-[70]`, toasts `z-[70]`. A popover below the drawer layer gets hidden by the overlay.
-2. **fixed positioning + scroll containers**: anchored popovers must recompute position on scroll (capture phase) or they stick to stale viewport coordinates.
-3. **Insert semantics**: constraint tags insert **before** the "+ custom" button (`btn.before(tag)`); the add button always stays last in its group.
-4. **value/label mapping**: every option is `{ value, label? }`; `label` auto-generates when omitted (`3072 → 3K`, `1440 → 1440p`); ratio values are `width:height` integer pairs entered via two separate number inputs.
-5. **Image vs video param systems are separate**: image `quality` (render quality) vs `sizes` (short-edge tiers); video `resolutions` (vertical p) + `durations` (continuous range rendered as a slider) + `modes` + `supportsAudio/supportWatermark`. The conversion table ships from `/api/models`; no frontend hardcoding.
-6. **Infrastructure before mocks**: confirm toast/modal infrastructure exists before wiring interactions — four pages referenced an undefined `toast`, breaking clicks.
-7. **openModal handles both containers**: selector `.drawer-open, .modal-open` with null guard.
+1. **z-index 层级表**：抽屉/弹窗 `z-[60]`，其内部浮层（如自定义约束输入弹层）必须 `z-[70]`，Toast `z-[70]`。浮层低于抽屉会被遮罩盖住——设计稿阶段踩过。
+2. **fixed 定位 + 滚动容器**：锚定型浮层（挂在触发按钮旁）必须监听滚动（capture 阶段）实时重算位置，否则滚动时浮层钉在旧视口坐标——设计稿阶段踩过。
+3. **插入位置语义**：约束标签插入到「+ 自定义」按钮**之前**（`btn.before(tag)`），添加按钮永远在该组末尾。
+4. **value/label 映射**：所有参数选项统一 `{ value, label? }` 结构，`label` 缺省自动生成（`3072 → 3K`、`1440 → 1440p`）；比例 value 统一 `宽:高` 整数对，UI 用宽高两个独立输入框，不让用户手写字符串。
+5. **图片与视频参数体系分开**：图片 `quality`（渲染质量）与 `sizes`（短边档位）是两个维度；视频 `resolutions`（垂直 p 值）+ `durations`（连续秒数区间，前端渲染滑杆）+ `modes` + `supportsAudio/supportWatermark`。换算表随 `/api/models` 下发，前端不硬编码。
+6. **基础设施先于 Mock**：批量给页面加交互前先确认 toast/modal 基础设施存在——设计稿阶段 4 个页面引用了未定义的 `toast` 导致点击无效。
+7. **openModal 兼容两类容器**：选择器用 `.drawer-open, .modal-open` 并做 null 保护。
 
-## Mobile baseline
+## 移动端适配基线
 
-- Top nav collapses to a hamburger drawer below `md` (all front pages).
-- Admin sidebar hidden below `md`, served by the hamburger drawer; the docs tree has its own `lg` breakpoint drawer.
-- Workbenches: log panel hidden below `lg` → bottom drawer; params → bottom drawer; fixed mobile generate bar.
-- Account: sidebar becomes horizontal tabs below `md`.
-- Tables: `overflow-x-auto` + `min-w-[...]`.
-- Agent panel: fixed full-width on mobile, static sidebar on desktop.
-- Constraint chip containers: `flex-wrap`; the custom popover clamps to viewport bounds.
+- 顶部导航：`md` 以下折叠为汉堡抽屉（所有前台页面已实现）
+- 后台侧边栏：`md` 以下隐藏，汉堡抽屉承载（admin 系列已实现）；文档树单独 `lg` 断点抽屉
+- 工作台：`lg` 以下隐藏左侧记录面板 → 底部抽屉；参数面板 → 底部抽屉；移动端底部固定生成栏
+- 个人中心：`md` 以下侧栏变顶部横向 tab
+- 表格：一律 `overflow-x-auto` + `min-w-[...]`
+- Agent 面板：移动端 fixed 全宽覆盖，桌面端 static 侧栏
+- 约束 chip 容器：`flex-wrap`，自定义弹层定位做了视口边界收敛（`min(rect.left, innerWidth - 272)`）
 
-## Suggested implementation order
+## 落地顺序建议
 
-1. Extend `app-theme.ts` tokens first (button states, Tag, Switch, message icons) — global effect in one step.
-2. Implement front pages in the order shown in `index.html`, reusing existing components before adding new ones.
-3. Build the seven admin pages on a shared `web/src/layouts/admin-layout.tsx` (new).
-4. Workbenches last: swap style tokens only, keep the structure.
+1. 先做 `app-theme.ts` 的 token 扩展（按钮三态、Tag、Switch、message 图标），全局一次生效
+2. 前台页面按 `index.html` 总览顺序逐页落地，每页先复用现有组件再补差异
+3. 后台 7 页共用一套侧边栏布局组件（`web/src/layouts/admin-layout.tsx` 新建）
+4. 工作台最后做：只替换样式 token，结构不动

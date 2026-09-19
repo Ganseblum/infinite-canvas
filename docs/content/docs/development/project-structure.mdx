@@ -1,296 +1,297 @@
 ---
-title: Project Structure
-description: Repository layout, tech stack per subproject, core modules, and data flow
+title: 项目结构
+description: 仓库目录划分、各子项目技术栈、核心模块与数据流总览
 ---
 
-# Project Structure
+# 项目结构
 
-This document describes how the repository is organized, what each subproject is built with, and how the core modules relate to each other.
+本文档说明仓库的整体结构、各子项目使用的技术栈，以及核心模块之间的关系，帮助开发者或 AI Agent 快速建立全局认知。
 
-For end-user feature descriptions see [Features](/docs/overview/features); for the local canvas data format see [Canvas Data Structure](/docs/development/canvas-data-structure).
+功能的使用说明见 [功能介绍](/docs/overview/features)，画布本地数据格式见 [画布数据结构](/docs/development/canvas-data-structure)。
 
-## Repository overview
+## 仓库总览
 
-The repository holds four subprojects. Each installs its own dependencies; there is no shared workspace configuration.
+仓库包含四个子项目，各自独立安装依赖，没有统一的 workspace 配置。
 
-| Directory | Purpose | How it runs |
+| 目录 | 说明 | 运行方式 |
 | --- | --- | --- |
-| `web/` | Main application, the browser-side infinite canvas | Vite dev server / static site |
-| `canvas-agent/` | Local agent service bridging Codex and Claude Code | Node process on the user machine |
-| `docs/` | Documentation site (this site) | Next.js server |
-| `plugins/` | Canvas node plugins, plugin SDK, and the Codex app plugin | Build artifacts consumed by the two above |
+| `web/` | 主应用，浏览器端无限画布 | Vite 开发服务器 / 静态站点 |
+| `canvas-agent/` | 本地 Agent 服务，连接 Codex / Claude Code | 本机 Node 进程 |
+| `docs/` | 文档站（即本站） | Next.js 服务 |
+| `plugins/` | 画布节点插件、插件 SDK 与 Codex app 插件 | 构建产物，被上面两者消费 |
 
-Other top-level entries:
+其余顶层内容：
 
-| Path | Purpose |
+| 路径 | 说明 |
 | --- | --- |
-| `AGENTS.md` | Rules for AI and automated development; read before changing code |
-| `CHANGELOG.md` | Change log; `Unreleased` collects unshipped changes |
-| `VERSION` | Current version, injected into the frontend as `__APP_VERSION__` |
-| `Dockerfile`, `docker-compose*.yml`, `nginx.conf` | Frontend container deployment |
-| `vercel.json`, `render.yaml` | Vercel and Render deployment configuration |
-| `.github/workflows/` | CI: Pages, Docker image, docs image, official plugin publishing |
-| `.agents/` | Codex plugin marketplace config and local skills, pinned by `skills-lock.json` |
-| `assets/` | Images used by the README |
+| `AGENTS.md` | AI / 自动化开发约束，改动代码前需遵循 |
+| `CHANGELOG.md` | 变更日志，`Unreleased` 记录未发版改动 |
+| `VERSION` | 当前版本号，构建时注入前端 `__APP_VERSION__` |
+| `Dockerfile` / `docker-compose*.yml` / `nginx.conf` | 前端容器化部署 |
+| `vercel.json` / `render.yaml` | Vercel、Render 平台部署配置 |
+| `.github/workflows/` | CI：Pages、Docker 镜像、文档镜像、官方插件发布 |
+| `.agents/` | Codex 插件市场配置与本地 skills，由 `skills-lock.json` 锁定 |
+| `assets/` | README 中的赞助商等图片资源 |
 
-## Architecture
+## 整体架构
 
-The browser is where everything runs. There is no first-party backend: canvas data lives locally, AI requests go directly from the browser to the endpoint you configure, and the local agent only starts when you want Codex to operate the canvas.
+浏览器是所有业务的执行主体，没有项目自建的后端服务：画布数据存在本地，AI 请求由前端直连用户配置的接口，本地 Agent 只在需要让 Codex 操作画布时才启动。
 
 ```text
                     ┌──────────────────────────────┐
-                    │  Browser (web/)               │
-                    │  canvas / workbench / prompts │
+                    │  浏览器（web/）               │
+                    │  画布 / 工作台 / 提示词 / 素材 │
                     └───┬───────────┬──────────┬───┘
                         │           │          │
-        IndexedDB       │      direct HTTPS    │  HTTP + SSE
+        IndexedDB       │      直连 HTTPS      │  HTTP + SSE
       localStorage ◄────┘           │          └─────────────┐
-                                    ▼                        ▼
-                       OpenAI-compatible APIs      canvas-agent (127.0.0.1)
-                       GitHub prompt repos                   │ stdio JSON-RPC
-                       WebDAV (optional sync)                ▼
+      （画布/素材/配置）             ▼                        ▼
+                          OpenAI 兼容接口          canvas-agent（本机 127.0.0.1）
+                          GitHub 提示词仓库                  │ stdio JSON-RPC
+                          WebDAV（可选同步）                  ▼
                                                     Codex app-server / Claude CLI
                                                              │ MCP
-                                                             └──► canvas tool calls
+                                                             └──► 回调画布工具
 ```
 
-## web/: frontend application
+## web/：前端主应用
 
-### Tech stack
+### 技术栈
 
-| Area | Choice |
+| 分类 | 选型 |
 | --- | --- |
-| Build | Vite 7, `@vitejs/plugin-react`, TypeScript 5 |
-| Framework | React 19.2.5 |
-| Routing | React Router 7 |
-| State | Zustand 5, TanStack Query 5 |
-| UI | Ant Design 6, Pro Components, Radix UI, shadcn, lucide-react, motion |
-| Styling | Tailwind CSS 4 (CSS-first, no `tailwind.config.js`) |
-| Storage | localforage (IndexedDB) |
-| Network | axios |
-| Editors | `@uiw/react-codemirror`, `streamdown` |
-| i18n | i18next, react-i18next (zh-CN / en-US) |
-| Formatting | Prettier |
+| 构建 | Vite 7、`@vitejs/plugin-react`、TypeScript 5 |
+| 框架 | React 19.2.5 |
+| 路由 | React Router 7 |
+| 状态 | Zustand 5、TanStack Query 5 |
+| UI | Ant Design 6、Ant Design Pro Components、Radix UI、shadcn、lucide-react、motion |
+| 样式 | Tailwind CSS 4（CSS-first，无 `tailwind.config.js`）、`@tailwindcss/postcss` |
+| 存储 | localforage（IndexedDB） |
+| 网络 | axios |
+| 编辑器 | `@uiw/react-codemirror`、`streamdown` |
+| 国际化 | i18next、react-i18next（zh-CN / en-US） |
+| 工具 | nanoid、dayjs、fflate、file-saver、copy-to-clipboard |
+| 格式化 | Prettier |
 
-The package manager is bun. There is no ESLint setup and no test framework under `web/`.
+包管理器为 bun（仓库同时保留 `bun.lock` 与 `package-lock.json`）。项目未接入 ESLint 和测试框架，`web` 下无测试文件。
 
-Scripts: `dev` (port 3000), `build`, `start` (preview), `typecheck`, `format`, `format:check`.
+脚本：`dev`（端口 3000）、`build`、`start`（预览）、`typecheck`、`format`、`format:check`。
 
-Beyond the usual setup, `vite.config.ts` adds the `@` path alias, compiles the root `VERSION` and `CHANGELOG.md` into `__APP_VERSION__` and `__APP_RELEASES__`, and exposes `public/plugins/*.js` as `/plugins/index.json` for local plugin discovery.
+`vite.config.ts` 除常规配置外做了三件事：注入 `@` 路径别名、把根目录 `VERSION` 与 `CHANGELOG.md` 编译进 `__APP_VERSION__` / `__APP_RELEASES__`、通过自定义插件把 `public/plugins/*.js` 暴露为 `/plugins/index.json` 供本地插件发现。
 
-### Directory responsibilities
+### 目录职责
 
 ```text
 web/src/
-├── main.tsx            application entry
-├── router.tsx          route table
-├── pages/              route pages
-├── layouts/            route shell (top nav + agent panel)
-├── components/         UI (canvas / agent / layout / prompts / ui)
-├── stores/             Zustand global state
-├── services/           local storage and external APIs
-├── lib/                pure helpers (themes, canvas ops, plugin runtime)
-├── hooks/              cross-page hooks
-├── constant/           constants and environment variables
-├── i18n/               locale packs
-├── types/              shared types
-└── styles/             global CSS
+├── main.tsx            应用入口
+├── router.tsx          路由表
+├── pages/              路由页面
+├── layouts/            路由外壳（顶部导航 + Agent 面板）
+├── components/         UI 组件（canvas / agent / layout / prompts / ui）
+├── stores/             Zustand 全局状态
+├── services/           本地存储与外部接口
+├── lib/                纯函数工具（主题、画布操作、插件运行时）
+├── hooks/              跨页面复用 hook
+├── constant/           常量与环境变量
+├── i18n/               语言包
+├── types/              共享类型
+└── styles/             全局 CSS
 ```
 
-### Routes
+### 路由
 
-Every page except the 404 shares `layouts/user-layout.tsx` (top navigation, agent side panel, analytics).
+所有页面共用 `layouts/user-layout.tsx`（顶部导航 + Agent 侧栏 + 访问统计），404 页除外。
 
-| Path | Page | File |
+| 路径 | 页面 | 文件 |
 | --- | --- | --- |
-| `/` | Home | `pages/home/index.tsx` |
-| `/canvas` | Canvas project list | `pages/canvas/index.tsx` |
-| `/canvas/:id` | Canvas editor | `pages/canvas/project.tsx` |
-| `/image` | Image workbench | `pages/image/index.tsx` |
-| `/video` | Video workbench | `pages/video/index.tsx` |
-| `/prompts` | Prompt library | `pages/prompts/index.tsx` |
-| `/assets` | My Assets | `pages/assets/index.tsx` |
-| `/config` | Settings | `pages/config/index.tsx` |
-| `*` | Not found | `pages/not-found/index.tsx` |
+| `/` | 首页 | `pages/home/index.tsx` |
+| `/canvas` | 画布项目列表 | `pages/canvas/index.tsx` |
+| `/canvas/:id` | 画布编辑器 | `pages/canvas/project.tsx` |
+| `/image` | 图片工作台 | `pages/image/index.tsx` |
+| `/video` | 视频工作台 | `pages/video/index.tsx` |
+| `/prompts` | 提示词库 | `pages/prompts/index.tsx` |
+| `/assets` | 我的素材 | `pages/assets/index.tsx` |
+| `/config` | 设置 | `pages/config/index.tsx` |
+| `*` | 404 | `pages/not-found/index.tsx` |
 
-### State management
+### 状态管理
 
-| Store | File | Owns | Persistence |
+| Store | 文件 | 职责 | 持久化 |
 | --- | --- | --- | --- |
-| `useCanvasStore` | `stores/canvas/use-canvas-store.ts` | Projects, nodes, connections, assistant sessions, viewport | localForage |
-| `usePluginStore` | `stores/canvas/use-plugin-store.ts` | Installed node plugins | localForage |
-| `useCanvasUiStore` | `stores/canvas/use-canvas-ui-store.ts` | Project list interaction state | none |
-| `useConfigStore` | `stores/use-config-store.ts` | AI channels, keys, generation preferences, WebDAV | localStorage |
-| `useAssetStore` | `stores/use-asset-store.ts` | My Assets | localForage |
-| `usePromptSourceStore` | `stores/use-prompt-source-store.ts` | Prompt sources and fetch schedule | localStorage |
-| `useThemeStore` | `stores/use-theme-store.ts` | Light / dark theme | localStorage |
-| `useAgentStore` | `stores/use-agent-store.ts` | Local agent connection, SSE, messages | partial localStorage keys |
-| `useAgentSkillStore` | `stores/use-agent-skill-store.ts` | Codex skill list and drafts | none |
-| `useWorkbenchAgentStore` | `stores/use-workbench-agent-store.ts` | Workbench commands issued by the agent | none |
-| `useCanvasSidePanelStore` | `stores/use-canvas-side-panel-store.ts` | Side panel width and open state | localStorage |
-| `useUserStore` | `stores/use-user-store.ts` | Local user placeholder | none |
+| `useCanvasStore` | `stores/canvas/use-canvas-store.ts` | 画布项目、节点、连线、助手会话、视口 | localForage |
+| `usePluginStore` | `stores/canvas/use-plugin-store.ts` | 已安装节点插件 | localForage |
+| `useCanvasUiStore` | `stores/canvas/use-canvas-ui-store.ts` | 项目列表交互态 | 无 |
+| `useConfigStore` | `stores/use-config-store.ts` | AI 渠道、密钥、生成偏好、WebDAV | localStorage |
+| `useAssetStore` | `stores/use-asset-store.ts` | 我的素材 | localForage |
+| `usePromptSourceStore` | `stores/use-prompt-source-store.ts` | 提示词来源与抓取计划 | localStorage |
+| `useThemeStore` | `stores/use-theme-store.ts` | 浅色 / 深色主题 | localStorage |
+| `useAgentStore` | `stores/use-agent-store.ts` | 本地 Agent 连接、SSE、消息 | 部分 localStorage 键 |
+| `useAgentSkillStore` | `stores/use-agent-skill-store.ts` | Codex Skill 列表与草稿 | 无 |
+| `useWorkbenchAgentStore` | `stores/use-workbench-agent-store.ts` | Agent 下发的工作台指令 | 无 |
+| `useCanvasSidePanelStore` | `stores/use-canvas-side-panel-store.ts` | 左侧面板宽度与开合 | localStorage |
+| `useUserStore` | `stores/use-user-store.ts` | 本地用户占位 | 无 |
 
-### Canvas core
+### 画布核心
 
-The canvas is custom-built rather than based on a graph library such as React Flow. `components/canvas/infinite-canvas.tsx` handles pan and zoom through CSS `transform`, `canvas-node.tsx` renders nodes, and `canvas-connections.tsx` draws edges.
+画布不使用 React Flow 之类的图编辑库，而是自研实现：`components/canvas/infinite-canvas.tsx` 用 CSS `transform` 处理平移缩放，节点由 `components/canvas/canvas-node.tsx` 渲染，连线在 `canvas-connections.tsx`。
 
-Built-in node types are declared as `CanvasNodeType` in `types/canvas.ts` and registered into `lib/canvas/node-registry.ts` by `components/canvas/nodes/builtin-nodes.tsx`:
+内置节点类型定义在 `types/canvas.ts` 的 `CanvasNodeType`，由 `components/canvas/nodes/builtin-nodes.tsx` 注册进 `lib/canvas/node-registry.ts`：
 
-| Type | Purpose |
+| 类型 | 用途 |
 | --- | --- |
-| `text` | Text and prompts |
-| `image` | Image generation and display, aspect ratio locked by default |
-| `video` | Video generation and display |
-| `audio` | Audio generation and display |
-| `config` | Generation parameters |
-| `group` | Group container |
+| `text` | 文本 / 提示词 |
+| `image` | 图片生成与展示，默认锁定原始比例 |
+| `video` | 视频生成与展示 |
+| `audio` | 音频生成与展示 |
+| `config` | 生成参数配置 |
+| `group` | 分组容器 |
 
-Node types are open strings; plugin nodes use the form `<pluginId>:<name>`. `lib/canvas/` also holds the node factory, geometry and sizing rules, generation helpers, export, event bus, and resource references.
+节点类型是开放字符串，插件节点使用 `<pluginId>:<name>` 形式。`lib/canvas/` 下还有节点工厂、几何计算、尺寸策略、生成辅助、导出、事件总线和资源引用等工具。
 
-### Service layer
+### 服务层
 
-`services/api/` handles outbound requests; the rest of `services/` handles local storage and sync.
+`services/api/` 负责外部请求，其余 `services/` 负责本地存储与同步：
 
-| File | Purpose |
+| 文件 | 说明 |
 | --- | --- |
-| `api/image.ts` | Image generation and editing across OpenAI, Gemini, and Ark formats |
-| `api/video.ts` | Video generation and polling |
-| `api/audio.ts` | Audio generation |
-| `api/model-plugin.ts` | Runs user-defined model call scripts |
-| `api/prompts.ts`, `api/prompt-source-*.ts` | Prompt source aggregation, presets, and fetching |
-| `api/canvas-agent.ts` | HTTP interface to the local agent |
-| `image-storage.ts`, `file-storage.ts` | Image and media blob access |
-| `webdav-sync.ts`, `app-sync.ts` | WebDAV protocol and domain-level sync |
-| `config-file.ts` | Configuration import and export |
-| `local-storage-usage.ts` | Local storage usage statistics |
+| `api/image.ts` | 图片生成 / 编辑，兼容 OpenAI、Gemini、Ark 格式 |
+| `api/video.ts` | 视频生成与轮询 |
+| `api/audio.ts` | 音频生成 |
+| `api/model-plugin.ts` | 执行用户自定义的模型调用脚本 |
+| `api/prompts.ts`、`api/prompt-source-*.ts` | 提示词来源聚合、预置源与抓取 |
+| `api/canvas-agent.ts` | 本地 Agent 的 HTTP 接口 |
+| `image-storage.ts`、`file-storage.ts` | 图片 / 媒体 Blob 存取 |
+| `webdav-sync.ts`、`app-sync.ts` | WebDAV 协议与业务域同步 |
+| `config-file.ts` | 配置导入导出 |
+| `local-storage-usage.ts` | 本地存储占用统计 |
 
-AI channel settings (`baseUrl`, `apiKey`, `apiFormat`) live in `useConfigStore`. Requests go straight from the browser; the project proxies no traffic.
+AI 渠道配置（`baseUrl`、`apiKey`、`apiFormat`）保存在 `useConfigStore`，请求由浏览器直连，项目本身不代理任何流量。
 
-### Local storage
+### 本地存储
 
-IndexedDB database `infinite-canvas`:
+IndexedDB 数据库 `infinite-canvas`：
 
-| storeName | Contents |
+| storeName | 内容 |
 | --- | --- |
-| `app_state` | Persisted Zustand data for canvas, assets, and plugins |
-| `image_files` | Image blobs |
-| `media_files` | Video and audio blobs |
-| `image_generation_logs`, `video_generation_logs` | Workbench generation history |
-| `prompt_cache` | Prompt source cache |
+| `app_state` | 画布、素材、插件等 Zustand 持久化数据 |
+| `image_files` | 图片 Blob |
+| `media_files` | 视频 / 音频 Blob |
+| `image_generation_logs`、`video_generation_logs` | 工作台生成记录 |
+| `prompt_cache` | 提示词来源缓存 |
 
-A second database, `infinite-canvas-plugins`, gives each `pluginId` its own store for plugin-private data. localStorage holds only small configuration values such as AI settings, prompt sources, theme, locale, agent URL and token, and panel width.
+另有数据库 `infinite-canvas-plugins`，按 `pluginId` 分 store 提供插件私有存储。localStorage 只放配置类小数据，如 AI 配置、提示词来源、主题、语言、Agent 地址与令牌、面板宽度。
 
-Cross-device sync requires configuring WebDAV. The synced domains are `canvas`, `assets`, `image-workbench`, and `video-workbench`.
+跨设备同步需自行配置 WebDAV，同步域包括 `canvas`、`assets`、`image-workbench`、`video-workbench`。
 
-### Plugin system
+### 插件系统
 
-Plugins run as ES modules on the main page; there is no iframe sandbox.
+插件以 ES Module 形式运行在主页面，不使用 iframe 隔离：
 
-1. `lib/canvas/plugin-loader.ts` fetches the script, converts it to a blob URL, and imports it dynamically.
-2. `lib/canvas/plugin-runtime.ts` injects the host React, a CSS injector, and an event bus through `window.InfiniteCanvasRuntime`, so plugins never bundle their own React.
-3. `lib/canvas/node-registry.ts` registers contributed node definitions; `plugin-node-context.ts` builds each node's context.
-4. `pages/canvas/hooks/use-plugin-host.tsx` exposes AI generation and canvas operations to plugins.
+1. `lib/canvas/plugin-loader.ts` 拉取脚本文本，转成 Blob URL 后动态 `import`。
+2. `lib/canvas/plugin-runtime.ts` 通过 `window.InfiniteCanvasRuntime` 注入宿主 React、CSS 注入函数和事件总线，避免插件自带 React 造成双实例。
+3. `lib/canvas/node-registry.ts` 注册插件贡献的节点定义，`plugin-node-context.ts` 构造每个节点的上下文。
+4. `pages/canvas/hooks/use-plugin-host.tsx` 向插件开放 AI 生成与画布操作能力。
 
-Plugins come from three sources: installation by remote URL (source cached for offline use), local discovery from `web/public/plugins/` (disabled by default), and `VITE_DEV_PLUGINS` for development. The official registry URL is `PLUGIN_REGISTRY_URL` in `constant/env.ts`, served by jsDelivr from the `plugins-dist` branch.
+插件来源有三种：远程 URL 安装（缓存源码以便离线）、`web/public/plugins/` 本地发现（默认关闭）、`VITE_DEV_PLUGINS` 开发直挂。官方插件清单地址在 `constant/env.ts` 的 `PLUGIN_REGISTRY_URL`，默认走 jsDelivr 上的 `plugins-dist` 分支。
 
-Both plugins and model call scripts execute on the main thread with full page privileges, so verify the source before installing third-party scripts.
+需要注意插件与模型调用脚本都在主线程执行，具备完整页面权限，安装第三方脚本前需自行确认来源。
 
-### Theming
+### 主题
 
-`lib/app-theme.ts` supplies Ant Design tokens, `lib/canvas-theme.ts` defines the light and dark canvas themes, and `components/layout/app-providers.tsx` toggles the `dark` class on `documentElement` based on `useThemeStore`. Per `AGENTS.md`, canvas UI must use theme tokens instead of hard-coded colors.
+`lib/app-theme.ts` 提供 Ant Design 的 token 配置，`lib/canvas-theme.ts` 定义画布浅色 / 深色主题，`components/layout/app-providers.tsx` 根据 `useThemeStore` 切换 `documentElement` 的 `dark` class。按 `AGENTS.md` 约定，画布相关 UI 必须走主题 token，不允许硬编码颜色。
 
-## canvas-agent/: local agent
+## canvas-agent/：本地 Agent
 
-Published to npm as `@basketikun/canvas-agent` and startable with `npx -y @basketikun/canvas-agent`.
+发布为 npm 包 `@basketikun/canvas-agent`，可直接 `npx -y @basketikun/canvas-agent` 启动。
 
-### Tech stack
+### 技术栈
 
-ESM and TypeScript 5.8, requiring Node 18 or newer. It uses `@modelcontextprotocol/sdk` for MCP, `express` 5 for HTTP, a pinned `@openai/codex` as the bundled Codex, `zod` for input validation, `winston` for logging, and `gray-matter` plus `yaml` for skill parsing. Tests run on the built-in `node:test` runner via `tsx`.
+ESM + TypeScript 5.8，要求 Node 18 以上。依赖 `@modelcontextprotocol/sdk` 提供 MCP 能力、`express` 5 提供 HTTP、`@openai/codex`（固定版本）作为内置 Codex、`zod` 校验入参、`winston` 日志、`gray-matter` 与 `yaml` 解析 Skill。测试用 Node 内置 `node:test` 配合 `tsx` 运行。
 
-### Directory responsibilities
+### 目录职责
 
 ```text
 canvas-agent/src/
-├── index.ts              CLI entry: HTTP mode vs. mcp stdio mode
-├── config.ts             config paths, port, token, workspace
-├── server/http.ts        Express routes, SSE, auth, CORS
-├── server/mcp.ts         stdio MCP server forwarding to the HTTP API
-├── canvas/session.ts     SSE clients, tool RPC, session state
-├── canvas/schemas.ts     MCP tool names, input schemas, descriptions
-├── canvas/operations.ts  expands high-level tools into canvas_apply_ops
-├── agent/codex*.ts       Codex process, protocol, history, event store
-├── agent/claude.ts       Claude Code CLI adapter
-├── agent/message-metadata.ts  message metadata on disk
-├── skills/store.ts       workspace skill CRUD
-└── utils/                logging, dates, value helpers
+├── index.ts              CLI 入口，区分 HTTP 模式与 mcp stdio 模式
+├── config.ts             配置路径、端口、令牌、工作区
+├── server/http.ts        Express 路由、SSE、鉴权与 CORS
+├── server/mcp.ts         stdio MCP Server，转发到 HTTP 接口
+├── canvas/session.ts     SSE 客户端管理、工具 RPC、会话状态
+├── canvas/schemas.ts     MCP 工具名、入参 schema 与描述
+├── canvas/operations.ts  高层工具展开为 canvas_apply_ops
+├── agent/codex*.ts       Codex 进程、协议、历史与事件补充存储
+├── agent/claude.ts       Claude Code CLI 适配
+├── agent/message-metadata.ts  消息元数据落盘
+├── skills/store.ts       工作区 Skill 增删改查
+└── utils/                日志、日期、取值辅助
 ```
 
-### How it runs
+### 运行方式
 
-The default mode starts an HTTP server bound to `127.0.0.1` on port `17371`. The browser opens an SSE stream at `GET /events`; when the agent needs to read or write the canvas it emits a `tool_call` event, and the browser replies with `POST /canvas/result`. Each call times out after 30 seconds.
+默认模式启动 HTTP 服务，只监听 `127.0.0.1`，默认端口 `17371`。浏览器通过 `GET /events` 建立 SSE 长连接，Agent 需要读写画布时下发 `tool_call` 事件，浏览器执行后回 `POST /canvas/result`，单次调用超时 30 秒。
 
-Passing the `mcp` argument skips the HTTP listener and starts a stdio MCP server that forwards tool calls to `/api/tools`. On the Codex side, `agent/codex-client.ts` spawns the bundled `codex app-server --stdio` and injects an MCP server named `infinite-canvas`.
+传入 `mcp` 参数时不监听端口，改为 stdio MCP Server，把工具调用转发到 HTTP 服务的 `/api/tools`。Codex 侧由 `agent/codex-client.ts` 拉起内置 `codex app-server --stdio`，并自动注入名为 `infinite-canvas` 的 MCP server。
 
-There are 35 MCP tools covering site navigation, canvas reads and writes (nodes, connections, viewport, selection), generation flow orchestration, generation status queries, the image and video workbenches, prompt search, and asset management. The full list lives in `canvas/schemas.ts`.
+MCP 工具共 35 个，覆盖站点导航、画布读写（节点、连线、视口、选区）、各类生成流程编排、生成状态查询、图片与视频工作台、提示词检索和素材管理。完整清单见 `canvas/schemas.ts`。
 
-### Protocol and storage versions
+### 协议与存储版本
 
-`AGENT_PROTOCOL_VERSION` in `canvas/session.ts` versions the browser-to-agent protocol and is exposed through `/health`, `/config`, and the first SSE `hello` frame. It is independent of the npm package version.
+浏览器与 Agent 之间的协议版本 `AGENT_PROTOCOL_VERSION` 定义在 `canvas/session.ts`，通过 `/health`、`/config` 和 SSE 首帧 `hello` 暴露，与 npm 包版本相互独立。
 
-`STORAGE_VERSION` in `agent/message-metadata.ts` versions message metadata storage. An unknown version or a missing manifest raises an error rather than overwriting the file, and writes go through an atomic temp-file rename. Messages are attributed by `threadId`, `turnId`, and `itemId`; once a history snapshot becomes authoritative, realtime events are no longer merged again.
+消息元数据存储版本 `STORAGE_VERSION` 定义在 `agent/message-metadata.ts`，读到未知版本或缺失清单时直接报错拒绝覆盖，写入走临时文件原子替换。消息按 `threadId`、`turnId`、`itemId` 三级归属，历史快照成为权威后不再重复合并实时事件。
 
-Everything is written under `~/.infinite-canvas/`: connection config, the Codex workspace and skills, message metadata, supplemental Codex event history, and debug logs.
+落盘位置统一在 `~/.infinite-canvas/`：连接配置、Codex 工作区与 Skill、消息元数据、Codex 补充事件历史、调试日志。
 
-### Security
+### 安全
 
-The service listens only on the loopback address and generates a random connect token at startup. Every route except `/health` and `/config` requires that token. The first Origin that makes a successful authenticated request is added to an allowlist, and other origins are rejected afterwards until `origins` is cleared from the config. Debug logs redact tokens, API keys, and data URLs.
+服务仅监听回环地址，启动时生成随机连接令牌，除 `/health` 和 `/config` 外所有接口都要求携带令牌。首次带令牌成功请求的 Origin 会被记录进白名单，之后其他来源一律拒绝，需要更换时清空配置中的 `origins`。调试日志会对令牌、API Key 和 data URL 做脱敏。
 
-## plugins/
+## plugins/：插件
 
 ### plugins/canvas/
 
-Canvas node plugins and the SDK. Every package is `private` and is not published to npm.
+画布节点插件与 SDK，所有包都是 `private`，不发 npm。
 
-- `sdk/` — `@infinite-canvas/plugin-sdk`, exporting type definitions, an automatic JSX runtime, hooks forwarded to the host React, and an esbuild-based `buildPlugin`.
-- `template/` — starter for new plugins.
-- `markdown/`, `svg/`, `html/`, `panorama/`, `sticky-note/` — official plugins.
-- `registry/` — CI build script that force-pushes artifacts to the orphan `plugins-dist` branch for jsDelivr delivery.
+- `sdk/`：`@infinite-canvas/plugin-sdk`，导出类型定义、自动 JSX 运行时、转发到宿主 React 的 hooks，以及基于 esbuild 的 `buildPlugin`。
+- `template/`：新插件起步模板。
+- `markdown/`、`svg/`、`html/`、`panorama/`、`sticky-note/`：官方插件。
+- `registry/`：CI 批量构建脚本，产物强制推送到孤儿分支 `plugins-dist`，再经 jsDelivr 分发。
 
-The workflow is to copy the template, change the `id` and node `type`, then run `npm run dev` to build in watch mode and sync into `web/public/plugins/`. Alternatively, host the artifact anywhere and install it by URL from the canvas UI.
+开发流程是复制模板、改 `id` 与节点 `type`、`npm run dev` 监听构建并同步到 `web/public/plugins/`，或把产物托管到任意地址后在画布内按 URL 安装。
 
 ### plugins/infinite-canvas/
 
-The Codex app plugin, which contains only plugin descriptors and no `package.json`. `.mcp.json` declares an MCP server running `npx -y @basketikun/canvas-agent mcp`, and `skills/` provides two skills for operating and opening the canvas. Install it by adding the repository root through `codex plugin marketplace add`.
+Codex app 插件，只有插件描述文件，没有 `package.json`。`.mcp.json` 声明 MCP server 走 `npx -y @basketikun/canvas-agent mcp`，`skills/` 下提供操作画布与打开画布两个 Skill。通过 `codex plugin marketplace add` 加上仓库根目录后安装。
 
-## docs/
+## docs/：文档站
 
-Next.js 16 with Fumadocs 16. MDX content lives in `docs/content/docs/` across six sections: `overview`, `canvas`, `development`, `progress`, `business`, and `support`. Each page has an English version and a `.zh-CN.mdx` Chinese counterpart, with ordering controlled by `meta.json` and `meta.zh-CN.json` in each directory.
+Next.js 16 + Fumadocs 16，MDX 内容放在 `docs/content/docs/`，分为 `overview`、`canvas`、`development`、`progress`、`business`、`support` 六个板块，每篇文档都有英文版和 `.zh-CN.mdx` 中文版，导航顺序由各目录的 `meta.json` / `meta.zh-CN.json` 控制。
 
-`docs/index.md` and `docs/index.zh-CN.md` are documentation indexes intended for AI use and are not part of the content directory.
+`docs/index.md` 与 `docs/index.zh-CN.md` 是给 AI 使用的文档索引，不属于内容目录。
 
-## Deployment and CI
+## 部署与 CI
 
-The frontend `Dockerfile` builds with bun and serves through nginx on port 3000, with SPA `try_files` fallback and no-store caching for `/config.js`. `vercel.json` and `render.yaml` cover the two hosting platforms.
+前端 `Dockerfile` 用 bun 构建后交给 nginx 托管，容器暴露 3000 端口，nginx 对 SPA 做 `try_files` 回退并对 `/config.js` 关闭缓存。`vercel.json` 与 `render.yaml` 分别对应两个托管平台。
 
-All four workflows in `.github/workflows/` are triggered by a `v*` tag push or manually: publish GitHub Pages, build the multi-architecture frontend image, build the docs image, and build and publish official plugins to `plugins-dist`.
+`.github/workflows/` 下四个流程都由 `v*` tag 推送或手动触发：发布 GitHub Pages、构建多架构前端镜像、构建文档镜像、构建并发布官方插件到 `plugins-dist`。
 
-## Features and where they live
+## 功能模块与代码位置
 
-| Feature | Main location |
+| 功能 | 主要位置 |
 | --- | --- |
-| Canvas editing | `pages/canvas/`, `components/canvas/`, `stores/canvas/`, `lib/canvas/` |
-| AI generation | `services/api/image.ts`, `video.ts`, `audio.ts`, `model-plugin.ts` |
-| Canvas assistant | `components/canvas/canvas-side-panel.tsx` and the node generation path |
-| Local agent | `components/agent/`, `stores/use-agent-store.ts`, `services/api/canvas-agent.ts`, `canvas-agent/` |
-| Node plugins | `lib/canvas/plugin-*.ts`, `stores/canvas/use-plugin-store.ts`, `plugins/canvas/` |
-| Prompt library | `pages/prompts/`, `services/api/prompts.ts` |
-| My Assets | `pages/assets/`, `stores/use-asset-store.ts` |
-| Image / video workbench | `pages/image/`, `pages/video/` |
-| Settings and sync | `pages/config/`, `stores/use-config-store.ts`, `services/webdav-sync.ts` |
+| 画布编排 | `pages/canvas/`、`components/canvas/`、`stores/canvas/`、`lib/canvas/` |
+| AI 生成 | `services/api/image.ts`、`video.ts`、`audio.ts`、`model-plugin.ts` |
+| 画布助手 | `components/canvas/canvas-side-panel.tsx` 及节点生成链路 |
+| 本地 Agent | `components/agent/`、`stores/use-agent-store.ts`、`services/api/canvas-agent.ts`、`canvas-agent/` |
+| 节点插件 | `lib/canvas/plugin-*.ts`、`stores/canvas/use-plugin-store.ts`、`plugins/canvas/` |
+| 提示词库 | `pages/prompts/`、`services/api/prompts.ts` |
+| 我的素材 | `pages/assets/`、`stores/use-asset-store.ts` |
+| 图片 / 视频工作台 | `pages/image/`、`pages/video/` |
+| 设置与同步 | `pages/config/`、`stores/use-config-store.ts`、`services/webdav-sync.ts` |
 
-## Development conventions
+## 开发约定
 
-- Read `AGENTS.md` before changing code. It defines where files belong, how components are split, how themes are used, and when documentation must be updated.
-- The project is not yet released, so local storage structures can change directly without backward-compatibility shims.
-- Global state goes in `stores/`, cross-page UI side effects in `hooks/`, canvas helpers in `lib/canvas/`, and outbound requests in `services/api/`.
-- After a significant change, add an entry to `Unreleased` in `CHANGELOG.md`. Open work and items awaiting verification are tracked in `progress/todo` and `progress/pending-test`.
+- 修改代码前先读 `AGENTS.md`，其中包含目录归属、组件拆分、主题使用和文档更新的硬性约束。
+- 项目尚未上线，本地存储结构可直接按新设计调整，不写旧数据兼容。
+- 全局状态放 `stores/`，跨页面 UI 副作用放 `hooks/`，画布工具函数放 `lib/canvas/`，外部请求放 `services/api/`。
+- 重大改动完成后在 `CHANGELOG.md` 的 `Unreleased` 追加记录，待办与待测事项分别维护在 `progress/todo` 与 `progress/pending-test`。

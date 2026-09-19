@@ -13,37 +13,24 @@ const darkStarHistoryChart = `${starHistoryChart}&theme=dark`;
 const previewImages = [
   {
     src: 'https://i.ibb.co/TDFvGWDT/image.png',
-    title: { en: 'Canvas composition', 'zh-CN': '画布编排' },
+    title: { en: '画布编排' },
   },
   {
     src: 'https://i.ibb.co/zVwJq3YS/image.png',
-    title: { en: 'Image generation', 'zh-CN': '图片生成' },
+    title: { en: '图片生成' },
   },
   {
     src: 'https://i.ibb.co/PvY3qhhK/image.png',
-    title: { en: 'Reference editing', 'zh-CN': '参考图编辑' },
+    title: { en: '参考图编辑' },
   },
   {
     src: 'https://i.ibb.co/7D04LwN/image.png',
-    title: { en: 'Node workflow', 'zh-CN': '节点工作流' },
+    title: { en: '节点工作流' },
   },
 ];
 
 const messages = {
   en: {
-    eyebrow: 'Open-source AI image creation workspace',
-    center: 'Documentation',
-    description: 'An infinite canvas for image creation that brings canvas composition, AI generation, reference editing, prompt libraries, and reusable assets into one workflow.',
-    quickStart: 'Quick Start',
-    demo: 'Live Demo',
-    gallery: 'Gallery',
-    features: 'Explore Features',
-    previewAlt: 'Infinite Canvas preview',
-    contributors: 'Contributors',
-    contributorsDescription: 'Thank you to everyone who has contributed to this project',
-    contributorsAlt: 'Contributor avatars',
-  },
-  'zh-CN': {
     eyebrow: '开源 AI 图片创作工作台',
     center: '文档中心',
     description: '面向图片创作的无限画布，把画布编排、AI 生成、参考图编辑、提示词库和素材沉淀放在同一个工作流里。',
@@ -214,11 +201,5 @@ export async function generateMetadata({ params }: PageProps<'/[lang]'>): Promis
   return {
     title: `${appNames[locale]} ${text.center}`,
     description: text.description,
-    alternates: {
-      languages: {
-        en: '/',
-        'zh-CN': '/zh-CN',
-      },
-    },
   };
 }

@@ -9,10 +9,5 @@ export const { staticGET: GET } = createFromSource(source, {
     en: {
       language: 'english',
     },
-    'zh-CN': {
-      components: {
-        tokenizer: createDocsSearchTokenizer(),
-      },
-    },
   },
 });

@@ -1,13 +1,13 @@
 ---
-title: Quick Start
-description: Run Infinite Canvas in a few steps
+title: 快速开始
+description: 用最少步骤把无限画布跑起来
 ---
 
-# Quick Start
+# 快速开始
 
-Everything requires signing in. Canvases, assets, generations, and media are stored by the server.
+全站功能登录后使用，画布、素材、生成记录与媒体都由服务端保存。
 
-## Run with Docker
+## Docker 启动
 
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
@@ -16,23 +16,23 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-The first start builds the app / admin / api images locally (upstream images are not used). Then open:
+首次启动会本地构建 app / admin / api 镜像（不使用上游发布镜像），构建完成后访问：
 
 ```text
 http://localhost:3000
 ```
 
-The following `.env` values are mandatory; otherwise the api refuses to start and the stack stays down:
+`.env` 中必须填写以下内容，否则 api 会拒绝启动、整栈起不来：
 
-- Database credentials and `DATABASE_URL` (keep the `db` host for the full-stack path). `MYSQL_*` only applies on first volume initialization.
-- `JWT_SECRET` (at least 32 characters) and `CREDENTIAL_MASTER_KEY` (exactly 32 bytes).
-- `ADMIN_EMAIL` / `ADMIN_PASSWORD` for the initial admin account.
-- When `FREE_GRANT_ENABLED=true`, `FREE_GRANT_CAMPAIGN_ID`, `FREE_GRANT_DAILY_BUDGET_MICROS`, and `FREE_GRANT_RISK_THRESHOLD` are required and must be greater than 0; set `FREE_GRANT_ENABLED=false` if you do not want free grants.
-- Without SMTP, set `MAIL_DRIVER=log` so verification emails print to the api container log.
+- 数据库密码与 `DATABASE_URL`（全栈部署 host 保持 `db`），`MYSQL_*` 仅在数据卷首次初始化时生效。
+- `JWT_SECRET`（至少 32 字符）与 `CREDENTIAL_MASTER_KEY`（正好 32 字节）。
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD` 管理员账号。
+- `FREE_GRANT_ENABLED=true` 时 `FREE_GRANT_CAMPAIGN_ID`、`FREE_GRANT_DAILY_BUDGET_MICROS`、`FREE_GRANT_RISK_THRESHOLD` 必填且大于 0；不需要免费额度就直接设 `FREE_GRANT_ENABLED=false`。
+- 本地无 SMTP 时把 `MAIL_DRIVER` 设为 `log`，验证邮件内容会打进 api 容器日志。
 
-The full list is documented in `.env.example`.
+完整变量说明见仓库根目录 `.env.example`。
 
-## Run locally
+## 本地启动
 
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
@@ -43,14 +43,14 @@ cd server && go run ./cmd/server
 cd web && bun install && bun run dev
 ```
 
-`docker-compose.local.yml` maps MySQL to host `127.0.0.1:13306`; for `go run`, change the `DATABASE_URL` host in `.env` from `db:3306` to `127.0.0.1:13306`. The Go server loads `.env` automatically on startup (exported environment variables win), so no manual `export` is needed.
+数据库端口映射在 `docker-compose.local.yml` 里（`127.0.0.1:13306`）；本机 `go run` 时把 `.env` 里 `DATABASE_URL` 的 host 从 `db:3306` 改成 `127.0.0.1:13306`。Go 服务启动时会自动加载 `.env`（已导出的环境变量优先），不需要手动 `export`。
 
-## First-time setup
+## 首次使用建议
 
-- Sign in with the admin email and password from `.env`.
-- The server creates tables on startup and seeds the default `free` / `paid` / `sunset` plans.
+- 使用 `.env` 里配置的管理员邮箱与密码登录。
+- 服务端启动时会自动建表，并写入 `free` / `paid` / `sunset` 三档默认档位。
 
-## Notes
+## 说明
 
-- Registration requires email verification. Local development can use `MAIL_DRIVER=log` to print emails to the backend log.
-- For production, use `deploy.sh` with `deploy/env.prod`; do not deploy the planning branch directly.
+- 创建账号需要完成邮箱验证，验证邮件由 `MAIL_DRIVER` 指定的方式发出；本地开发可用 `log` 驱动，邮件内容直接打到后端日志。
+- 生产部署请使用仓库根目录的 `deploy.sh` 与 `deploy/env.prod`，不要直接部署规划分支。

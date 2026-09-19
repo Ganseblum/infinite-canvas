@@ -1,43 +1,45 @@
-# Infinite Canvas Documentation Index
+# 优刻（Infinite Canvas）文档索引
 
-## Overview
+## 项目介绍
 
-- [Quick Start](/docs/overview/quick-start)
-- [Features](/docs/overview/features)
-- [Docker Deployment](/docs/overview/docker)
-- [Third-party Prompt Sources](/docs/overview/third-party-prompt-repositories)
+- [快速开始](/docs/overview/quick-start)
+- [功能介绍](/docs/overview/features)
+- [Docker 部署](/docs/overview/docker)
+- [第三方提示词来源](/docs/overview/third-party-prompt-repositories)
+- [Codex App 插件](/docs/overview/codex-app-plugin)
 
-## Canvas Guide
+## 操作手册
 
-- [Canvas Node Guide](/docs/canvas/canvas-node-manual)
-- [Canvas Shortcuts](/docs/canvas/canvas-shortcuts)
+- [画布节点操作手册](/docs/canvas/canvas-node-manual)
+- [画布快捷键](/docs/canvas/canvas-shortcuts)
 
-## Development and Data
+## 开发与数据
 
-- [Project Structure](/docs/development/project-structure)
-- [Local Development](/docs/development/local-development)
-- [Fork Deployment and Shared Test Data](../deploy/README.md)
-- [Canvas Data Structure](/docs/development/canvas-data-structure)
-- [How the Local Codex Connection Works](/docs/development/local-codex-canvas)
+- [项目结构](/docs/development/project-structure)
+- [本地开发](/docs/development/local-development)
+- [Fork 部署与共享测试数据](../deploy/README.md)
+- [画布数据结构](/docs/development/canvas-data-structure)
+- [本地 Codex 连接画布原理](/docs/development/local-codex-canvas)
 
-## Business
+## 商务
 
-- [Open-source License](/docs/business/license)
-- [Business Cooperation](/docs/business/business)
+- [开源协议](/docs/business/license)
+- [商务合作](/docs/business/business)
 
-## Support and Security
+## 支持与安全
 
-- [Report a Vulnerability](/docs/support/security)
-- [Sponsor the Project](/docs/support/sponsor)
+- [漏洞提交](/docs/support/security)
+- [赞助支持](/docs/support/sponsor)
 
-## Project Progress
+## 项目进度
 
-- [Changelog](/docs/progress/changelog)
-- [Pending Tests](/docs/progress/pending-test)
-- [TODO](/docs/progress/todo)
+- [更新日志](/docs/progress/changelog)
+- [执行状态与续作指南](/docs/progress/execution-status)
+- [待验收](/docs/progress/pending-test)
+- [待办](/docs/progress/todo)
 
-## Notes
+## 说明
 
-- On this fork's account-backend branch, Go/MySQL stores business records and local/S3 storage holds media. Test and production are independent; local development shares test data without a third database.
-- AI channels are configured server-side and credentials are encrypted in the database. Full local/server Go sharing still requires media and execution-control prerequisites in the deployment guide.
-- Real server details are documented in `我的规划/部署方案（测试与正式环境）.md`; it contains no passwords or keys. Environment files and actual secrets remain local-only.
+- 画布、素材、生成记录与媒体由服务端保存（MySQL 与媒体卷 / S3），浏览器只保留界面状态、Agent 会话与提示词缓存。
+- AI 渠道与模型在服务端配置，渠道密钥加密存库，浏览器不持有任何 API Key。
+- 服务器细节记录在 `我的规划/部署方案（测试与正式环境）.md`，不含密码与密钥；环境文件与真实密钥仅存本地。

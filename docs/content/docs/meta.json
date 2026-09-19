@@ -1,5 +1,5 @@
 {
-  "title": "Documentation",
+  "title": "文档",
   "root": true,
   "pages": ["overview", "canvas", "development", "progress", "business", "support"]
 }

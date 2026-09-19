@@ -1,10 +1,10 @@
 import { defineI18n } from 'fumadocs-core/i18n';
 
-export type Locale = 'en' | 'zh-CN';
+export type Locale = 'en';
 
 export const i18n = defineI18n({
   defaultLanguage: 'en',
-  languages: ['en', 'zh-CN'],
+  languages: ['en'],
   parser: 'dot',
   hideLocale: 'default-locale',
   fallbackLanguage: null,

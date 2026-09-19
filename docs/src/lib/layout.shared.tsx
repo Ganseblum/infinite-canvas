@@ -9,10 +9,6 @@ const qqUrl = 'https://qm.qq.com/q/DFnKzZ807u';
 
 export const translations = i18n.translations().extend(uiTranslations()).add('ui', {
   en: {
-    displayName: 'English',
-  },
-  'zh-CN': {
-    displayName: '简体中文',
     search: '搜索文档',
     searchNoResult: '没有找到结果',
     searchOpen: '打开搜索',
@@ -44,7 +40,6 @@ export const translations = i18n.translations().extend(uiTranslations()).add('ui
 });
 
 export function baseOptions(locale: string): BaseLayoutProps {
-  const chinese = locale === 'zh-CN';
   const appName = appNames[locale as keyof typeof appNames];
 
   return {
@@ -58,14 +53,14 @@ export function baseOptions(locale: string): BaseLayoutProps {
     },
     links: [
       {
-        text: chinese ? '文档导航' : 'Documentation',
-        url: `${chinese ? '/zh-CN' : ''}/docs/overview/quick-start`,
+        text: '文档导航',
+        url: '/docs/overview/quick-start',
         on: 'nav',
       },
       {
         text: (
           <span className="inline-flex items-center gap-1.5">
-            <span>{chinese ? '在线体验' : 'Live Demo'}</span>
+            <span>在线体验</span>
             <ArrowUpRight className="size-4" />
           </span>
         ),

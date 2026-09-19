@@ -1,5 +1,5 @@
 {
-  "title": "Development",
+  "title": "开发与数据",
   "root": true,
   "defaultOpen": true,
   "pages": ["project-structure", "local-development", "canvas-data-structure", "local-codex-canvas"]
