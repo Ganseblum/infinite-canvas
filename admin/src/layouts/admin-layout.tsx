@@ -90,7 +90,9 @@ export default function AdminLayout() {
 
     return (
         <Layout className="h-dvh">
-            <Layout.Sider theme="light" width={224}>
+            {/* <768 断点约定下正文不可用（375 视口仅剩 151px）：低于 lg 视口自动收起为 0 宽，
+                用 antd 自带零宽触发器展开/收起，桌面端不渲染触发器、行为不变。 */}
+            <Layout.Sider theme="light" width={224} breakpoint="lg" collapsedWidth={0}>
                 <div className="flex h-dvh flex-col">
                     {/* 环境标识放在侧边栏头部而不是内容区标题旁：内容区会随滚动移出视口，环境角标必须常驻。 */}
                     <div className="flex items-center gap-2 px-5 py-5 text-sm font-semibold">

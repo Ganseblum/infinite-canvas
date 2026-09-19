@@ -455,6 +455,27 @@
 
 }
 
+/* 跨页面通用：移动端（<768）antd 弹层钳制。左右抽屉全宽、上下抽屉限高滚动、Modal 内容滚动；
+   Modal 钳宽 antd 6 已内置（.ant-modal 自带 max-width: calc(100vw - 32px)）不重复写。
+   抽屉宽高是 antd 内联样式，覆盖需 !important。admin 经 admin/src/styles/globals.css @import 自动生效。 */
+@media (max-width: 767.98px) {
+    .ant-drawer-left .ant-drawer-content-wrapper,
+    .ant-drawer-right .ant-drawer-content-wrapper {
+        width: 100vw !important;
+    }
+
+    .ant-drawer-top .ant-drawer-content-wrapper,
+    .ant-drawer-bottom .ant-drawer-content-wrapper {
+        /* 只钳 max-height：wrapper 内联高度保持定值，section 的 height:100% 滚动链才不断 */
+        max-height: calc(100dvh - 48px) !important;
+    }
+
+    .ant-modal .ant-modal-body {
+        max-height: calc(100dvh - 160px);
+        overflow-y: auto;
+    }
+}
+
 ::view-transition-old(root),
 ::view-transition-new(root) {
     animation: none;
