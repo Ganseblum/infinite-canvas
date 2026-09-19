@@ -46,7 +46,8 @@ func (l *Limiter) Allow(key string, now time.Time) (ok bool, retryAfter int) {
 	if len(kept) >= l.limit {
 		l.requests[key] = kept
 		oldest := kept[0]
-		retryAfter = int(l.window - now.Sub(oldest))
+		// 差值是 time.Duration（纳秒），对外契约是秒，必须显式换算。
+		retryAfter = int((l.window - now.Sub(oldest)) / time.Second)
 		if retryAfter < 1 {
 			retryAfter = 1
 		}
@@ -77,7 +78,7 @@ func (l *Limiter) IsBlocked(key string, now time.Time) (blocked bool, retryAfter
 	}
 	if count >= l.limit {
 		oldest := l.requests[key][0]
-		retryAfter = int(l.window - now.Sub(oldest))
+		retryAfter = int((l.window - now.Sub(oldest)) / time.Second)
 		if retryAfter < 1 {
 			retryAfter = 1
 		}

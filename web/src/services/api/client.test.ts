@@ -92,4 +92,25 @@ describe("API 客户端刷新单飞", () => {
         expect(useAuthStore.getState().user).toBeNull();
         expect(useAuthStore.getState().accessToken).toBeNull();
     });
+
+    it("管理面 /admin 前缀走 /api/admin，用户面其余路径走 /api/v1", async () => {
+        vi.resetModules();
+        const { apiRequest } = await import("@/services/api/client");
+        const { useAuthStore } = await import("@/stores/use-auth-store");
+
+        useAuthStore.setState({ status: "authenticated", user, plan: null, accessToken: "old-token" });
+
+        const calls: string[] = [];
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            calls.push(String(input));
+            return jsonResponse({ ok: true });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        await apiRequest("/admin/me");
+        await apiRequest("/canvases");
+
+        expect(calls[0]).toContain("/api/admin/me");
+        expect(calls[1]).toContain("/api/v1/canvases");
+    });
 });

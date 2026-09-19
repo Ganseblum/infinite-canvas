@@ -33,7 +33,10 @@ function buildUrl(path: string, query?: ApiRequestOptions["query"]) {
         params.set(key, String(value));
     }
     const search = params.toString();
-    return `${API_BASE_URL}/api/v1${path.startsWith("/") ? path : `/${path}`}${search ? `?${search}` : ""}`;
+    // 用户面统一 /api/v1 版本前缀；管理面路径本身以 /admin 开头（如 /admin/me），
+    // 按契约落到不带版本号的 /api/admin/...，共享 client 据此前缀自动分流。
+    const versionSegment = path.startsWith("/admin") ? "/api" : "/api/v1";
+    return `${API_BASE_URL}${versionSegment}${path.startsWith("/") ? path : `/${path}`}${search ? `?${search}` : ""}`;
 }
 
 function buildBody(body: unknown, headers: Headers) {
