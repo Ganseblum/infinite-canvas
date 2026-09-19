@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "episode_id": "EP-20260919-PAYMENT-LIFECYCLE-001",
+  "source_type": "review",
+  "occurred_at": "2026-09-19T00:00:00Z",
+  "revision": {
+    "source": "infinite-canvas@68d6b97",
+    "base": "infinite-canvas@a43ddaf"
+  },
+  "run": {
+    "run_id": "fix-payment-order-lifecycle",
+    "started_at": "2026-09-19T00:00:00Z",
+    "ended_at": "2026-09-19T00:00:00Z",
+    "status": "complete"
+  },
+  "objective": "修复支付订单生命周期三缺陷：① 易支付未支付订单永不关单（渠道未知状态归一 pending + 扫描 default 空操作 + Limit(200) 无排序三因叠加）；② 终态订单收到真实 paid 回调静默丢钱且无告警；③ 重复下单不取消旧 pending 单，旧支付链接存在误付风险。设计红线由 technical-director 定稿：HandleCallback default 不动、stale 恒返 nil 不自动补账、金额守卫/CancelOrder 不动、payment 三渠道文件与 model 不动、边界值 30min/5min/200 不动。",
+  "outcome": "partial",
+  "claims": [
+    {
+      "claim_id": "C1",
+      "claim": "超 30 分钟未支付订单在扫描时向渠道查单，确认未支付或未知状态即置 failed，不再永久挂起",
+      "status": "verified",
+      "check": "TestExpirePendingOrdersClosesUnpaid + TestExpirePendingOrdersQueryErrorKeepsPending（go test ./internal/service/ -count=1）",
+      "evidence_ref": "records/bugs/2026-09-19/easypay-pending-orders-never-closed.md"
+    },
+    {
+      "claim_id": "C2",
+      "claim": "超时订单渠道报 paid 时按回调同口径金额比对后补到账",
+      "status": "verified",
+      "check": "TestExpirePendingOrdersQueriesProviderFirst（存量，仍绿）",
+      "evidence_ref": "records/bugs/2026-09-19/easypay-pending-orders-never-closed.md"
+    },
+    {
+      "claim_id": "C3",
+      "claim": "终态订单收到 paid 回调绝不入账，webhook 仍回 success 终止渠道重试",
+      "status": "verified",
+      "check": "TestCallbackIdempotentAndAmountMismatch + billing_test.go webhook 200 success 契约用例（-count=1 全绿）",
+      "evidence_ref": "records/bugs/2026-09-19/stale-terminal-order-paid-silently-dropped.md"
+    },
+    {
+      "claim_id": "C4",
+      "claim": "stale 路径触发 OnPaidOrderClosed 回调一次且参数为原始终态快照；幂等命中与事务失败不触发；回调为 nil 不 panic",
+      "status": "verified",
+      "check": "TestMarkPaidStaleTriggersAlertCallback + TestMarkPaidIdempotentDoesNotTriggerCallback",
+      "evidence_ref": "records/bugs/2026-09-19/stale-terminal-order-paid-silently-dropped.md"
+    },
+    {
+      "claim_id": "C5",
+      "claim": "管理员实际收到丢钱告警邮件（端到端含邮件投递）",
+      "status": "unverified",
+      "check": "待人工验收：配置邮件通道后构造「下单 → 取消订单 → 渠道重放 paid 回调」，确认管理员收信且订单状态与余额不变（已登记 docs/content/docs/progress/pending-test.mdx）",
+      "evidence_ref": "docs/content/docs/progress/pending-test.mdx"
+    },
+    {
+      "claim_id": "C6",
+      "claim": "新单支付参数生成成功后同用户其它 pending 单被自动关闭；渠道下单失败路径不取消旧单",
+      "status": "verified",
+      "check": "TestCreateOrderCancelsOtherPendingOrders + TestCreateOrderPaymentFailureKeepsOldPending",
+      "evidence_ref": "records/bugs/2026-09-19/duplicate-pending-orders-stale-paylink.md"
+    },
+    {
+      "claim_id": "C7",
+      "claim": "构建通过、service 与 billing 两包存量+新增测试全绿、新测试绑定新行为",
+      "status": "verified",
+      "check": "server/ 下 go build ./...（exit 0）+ go test ./internal/service/... ./internal/billing/... -count=1（两包 ok）+ revert 实验（基线 stash 后新用例编译失败 OnPaidOrderClosed undefined，pop 恢复后 ok）",
+      "evidence_ref": "records/bugs/2026-09-19/stale-terminal-order-paid-silently-dropped.md（原始输出已内嵌）"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "E1",
+      "kind": "diff",
+      "ref": "git show 68d6b97（基线 a43ddaf 之上 7 文件，295 insertions / 15 deletions；payment/ 与 model/ 零 hunk）",
+      "digest": "审查用全量 diff 曾落盘 /tmp/payfix-review/full.diff（474 行），临时目录不做存续依赖"
+    },
+    {
+      "evidence_id": "E2",
+      "kind": "bug_records",
+      "ref": "records/bugs/2026-09-19/{easypay-pending-orders-never-closed,stale-terminal-order-paid-silently-dropped,duplicate-pending-orders-stale-paylink}.md",
+      "digest": "三缺陷各一条，含修复前后代码片段与内嵌的测试/revert 原始输出"
+    }
+  ],
+  "signals": [
+    { "kind": "review_decision", "value": "approved" },
+    { "kind": "tests_passed", "value": true },
+    { "kind": "files_changed", "value": 7 },
+    { "kind": "review_roundtrips_count", "value": 2 },
+    { "kind": "unverified_user_visible_claims", "value": 1 }
+  ],
+  "feedback_summary": "缺陷源自用户对支付体系的架构质询（登录共享/支付幂等/超时异常），代码走查定位三处缺口后由用户确认边界值（30 分钟超时→查单→未支付/未知即关单、5 分钟扫描、三项全做）并授权在独立 worktree 分支执行。",
+  "agentflow_version": "0.8.0",
+  "host": "other",
+  "provenance": {
+    "carrier": "zcode-supervisor-conversation",
+    "sanitized": true
+  },
+  "redactions": [],
+  "review_roundtrips": [
+    {
+      "at": "2026-09-19T00:00:00Z",
+      "reviewer": "agentflow:reviewer",
+      "decision": "changes_requested",
+      "finding": "静态逐 hunk 审查未发现代码缺陷与红线违反，但缺协议要求的证据项：原始 diff 未随审件、第 7 个改动文件未识别、revert 绑定实验未做、构建/测试输出仅转述",
+      "resolution": "supervisor 执行五项证据命令并落盘回传（full.diff 474 行、红线区空 diff、构建/测试 exit 0 原始日志、revert 实验 fail→ok），另按 non-blocking 建议在 CHANGELOG 与 pending-test.mdx 补「已退款」措辞"
+    },
+    {
+      "at": "2026-09-19T00:00:00Z",
+      "reviewer": "agentflow:reviewer",
+      "decision": "approved",
+      "finding": "五项 blocking 证据全部亲读核销；设计红线五项经原始 diff 逐 hunk 确认无违反；revert 实验证明新测试绑定新行为",
+      "resolution": "approved；non-blocking 留档：告警邮件无去重、ASC 排序与 HTTP 层 success 无显式断言、未提交变更需尽快固化（已 commit 68d6b97）"
+    }
+  ]
+}
