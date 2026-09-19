@@ -89,7 +89,7 @@
 - 每次 todo 事项完成后，先从 `docs/content/docs/progress/todo.mdx` 移到 `docs/content/docs/progress/pending-test.mdx`，不要直接写进正式功能说明；用户确认测试通过后再更新 `docs/content/docs/overview/features.mdx`。
 - 每次任务完成前，都要根据实际变更检查并更新 `docs/content/docs/progress/todo.mdx` 和 `docs/content/docs/progress/pending-test.mdx`；如果功能或待办没有变化，也要确认无需修改。
 - 文档不要写过期日期；除非用户明确要求记录具体时间。
-- 文档站页面统一纯中文：`docs/content/docs/` 下的活文档（todo / pending-test / execution-status 等）frontmatter 的 title/description 与正文都用中文，不中英混排；文件后缀沿用 `.mdx`（fumadocs 约定，与全仓库一致）；不维护 `.zh-CN.mdx` 双语双份，新增页面默认只写中文文件（历史遗留的成对双语页除外，不再主动同步）。
+- 文档站页面统一纯中文、单语言单份：`docs/content/docs/` 下每页只有一个中文 `.mdx` 文件（fumadocs 约定），frontmatter 与正文都用中文、不中英混排；文档站已移除 zh-CN 双语路由与 `.zh-CN.mdx` 变体、`meta.zh-CN.json`，旧 `/zh-CN/*` 链接由 next.config 301 重定向兜底；新增页面只写一份中文文件，并同步更新所在分区 `meta.json` 与 `docs/index.md`（AI 索引）。
 
 ## 发版本流程
 
