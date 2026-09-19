@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-<<<<<<< HEAD
 + [修复] main-site 官网可构建并完成服务器部署：根 .gitignore 的 `data/` 规则误吞 `main-site/src/data/` 导致内容文件 site.ts 从未入库且本地丢失，规则锚定到仓库根目录后重建占位版 site.ts 并入库；官网产物部署到服务器 `/var/www/youc.online`（youc.online / www，HTTP 先行，DNS 解析指向服务器后由 certbot 补证书）。
 + [调整] 同步 upstream v0.19.0：画布拖拽位置更新与组投放检测合批到帧、连线按视口裁剪渲染、图片/文本上层操作按钮改为悬停显示，ZCode 插件目录随上游更新；WebP 本地缩略图预览未合入（依赖已删除的本地图片存储，已列入待办移植）。
 + [调整] server 目录按域一步到位重构：`internal/handler` 拆分为 account/canvas/ai/billing/admin 五个域包（管理路由表迁入 admin 包并由路由条数测试锁住），新增 httpx（HTTP 边缘共享件）与 testutil（测试公共件）；各域路由表由域包 `Mount*Routes` 维护、`main.go` 只做依赖注入与组装，对接口行为无影响。
@@ -53,10 +52,6 @@
 + [新增] 新增《测试环境部署》相关的宿主机 Nginx 站点模板，并在 `deploy/README.md` 补充「本地连接测试环境（SSH 隧道）」一节：两条隧道的启停、凭据位置、隧道假死的判据与排查顺序。
 
 + [调整] 测试环境部署落地：数据库与媒体由命名卷改为绑挂载到仓库目录的 `./data`（api 容器以 uid 10001 运行，首次部署须先授权该目录属主），新增宿主机 Nginx 站点配置模板（含 SSE 关闭缓冲、上传体积与超时设置），`.dockerignore` 排除实际部署环境文件与本地实施手册。
-=======
-+ [新增] 新增聚合主站首页 HTML 草图（`design/html/site-home.html`），串联无限画布、图像/视频工作台、Workers、博客、社区与文档入口，并接入设计稿总览。
-+ [新增] 新增主站首页第二版四种视觉探索（`CINEMA`、`EDITORIAL`、`AURORA`、`PLAYGROUND`）及对比入口，保留第一版并增加作品轮巡、沉浸式展示和多场景聚合方向。
->>>>>>> 6387098 (feat: add aggregate site homepage design explorations)
 
 + [调整] 明确测试/正式双环境部署及本地共用测试库的规划，补充服务器实施手册、SSH/DBeaver 联调与共享媒体、后台任务、备份恢复的待实施条件，并修正旧部署说明。
 
