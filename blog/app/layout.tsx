@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import "./globals.css";
+import AuthBootstrap from "@/components/auth-bootstrap";
 import SiteHeader from "@/components/site-header";
 import SiteFooter from "@/components/site-footer";
 import { siteUrl } from "@/lib/blog-api";
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
       <body>
+        <AuthBootstrap />
         <SiteHeader />
         {children}
         <SiteFooter />

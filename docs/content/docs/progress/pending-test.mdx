@@ -7,6 +7,17 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 
 以下为本版本需要人工验证确认的事项：
 
+## 跨子域共享登录（COOKIE_DOMAIN）（本版本新增，待验收）
+
+- **配置步骤**：在 `deploy/env.test` / `deploy/env.prod` 里设置 `COOKIE_DOMAIN=youc.online`（compose 已透传该变量），然后 recreate api 容器（`./deploy.sh test up -d`）——compose 对 api 服务逐项枚举 env，只改 env 文件不重建容器不生效。留空（默认）时行为与现状完全一致。本地 http 联调需配合 `COOKIE_SECURE=false`。
+- **验收矩阵**：
+  - web（主站）登录 → 直接打开 blog 应已登录，发评论无需再登；
+  - blog 登录 → web 与 admin 已登录；
+  - 任一站登出 → 全站会话失效；
+  - 匿名访客浏览 blog 无报错（每次冷加载一个 401 的 refresh 请求属预期，不打扰用户）；
+  - 切换前已在 blog 单独登录过的用户最多被登出一次（服务端会同时清掉旧 host-only cookie 与新 domain cookie，预期内），重新登录后恢复正常；
+  - 未配置 `COOKIE_DOMAIN` 时全站行为与现状完全一致（回归项）。
+
 ## 博客站「深夜排字房」（本版本新增，待验收）
 
 架构与选型见 `docs/content/docs/overview/blog-architecture.mdx` 与 `docs/content/docs/development/blog-plan.mdx`；设计稿 `design/html/blog-draft-*.html` 与后台稿 `admin-blog.html`。本轮 P1–P3、P5 代码全部落地（29 个端点 + Next 前台 + admin 三界面），验收清单如下：

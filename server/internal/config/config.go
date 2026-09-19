@@ -38,6 +38,9 @@ type Config struct {
 	SeedTestDataPassword string
 
 	CookieSecure bool
+	// CookieDomain 是会话 cookie（ic_refresh/ic_media）的 Domain 属性，取注册域（如 youc.online）。
+	// 空 = host-only，现状不变；配置后 cookie 下发到该注册域全部子域，任一站登录全站生效。
+	CookieDomain string
 	LogLevel     string
 
 	// SiteEnv 是部署环境标识（与前端 runtime config 的同名变量对齐）：
@@ -147,6 +150,7 @@ func Load() (*Config, error) {
 		SeedTestDataPassword: getenv("SEED_TEST_DATA_PASSWORD", "test123456"),
 		AdminPassword:        os.Getenv("ADMIN_PASSWORD"),
 		CookieSecure:         getenvBool("COOKIE_SECURE", true),
+		CookieDomain:         parseCookieDomain(os.Getenv("COOKIE_DOMAIN")),
 		LogLevel:             getenv("LOG_LEVEL", "info"),
 		SiteEnv:              getenv("SITE_ENV", "development"),
 		MailDriver:           getenv("MAIL_DRIVER", "smtp"),
@@ -287,6 +291,12 @@ func parseCORSAllowedOrigins(raw string) ([]string, error) {
 	return origins, nil
 }
 
+// parseCookieDomain 归一化 COOKIE_DOMAIN：TrimSpace → 小写 → 去掉一个前导点，结果为空按未配置。
+func parseCookieDomain(raw string) string {
+	d := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(raw)), ".")
+	return d
+}
+
 func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		return errors.New("DATABASE_URL 未配置")
@@ -299,6 +309,9 @@ func (c *Config) validate() error {
 	}
 	if c.AppBaseURL == "" {
 		return errors.New("APP_BASE_URL 未配置（用于拼接邮件里的验证与重置链接）")
+	}
+	if err := c.validateCookieDomain(); err != nil {
+		return err
 	}
 	if c.LogLevel != "debug" && c.LogLevel != "info" && c.LogLevel != "warn" && c.LogLevel != "error" {
 		return fmt.Errorf("LOG_LEVEL 取值非法: %s", c.LogLevel)
@@ -348,6 +361,36 @@ func (c *Config) validate() error {
 	}
 	if err := c.validateWatermark(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateCookieDomain 校验 COOKIE_DOMAIN：配错只会让浏览器静默拒收 cookie 或把会话发到
+// 不受控的子域，留到启动期 fail-fast。空 = host-only（未配置），直接放行。
+func (c *Config) validateCookieDomain() error {
+	if c.CookieDomain == "" {
+		return nil
+	}
+	if !strings.Contains(c.CookieDomain, ".") {
+		return fmt.Errorf("COOKIE_DOMAIN 必须是带点的注册域（如 youc.online），不能是单标签: %s", c.CookieDomain)
+	}
+	if strings.ContainsAny(c.CookieDomain, "/ \t\r\n") {
+		return fmt.Errorf("COOKIE_DOMAIN 不能包含 / 或空白字符: %s", c.CookieDomain)
+	}
+	if strings.HasSuffix(c.CookieDomain, ".") {
+		return fmt.Errorf("COOKIE_DOMAIN 不能以点结尾: %s", c.CookieDomain)
+	}
+	if net.ParseIP(c.CookieDomain) != nil {
+		return fmt.Errorf("COOKIE_DOMAIN 不能是 IP 地址（浏览器拒绝 Domain=IP 的 cookie）: %s", c.CookieDomain)
+	}
+	// 交叉校验：站点必须真的在该域之下，防「配了但站点不在该域」的静默故障。
+	u, err := url.Parse(c.AppBaseURL)
+	if err != nil || u.Hostname() == "" {
+		return fmt.Errorf("COOKIE_DOMAIN 已配置但 APP_BASE_URL 无法解析出主机名: %s", c.AppBaseURL)
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != c.CookieDomain && !strings.HasSuffix(host, "."+c.CookieDomain) {
+		return fmt.Errorf("APP_BASE_URL 的主机名 %s 不在 COOKIE_DOMAIN %s 之下（须相等或为其子域）", host, c.CookieDomain)
 	}
 	return nil
 }

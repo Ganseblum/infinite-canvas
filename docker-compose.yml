@@ -69,6 +69,9 @@ services:
       CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+      # 会话 cookie 的注册域（如 youc.online）：配置后 ic_refresh/ic_media 下发到全部子域，任一站登录全站生效；
+      # 留空 = host-only（现状不变）。api 是逐项枚举 env，改后需 recreate api 容器才生效。
+      COOKIE_DOMAIN: "${COOKIE_DOMAIN:-}"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
       # 跨源白名单：admin 独立域名启用后，管理后台会跨源直连本 API。

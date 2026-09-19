@@ -118,6 +118,7 @@ bun run dev
 - **单一后台任务执行者**：默认服务器测试 Go 负责订单扫描、视频轮询、隔离区清理和注销到期处理，本地 Go 关闭这些任务。当前代码没有执行开关，需补齐后才能并行；不能仅关闭定时任务而保留启动扫描。
 - **共享测试凭据**：本地与服务器测试 Go 使用相同测试 `JWT_SECRET`、`CREDENTIAL_MASTER_KEY` 和测试渠道；凭据主密钥不一致会导致渠道与隔离原件无法解密。正式密钥独立。登录 Cookie 仍按 localhost / 测试域名各自保存，不自动共享登录状态。
 - **入口配置分别设置**：本地 `APP_BASE_URL` 指向本地页面，本地 HTTP Go 使用 `COOKIE_SECURE=false`，服务器 HTTPS 测试 Go 保持 `true`；邮件、真实支付回调在服务器测试站验收。本地前端保留同源 `/api`，Vite 代理到本地 Go `8080`。
+- **跨子域共享登录（可选 `COOKIE_DOMAIN`）**：留空 = host-only（现状不变）；配置为注册域（如 `youc.online`）后 `ic_refresh` / `ic_media` 会话 cookie 下发到该域全部子域，主站 / admin / blog 任一站登录其余站点自动生效。启用前必须确认该域下所有子域均为第一方可控，否则任一子域都能读到全会话 cookie；本地 http 联调需配合 `COOKIE_SECURE=false`。compose 对 api 服务逐项枚举 env，修改后需 recreate api 容器（`./deploy.sh <env> up -d`）才生效。
 - **设置一致性**：当前站点设置按进程缓存，DBeaver 或另一端修改设置后不会自动刷新所有进程；需明确重启或刷新方式。限流和部分并发状态也按进程管理，该模式用于开发联调，不作为正式多实例运行方案。
 
 执行开关与共享媒体部署仍在 TODO，以上不是现成可用的新增环境变量。前置条件完成后，在本地仓库根目录 `.env.local` 准备本地 Go 的开发配置，不入库；使用可被 shell 加载的赋值语法，密码和连接串正确引用。当前 Go 只读进程环境，不会自动加载 `.env`，启动前明确加载/export，再运行 `go run ./cmd/server`。

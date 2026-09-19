@@ -13,6 +13,8 @@ info:
     - 刷新令牌走 HttpOnly cookie `ic_refresh`（Path=/api，30 天，单次轮换，服务端只存哈希）。
     - 媒体读取额外接受 HttpOnly cookie `ic_media`（Path=/api/v1/media，为 `<img>/<video>` 直链准备的只读凭据；
       `/api/v1/media` 与 `/api/v1/media-download` 的 GET/HEAD 可用 Bearer 或该 cookie，写操作仅认 Bearer）。
+    - 两枚会话 cookie 均支持可选 Domain 属性（由 `COOKIE_DOMAIN` 环境变量开启，默认 host-only）：
+      配置后 cookie 下发到该注册域全部子域，任一站登录全站生效。
 
     全局约定：
     - 统一错误信封 `{"error":{"code":"...","message":"...","fields":{...}}}`（fields 仅字段级错误时出现，
@@ -114,7 +116,7 @@ components:
         mustChangePassword: { type: boolean, description: 管理员建号/重置后为 true，登录后须先改密 }
     SessionPayload:
       type: object
-      description: 注册/登录/刷新共用响应体；同时下发 ic_refresh 与 ic_media 两枚 HttpOnly cookie。
+      description: 注册/登录/刷新共用响应体；同时下发 ic_refresh 与 ic_media 两枚 HttpOnly cookie（可选 Domain 属性，COOKIE_DOMAIN，默认 host-only）。
       properties:
         user: { $ref: '#/components/schemas/UserPayload' }
         accessToken: { type: string, description: HS256 JWT，15 分钟 }

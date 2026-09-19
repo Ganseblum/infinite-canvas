@@ -1,5 +1,6 @@
 // 同域 API 代理：/api/v1/* 全量转发到内网 Go（BLOG_API_INTERNAL 运行时读取）。
-// 互动请求（评论/点赞/收藏）与登录都走这里：浏览器同源，登录态 cookie 落 blog 子域。
+// 互动请求（评论/点赞/收藏）与登录都走这里：浏览器同源，登录态 cookie 默认落博客域；
+// 服务端配置 COOKIE_DOMAIN 后随主注册域共享，任一站登录全站生效。
 // 不用 next.config rewrites——rewrites 在 standalone 构建期烘焙进配置快照，
 // 容器运行期改 env 不生效（部署时踩过：代理一直打 127.0.0.1:8080）。
 const target = () => (process.env.BLOG_API_INTERNAL ?? "http://127.0.0.1:8080").replace(/\/$/, "");

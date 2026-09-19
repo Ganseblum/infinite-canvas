@@ -78,9 +78,11 @@ func NewAuthHandler(db *gorm.DB, cfg *config.Config, mailer *mail.Mailer) *AuthH
 
 func (h *AuthHandler) setRefreshCookie(c *gin.Context, plain string) {
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     RefreshCookieName,
-		Value:    plain,
-		Path:     RefreshCookiePath,
+		Name:  RefreshCookieName,
+		Value: plain,
+		Path:  RefreshCookiePath,
+		// 空 = host-only（net/http 不输出空 Domain 属性），行为与未配置时逐字节一致。
+		Domain:   h.cfg.CookieDomain,
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
@@ -88,16 +90,30 @@ func (h *AuthHandler) setRefreshCookie(c *gin.Context, plain string) {
 	})
 }
 
-func (h *AuthHandler) clearRefreshCookie(c *gin.Context) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     RefreshCookieName,
+// clearSessionCookie 下发 MaxAge<0 的清除 cookie。配置 CookieDomain 时对同一名字发两枚变体：
+// 一枚带 Domain 清共享 cookie，一枚 host-only 清切换前遗留的旧 cookie——否则 blog 子域上
+// 旧 host-only cookie 与新 domain cookie 并存，c.Cookie 取首个命中的已撤销旧令牌会触发
+// 复用检测撤销用户全部令牌，造成登出死循环。未配置时只发一枚 host-only，与既有行为一致。
+func (h *AuthHandler) clearSessionCookie(c *gin.Context, name, path string) {
+	hostOnly := http.Cookie{
+		Name:     name,
 		Value:    "",
-		Path:     RefreshCookiePath,
+		Path:     path,
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
-	})
+	}
+	http.SetCookie(c.Writer, &hostOnly)
+	if h.cfg.CookieDomain != "" {
+		domain := hostOnly
+		domain.Domain = h.cfg.CookieDomain
+		http.SetCookie(c.Writer, &domain)
+	}
+}
+
+func (h *AuthHandler) clearRefreshCookie(c *gin.Context) {
+	h.clearSessionCookie(c, RefreshCookieName, RefreshCookiePath)
 }
 
 // setMediaCookie 下发只读媒体 cookie（ic_media），与 refresh token 同周期。
@@ -112,6 +128,7 @@ func (h *AuthHandler) setMediaCookie(c *gin.Context, user *model.PlatformUser) {
 		Name:     auth.MediaCookieName,
 		Value:    token,
 		Path:     auth.MediaCookiePath,
+		Domain:   h.cfg.CookieDomain, // 空 = host-only（net/http 不输出空 Domain 属性）
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
@@ -120,15 +137,7 @@ func (h *AuthHandler) setMediaCookie(c *gin.Context, user *model.PlatformUser) {
 }
 
 func (h *AuthHandler) clearMediaCookie(c *gin.Context) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     auth.MediaCookieName,
-		Value:    "",
-		Path:     auth.MediaCookiePath,
-		HttpOnly: true,
-		Secure:   h.cfg.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	h.clearSessionCookie(c, auth.MediaCookieName, auth.MediaCookiePath)
 }
 
 // clearSessionCookies 清掉 refresh 与媒体两枚 cookie，各自的 Path 必须带回原值。
