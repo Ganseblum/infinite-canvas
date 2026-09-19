@@ -111,7 +111,7 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 - 375px 手机宽度下五页布局不破、无横向溢出。
 - 内容更新流程演练：改 `src/data/site.ts`（如新增一张作品）→ `npm run build` → `out/` 生效。
 - 上线前替换占位资源（清单见 `main-site/README.md`）：Hero 视频、picsum 占位图、og.png、社媒与下载链接。
-- 官网已部署服务器：产物在 `/var/www/youc.online`，nginx 站点 `youc.online` / `www.youc.online`；DNS A 记录（@ 与 www）已指向服务器，证书已签发（2026-12-18 到期，certbot 自动续期），80→443 跳转生效，五页 + sitemap + robots 全路径 HTTPS 200——待浏览器正式访问验收。2026-09-19 已复核五页跟随斜杠 301 后全部 200，剩余浏览器视觉验收。浏览器实测（375px 与桌面）：五页内容渲染完整、图片 0 加载失败；`/works` `/films` `/templates` `/blog` 无横向溢出，**首页在 375px 下 documentElement 溢出约 6px（疑似跑马灯轨道未裁剪），待修复确认**；BILIBILI 与小红书两个页脚外链仍是 `#` 占位。
+- 官网已部署服务器：产物在 `/var/www/youc.online`，nginx 站点 `youc.online` / `www.youc.online`；DNS A 记录（@ 与 www）已指向服务器，证书已签发（2026-12-18 到期，certbot 自动续期），80→443 跳转生效，五页 + sitemap + robots 全路径 HTTPS 200——待浏览器正式访问验收。2026-09-19 已复核五页跟随斜杠 301 后全部 200，剩余浏览器视觉验收。浏览器实测（375px 与桌面）：五页内容渲染完整、图片 0 加载失败；`/works` `/films` `/templates` `/blog` 无横向溢出，首页 375px 溢出约 6px 已修复（根因是跑马灯条带 scale(1.03) 超出视口而 html 层未裁剪，补 `html { overflow-x: clip }`；浏览器 375px 实测 documentElement 溢出为 0）；BILIBILI 与小红书两个页脚外链仍是 `#` 占位。
 
 ## 多产品后台与模型能力分区（本版本新增）
 

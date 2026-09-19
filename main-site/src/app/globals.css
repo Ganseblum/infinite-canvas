@@ -21,6 +21,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* 跑马灯条带带 scale(1.03)，body 的 overflow-x:hidden 挡不住 html 层的横向溢出
+     （375px 下实测 documentElement 溢出约 6px）；clip 不产生滚动容器，不影响 sticky。 */
+  overflow-x: clip;
 }
 
 body {

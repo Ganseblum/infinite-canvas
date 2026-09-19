@@ -30,6 +30,14 @@
 - 补充时写成明确、可执行的规则，避免只写模糊描述。
 - 新规则应放到最相关的章节；找不到合适章节时放到“项目注意事项”。
 
+## Agent Flow 使用约定（2026-09-19 评审后沉淀）
+
+- **功能实现必须走 agentflow 主流程**：凡跨域/多文件批次的功能实现（非一行小修），按「test-planner/design → plan-architect 出执行计划 → backend/frontend-engineer 委托实现 → reviewer 评审门」执行，主 Agent 只做编排、环境与最终验收，不再单 Agent 直写全部代码。反馈工单批次（feature-blog）的实现未走该流程，导致 support 角色越权（授权语义两处 IsSystem 全量短路只改了一处）、Q4 修复脚本替换静默失败未被发现——这些恰是评审门与委托实现的双读能兜住的缺陷类别。
+- **授权与数据安全语义变更必须过 technical-director**：新增系统角色/权限点/全量权限语义/授权中间件改动，实现后必须全局 grep 该语义标识（如 `IsSystem`）的全部消费点逐一核对，并由 reviewer 过目后才算完成。
+- **禁止用脚本对源码做整段替换**（python/str.replace 会静默失败）：改代码一律用编辑工具；修改完成后必须运行对应用例或断言验证落地，再声明完成。
+- **浏览器 UI 验收由主 Agent 执行**（Browser Use 不可委托）；test-planner 产出计划、test-executor 跑 API/边界用例并编译 UI 步骤脚本，是既定分工，继续沿用。
+- **并行会话共享本地端口/数据库时先核对再连接**：启动 server 前确认目标端口未被占用（`lsof -iTCP:PORT`），连接后用一条 SQL 核对实际连接的库与预期一致；发现错位立即报告，不要沿用错位环境继续测试。
+
 ## 前端规范
 
 - 前端使用 Vite、React、React Router、TypeScript、Ant Design、Tailwind、Zustand。
