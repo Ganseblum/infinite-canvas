@@ -29,6 +29,10 @@ type OrderService struct {
 	registry   *PaymentRegistry
 	billing    *billing.Service
 	membership *membership.Service
+	// OnPaidOrderClosed 在渠道报支付成功但订单已是终态（failed/refunded）时触发，
+	// 用于丢钱告警：订单不再入账，需人工核对补账。回调在 markPaid 事务提交后触发，
+	// 参数是加锁后读到的订单行快照（Status 为原始终态）与回调携带的渠道单号；为 nil 时不触发。
+	OnPaidOrderClosed func(order *model.Order, providerOrderID string)
 }
 
 func NewOrderService(db *gorm.DB, registry *PaymentRegistry) *OrderService {
@@ -39,6 +43,10 @@ func NewOrderService(db *gorm.DB, registry *PaymentRegistry) *OrderService {
 		membership: membership.NewService(db),
 	}
 }
+
+// DB 与 Registry 供 billing 域 handler 复用同一个 OrderService 单例时取回依赖。
+func (s *OrderService) DB() *gorm.DB               { return s.db }
+func (s *OrderService) Registry() *PaymentRegistry { return s.registry }
 
 // CreateOrderResult 是下单成功后的返回结构。
 type CreateOrderResult struct {
@@ -78,6 +86,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, user model.PlatformUser,
 			Update("provider_order_id", providerOrderID).Error; err != nil {
 			slog.Error("写入渠道单号失败", "order", order.ID, "err", err)
 		}
+	}
+	// 新单已可支付，best-effort 关闭同用户其它待支付旧单，防止旧支付链接被误付；
+	// 关闭失败只记日志，不影响新单返回。
+	if err := s.db.WithContext(ctx).Model(&model.Order{}).
+		Where("user_id = ? AND status = ? AND id <> ?", user.ID, "pending", order.ID).
+		Update("status", "failed").Error; err != nil {
+		slog.Warn("关闭同用户旧待支付订单失败", "userID", user.ID, "newOrder", order.ID, "err", err)
 	}
 	return &CreateOrderResult{Order: order, Payment: params}, nil
 }
@@ -259,8 +274,11 @@ func (s *OrderService) HandleCallback(ctx context.Context, providerName string, 
 // 重复回调命中已支付状态时直接返回成功，不做任何写入。
 // 加点（billing.Purchase）与发会员（membership.GrantFromOrder）在同一事务，
 // 任一失败整体回滚，下次回调幂等重放（异常矩阵路径二）。
+// 渠道报支付成功但订单已是终态（failed/refunded）时同样返回成功（防渠道重试）、绝不入账：
+// 记 error 日志，并在事务提交后触发 OnPaidOrderClosed 丢钱告警。
 func (s *OrderService) markPaid(ctx context.Context, order *model.Order, providerOrderID string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var stale *model.Order
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var locked model.Order
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", order.ID).Error; err != nil {
 			return err
@@ -269,7 +287,12 @@ func (s *OrderService) markPaid(ctx context.Context, order *model.Order, provide
 			return nil
 		}
 		if locked.Status != "pending" {
-			// 已取消或已失败的订单不再到账。
+			// 已取消或已失败的订单不再到账；把 stale 快照带出事务，提交后触发告警回调。
+			slog.Error("渠道报支付成功但订单已是终态，款项未入账，需人工核对补账",
+				"order", locked.ID, "userID", locked.UserID, "status", locked.Status,
+				"priceMicros", locked.PriceMicros, "providerOrderID", providerOrderID)
+			snapshot := locked
+			stale = &snapshot
 			return nil
 		}
 		now := time.Now()
@@ -287,6 +310,10 @@ func (s *OrderService) markPaid(ctx context.Context, order *model.Order, provide
 		}
 		return s.membership.GrantFromOrder(tx, &locked, now)
 	})
+	if err == nil && stale != nil && s.OnPaidOrderClosed != nil {
+		s.OnPaidOrderClosed(stale, providerOrderID)
+	}
+	return err
 }
 
 func (s *OrderService) markFailed(ctx context.Context, order *model.Order) error {
@@ -295,13 +322,15 @@ func (s *OrderService) markFailed(ctx context.Context, order *model.Order) error
 		Update("status", "failed").Error
 }
 
-// ExpirePendingOrders 把超过 30 分钟未支付的订单置为 failed。
-// 置失败前必须向渠道主动查询一次真实状态：用户可能在最后一秒付款而回调还在路上。
+// ExpirePendingOrders 把超过 timeout 未支付的订单关单（置为 failed）。
+// 置失败前必须向渠道主动查询一次真实状态：渠道报 paid 时按回调同口径补到账；
+// 报 closed 或渠道侧仍未支付（pending/未知状态）说明支付窗口已过，直接置为 failed，
+// 防止旧支付链接被误付；渠道查询出错时保留 pending，等下一轮扫描重试。
 func (s *OrderService) ExpirePendingOrders(ctx context.Context, now time.Time, timeout time.Duration) (int, error) {
 	var orders []model.Order
 	if err := s.db.WithContext(ctx).
 		Where("status = ? AND created_at < ?", "pending", now.Add(-timeout)).
-		Limit(200).Find(&orders).Error; err != nil {
+		Order("created_at ASC").Limit(200).Find(&orders).Error; err != nil {
 		return 0, err
 	}
 	expired := 0
@@ -333,7 +362,12 @@ func (s *OrderService) ExpirePendingOrders(ctx context.Context, now time.Time, t
 				expired++
 			}
 		default:
-			// 渠道侧仍然可支付，本地不判失败。
+			// 渠道侧仍未支付（pending/未知状态）：支付窗口已过，关单防止旧支付链接被误付。
+			if err := s.markFailed(ctx, order); err != nil {
+				slog.Error("置失败订单失败", "order", order.ID, "err", err)
+			} else {
+				expired++
+			}
 		}
 	}
 	return expired, nil

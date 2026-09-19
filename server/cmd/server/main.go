@@ -195,9 +195,21 @@ func main() {
 		slog.Error("支付渠道配置无效", "err", err)
 		os.Exit(1)
 	}
+	// 共享订单服务单例：下单、支付回调与超时扫描复用同一实例，丢钱告警回调只挂一处。
+	// 渠道报 paid 但订单已是终态（failed/refunded）时款项未入账，邮件告警全部 admin，
+	// 由管理员到管理端手工调点数补账（不做自动补账）。
+	orderService := service.NewOrderService(gormDB, paymentRegistry)
+	orderService.OnPaidOrderClosed = func(order *model.Order, providerOrderID string) {
+		if providerOrderID == "" && order.ProviderOrderID != nil {
+			providerOrderID = *order.ProviderOrderID
+		}
+		notifyAdmins(gormDB, mailer, "支付异常告警：渠道报已支付但订单已关闭，款项未入账",
+			fmt.Sprintf("渠道报订单 %s 支付成功，但该订单本地状态已是 %s，款项未入账，可能丢钱。\n用户 ID：%s\n金额：%d 微元\n渠道：%s\n渠道单号：%s\n订单号：%s\n请到管理端核对该笔支付流水，并手工调点数补账。\n",
+				order.ID, order.Status, order.UserID, order.PriceMicros, order.Provider, providerOrderID, order.ID))
+	}
 	creditHandler := billing.NewCreditHandler(gormDB, paymentRegistry)
-	orderHandler := billing.NewOrderHandler(gormDB, paymentRegistry)
-	paymentHandler := billing.NewPaymentHandler(gormDB, paymentRegistry)
+	orderHandler := billing.NewOrderHandler(orderService)
+	paymentHandler := billing.NewPaymentHandler(orderService)
 	catalogHandler := ai.NewModelHandler(gormDB, func() bool { return cfg.PromotionEnabled })
 
 	timeouts := service.DefaultUpstreamTimeouts()
@@ -462,7 +474,6 @@ func main() {
 	defer stop()
 
 	// 后台定时任务：超时订单扫描与注销冷静期到期匿名化。
-	orderService := service.NewOrderService(gormDB, paymentRegistry)
 	deletionService := service.NewDeletionService(gormDB)
 	go runScheduled(ctx, "订单超时扫描", 5*time.Minute, func() {
 		if n, err := orderService.ExpirePendingOrders(ctx, time.Now(), 30*time.Minute); err != nil {

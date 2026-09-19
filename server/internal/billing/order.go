@@ -23,8 +23,9 @@ type OrderHandler struct {
 	registry *service.PaymentRegistry
 }
 
-func NewOrderHandler(db *gorm.DB, registry *service.PaymentRegistry) *OrderHandler {
-	return &OrderHandler{db: db, orders: service.NewOrderService(db, registry), registry: registry}
+// NewOrderHandler 复用共享的 OrderService 单例：下单、回调与超时扫描走同一实例，告警回调只挂一处。
+func NewOrderHandler(orders *service.OrderService) *OrderHandler {
+	return &OrderHandler{db: orders.DB(), orders: orders, registry: orders.Registry()}
 }
 
 type createOrderReq struct {
@@ -192,8 +193,9 @@ type PaymentHandler struct {
 	orders   *service.OrderService
 }
 
-func NewPaymentHandler(db *gorm.DB, registry *service.PaymentRegistry) *PaymentHandler {
-	return &PaymentHandler{registry: registry, orders: service.NewOrderService(db, registry)}
+// NewPaymentHandler 复用共享的 OrderService 单例：回调到账与下单/扫描共用同一份丢钱告警回调。
+func NewPaymentHandler(orders *service.OrderService) *PaymentHandler {
+	return &PaymentHandler{registry: orders.Registry(), orders: orders}
 }
 
 func (h *PaymentHandler) Webhook(c *gin.Context) {
