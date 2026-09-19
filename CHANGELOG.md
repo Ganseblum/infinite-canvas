@@ -3,6 +3,7 @@
 ## Unreleased
 
 <<<<<<< HEAD
++ [修复] main-site 官网可构建并完成服务器部署：根 .gitignore 的 `data/` 规则误吞 `main-site/src/data/` 导致内容文件 site.ts 从未入库且本地丢失，规则锚定到仓库根目录后重建占位版 site.ts 并入库；官网产物部署到服务器 `/var/www/youc.online`（youc.online / www，HTTP 先行，DNS 解析指向服务器后由 certbot 补证书）。
 + [调整] 同步 upstream v0.19.0：画布拖拽位置更新与组投放检测合批到帧、连线按视口裁剪渲染、图片/文本上层操作按钮改为悬停显示，ZCode 插件目录随上游更新；WebP 本地缩略图预览未合入（依赖已删除的本地图片存储，已列入待办移植）。
 + [调整] server 目录按域一步到位重构：`internal/handler` 拆分为 account/canvas/ai/billing/admin 五个域包（管理路由表迁入 admin 包并由路由条数测试锁住），新增 httpx（HTTP 边缘共享件）与 testutil（测试公共件）；各域路由表由域包 `Mount*Routes` 维护、`main.go` 只做依赖注入与组装，对接口行为无影响。
 + [调整] 用户面 API 路径统一加版本前缀 `/api/v1/...`（如 `/api/v1/auth/login`、`/api/v1/canvases`、`/api/v1/media/{key}`），管理面保持 `/api/admin/...` 不变；web/admin 前端统一 client、媒体直链与 AI 流式请求同步更新，`ic_refresh` cookie Path 仍为 `/api` 可覆盖新旧路径。

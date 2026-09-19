@@ -61,6 +61,7 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 - 375px 手机宽度下五页布局不破、无横向溢出。
 - 内容更新流程演练：改 `src/data/site.ts`（如新增一张作品）→ `npm run build` → `out/` 生效。
 - 上线前替换占位资源（清单见 `main-site/README.md`）：Hero 视频、picsum 占位图、og.png、社媒与下载链接。
+- 官网已部署服务器：产物在 `/var/www/youc.online`，nginx 站点 `youc.online` / `www.youc.online`（先 HTTP，全路径 200 验证过）；`youc.online` 的 DNS A 记录指向服务器后执行 `certbot --nginx` 补证书与跳转，再按域名正式访问验收。
 
 ## 多产品后台与模型能力分区（本版本新增）
 

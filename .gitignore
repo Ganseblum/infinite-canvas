@@ -6,9 +6,8 @@ node_modules/
 # 部署环境变量只保留 .example 模板，实际值不入库
 deploy/env.test
 deploy/env.prod
-data/
-# 只忽略仓库根目录的 data/，前端资源类型目录要入库
-!web/src/services/data/
+# 只忽略仓库根目录的 data/（部署的数据库与媒体目录）；代码内的 data 目录（web/src/services/data、main-site/src/data）要入库
+/data/
 *.log
 *.tsbuildinfo
 .DS_Store

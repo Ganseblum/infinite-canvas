@@ -45,13 +45,18 @@ npm run preview    # 本地预览 out/（或 python3 -m http.server -d out 4173�
 - 域名 `youc.online` 由 `src/data/site.ts` 的 `site.url` 控制，部署正式环境时可用
   `NEXT_PUBLIC_SITE_URL` 环境变量覆盖（影响 sitemap / canonical / OG 的绝对地址）。
 
-## 部署（nginx 参考）
+## 部署（当前实际形态）
+
+服务器无 Node，采用「本地构建 → 上传 out/」：`npm run build` 后把 `out/` 同步到服务器
+`/var/www/youc.online`（独立于画布应用的 checkout 与容器）。nginx 站点在
+`/etc/nginx/sites-available/youc.online`（软链进 sites-enabled），当前先 HTTP，
+DNS A 记录（`youc.online` / `www` → 服务器 IP）就位后 `certbot --nginx -d youc.online -d www.youc.online` 补 TLS：
 
 ```nginx
 server {
     listen 443 ssl;
     server_name youc.online;
-    root /opt/infinite-canvas/main-site/out;   # 按实际服务器 checkout 路径调整
+    root /var/www/youc.online;
     index index.html;
 
     location / {
@@ -61,5 +66,5 @@ server {
 ```
 
 静态导出的 `out/` 已带尾斜杠目录形式（`/works/` → `out/works/index.html`），
-`try_files` 无需 `$uri/` 以外的回退分支。可选部署方式：在服务器构建（需 Node）或
-本地 / CI 构建后同步 `out/`，二选一，按现有发布流程择一固定。
+`try_files` 无需 `$uri/` 以外的回退分支。`_next/static/`（带内容哈希）已在站点里
+配置一年期 immutable 长缓存。
