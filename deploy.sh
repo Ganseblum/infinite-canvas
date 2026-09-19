@@ -10,11 +10,12 @@
 #   ./deploy.sh test down              停止测试环境（数据卷保留）
 #
 # 更新流程：git pull → ./deploy.sh <env> build → ./deploy.sh <env> up -d。
-# up 会固定 --force-recreate app api admin，各有各的原因：
+# up 会固定 --force-recreate app api admin blog-web，各有各的原因：
 #   - app：容器内 nginx 启动时解析并缓存 api 容器 IP，api 重建后必须连带重建 app，
 #     否则 /api 反代仍指向旧 IP 导致 502；
 #   - admin：运行期 config.js（API_BASE_URL / SITE_ENV）在容器启动时生成，只改 env 文件不重建容器不生效，
 #     表现成「改了配置没反应」；
+#   - blog-web：运行期 env（BLOG_API_BASE / REVALIDATE_SECRET）同样在容器启动时注入，改 env 必须重建；
 #   - db 不受影响。
 #
 # 依赖：docker compose（v2）。环境变量文件放在 deploy/env.test、deploy/env.prod，不提交进 git。
