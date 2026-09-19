@@ -36,9 +36,10 @@ func AdminAccessFrom(c *gin.Context) (AdminAccess, bool) {
 	return access, ok
 }
 
-// Has 判断快照是否包含某个权限点。系统角色隐式拥有全部权限（短路由，不查 role_permissions）。
+// Has 判断快照是否包含某个权限点。隐式全量只属于超级管理员系统角色
+// （短路由，不查 role_permissions）；其余系统角色（如 support 客服）按绑定授予。
 func (a AdminAccess) Has(key string) bool {
-	if a.IsSystem {
+	if a.IsSystem && a.RoleKey == authz.SystemRoleKey {
 		return true
 	}
 	for _, granted := range a.Permissions {
@@ -101,7 +102,9 @@ func LoadAdminAccess(idn *identity.Service, db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 		access := AdminAccess{RoleKey: roleKey, RoleName: rows[0].Name, IsSystem: rows[0].IsSystem}
-		if access.IsSystem {
+		// 隐式全量权限只属于超级管理员系统角色；其余系统角色（如 support 客服）
+		// 仍按 role_permissions 绑定授予权限，避免任何新增系统角色意外放大成全量。
+		if access.IsSystem && roleKey == authz.SystemRoleKey {
 			access.Permissions = authz.Keys()
 		} else {
 			granted := make([]string, 0, len(rows))

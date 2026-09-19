@@ -10,7 +10,7 @@ description: 已规划的后续工作
 架构/计划文档与设计稿见 `docs/content/docs/overview/blog-architecture.mdx`、`docs/content/docs/development/blog-plan.mdx`、`design/html/blog-draft-*`。**P1–P3、P5 代码已全部落地并通过 21 包单测与 tsc（验收清单见 pending-test.mdx）**：
 
 - **已完成**：P1 内容域（5 表迁移、admin 17 端点 + 公共读 3 端点、goldmark 管线含 Callout/脚注/锚点/Chroma、再验证通知器、权限点 blog.read/write）；P2 管理后台（文章/栏目/评论三界面 + 同源预览，双语 i18n）；P3 前台（blog/ Next 15 应用：五页 + 设计稿 CSS 移植 + ISR + 再验证路由 + RSS 全文/sitemap/robots + JSON-LD + 双主题防闪）；P5 互动（评论/点赞/收藏 + 冗余计数 + 隔离审核接入 + 我的收藏）。
-- **剩余 P4 上线（需真实环境）**：真实 MySQL 迁移验证（硬性）；DNS blog A 记录 → certbot 补证书 → nginx 落地（模板 `deploy/nginx-blog.youc.online.conf`）→ compose env 填 BLOG_* → 按需再验证联调 → 主站 /blog/ 改导流 → 三平台站长提交。
+- **P4 部署（已完成测试环境部分）**：服务器已切 feature-blog 并完成真实 MySQL 迁移（五表）、镜像重建（api/admin/blog-web）、blog-web 起容器（3102 端口，3101 与 admin 冲突）、线上 admin 建栏目/发布实测、再验证回调 0 失败；**剩余**：blog 域名 DNS + certbot + nginx 模板落地、主站 /blog/ 导流、站长平台提交。
 - **P6 运营打磨（可选）**：OG 分享图生成、归档页/全文搜索、阅读量统计、图片点击放大、admin 编辑器换 md-editor-rt（当前为文本框 + 同源预览，React 19 兼容性待验证）、首页右栏评估。
 - **开放项待确认**：评论强制登录口径、限流数值（当前 2 次/分钟）、先发后审、收藏入口在博客内 /bookmarks、再验证兜底 300s——均按建议值实现，可在验收后调整。
 

@@ -44,7 +44,7 @@ export default defineConfig({
             // admin 跑在 localhost:5174、API 在 127.0.0.1:8080，属于跨站：Secure cookie 在 http 下写不进浏览器，
             // 登录会「看起来不工作」。保留同源 /api 代理是本地开发的唯一正确形态，不要改成直连 8080。
             "/api": {
-                target: "http://127.0.0.1:8090",
+                target: "http://127.0.0.1:8091",
                 changeOrigin: true,
             },
         },

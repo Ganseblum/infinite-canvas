@@ -184,7 +184,12 @@ func (h *AdminHandler) ListGenerationFeedbacks(c *gin.Context) {
 		return
 	}
 	query := h.db.Model(&model.GenerationFeedback{})
-	if rating := c.Query("rating"); rating == "1" || rating == "-1" {
+	if rating := c.Query("rating"); rating != "" {
+		// 与工单列表筛选同口径：非法值 400，不静默忽略。
+		if rating != "1" && rating != "-1" {
+			errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"rating": "rating 只能是 1 或 -1"}))
+			return
+		}
 		query = query.Where("generation_feedbacks.rating = ?", rating)
 	}
 	var total int64

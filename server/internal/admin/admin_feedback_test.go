@@ -33,6 +33,8 @@ func newFeedbackConsoleRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin
 	admin.POST("/feedback/tickets/:id/replies", middleware.RequirePermission(authz.PermFeedbackWrite), adminH.ReplyFeedbackTicket)
 	admin.PATCH("/feedback/tickets/:id/status", middleware.RequirePermission(authz.PermFeedbackWrite), adminH.UpdateFeedbackTicketStatus)
 	admin.GET("/feedback/generations", middleware.RequirePermission(authz.PermFeedbackRead), adminH.ListGenerationFeedbacks)
+	// 对照路由：客服角色不得因 is_system 被放大成全量权限（FB-API-06 回归）。
+	admin.GET("/users", middleware.RequirePermission(authz.PermUsersRead), adminH.ListUsers)
 	return r
 }
 
@@ -70,6 +72,17 @@ func TestFeedbackConsolePermissionAndLifecycle(t *testing.T) {
 	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/feedback/tickets", plainToken, nil)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("无角色访问工单台应 403, got %d", w.Code)
+	}
+
+	// support 系统角色只拥有 feedback 权限：工单台可进，用户管理等其它模块必须 403
+	// （LoadAdminAccess 的隐式全量只属于 admin 系统角色，FB-API-06 回归）。
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", supportToken, nil)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("support 角色访问用户管理应 403, got %d", w.Code)
+	}
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/feedback/tickets", supportToken, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("support 角色应能查看工单台: %d", w.Code)
 	}
 
 	// 用户提交工单（直接写库）→ support 角色可见、可回复、可置状态。

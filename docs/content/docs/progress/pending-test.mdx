@@ -11,6 +11,8 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 
 架构与选型见 `docs/content/docs/overview/blog-architecture.mdx` 与 `docs/content/docs/development/blog-plan.mdx`；设计稿 `design/html/blog-draft-*.html` 与后台稿 `admin-blog.html`。本轮 P1–P3、P5 代码全部落地（29 个端点 + Next 前台 + admin 三界面），验收清单如下：
 
+- **部署与线上验收（已完成 2026-09-19，测试环境）**：feature-blog 已推送并在服务器 `/opt/infinite-canvas-test` 切支部署；真实 MySQL 迁移已跑通（`SHOW TABLES LIKE "blog_%"` 五表齐全，迁移前备份在 `/opt/backups/pre-blog-migration/`）；blog-web 运行于服务器 `127.0.0.1:3102`（3101 与 admin 冲突，env 已改 3102）；线上 admin（sim-admin）实测：登录 → 「博客管理」菜单 → 新增栏目入库 → API 建文发布 → blog-web 前台 serve 文章页（goldmark 渲染内容可见）→ 再验证回调 0 失败。部署过程修复三处：authFetch body 对象序列化、Next standalone rewrites 构建期烘焙改运行时代理路由、deploy.sh up 固定重建列表补 blog-web。
+- **待用户完成的上线步骤**：① `blog` 域名 DNS A 记录 → certbot 补证书 → `deploy/nginx-blog.youc.online.conf` 落地（模板就绪）；② 主站 `/blog/` 页改导流；③ GSC/必应/百度站长提交；④ admin 编辑器「从零新建」建议人工点一遍完整流程（自动化受 React 19 受控表单合成事件限制，编辑/发布路径已实测通过）；⑤ 验证专用账号已清理，正式使用前确认测试管理员密码可用。
 - **迁移注意（硬性）**：`blog_topics` / `blog_posts` / `blog_comments` / `blog_reactions` / `blog_bookmarks` 五张新表，按仓库经验必须在真实 MySQL 上跑一次启动迁移确认（SQLite 单测测不出列长/保留字问题）。SQLite 侧 21 包单测已全绿。
 - **Go 内容域**：管理面 17 端点（文章 CRUD/发布/下架/删除、栏目 CRUD、同源预览、评论管理 hide/restore/delete/pin）+ 公共读 3 端点（列表/详情含 `content_html`+`toc`+上下篇/栏目计数）。验收：admin 建栏目 → 建文章（存草稿）→ 发布 → 前台可见 → 下架 → 前台 404 → 删除；slug 重复 409、被引用栏目禁删 409。
 - **goldmark 渲染管线**：GFM 表格/任务列表/删除线、脚注、标题锚点目录、Chroma monokai 服务端高亮、`> [!TIP]/[!WARNING]` Callout（自写渲染后重写，goldmark 1.8 无内建 Alert）。验收：在编辑器「同源预览」对照前台实际渲染是否一致。
