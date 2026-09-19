@@ -11,9 +11,6 @@
     "account-backend-phase2",
     "account-backend-phase3",
     "account-backend-phase4",
-    "account-backend-phase5",
-    "execution-status",
-    "pending-test",
-    "todo"
+    "account-backend-phase5"
   ]
 }
