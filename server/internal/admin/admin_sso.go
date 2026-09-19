@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"crypto/rand"
@@ -14,7 +14,9 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/account"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 )
 
@@ -32,8 +34,8 @@ func oauthClientPayload(client model.OAuthClient) gin.H {
 		"clientId":     client.ClientID,
 		"redirectUris": uris,
 		"enabled":      client.Enabled,
-		"createdAt":    formatTime(client.CreatedAt),
-		"updatedAt":    formatTime(client.UpdatedAt),
+		"createdAt":    httpx.FormatTime(client.CreatedAt),
+		"updatedAt":    httpx.FormatTime(client.UpdatedAt),
 	}
 }
 
@@ -128,7 +130,7 @@ func (h *AdminHandler) CreateOAuthClient(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, fields))
 		return
 	}
-	clientID, err := newOAuthClientID()
+	clientID, err := account.NewOAuthClientID()
 	if err != nil {
 		slog.Error("生成 OAuth client_id 失败", "err", err)
 		errs.Abort(c, errs.ErrInternal)
@@ -145,7 +147,7 @@ func (h *AdminHandler) CreateOAuthClient(c *gin.Context) {
 		Product:          product,
 		Name:             name,
 		ClientID:         clientID,
-		ClientSecretHash: hashOAuthClientSecret(secret),
+		ClientSecretHash: account.HashOAuthClientSecret(secret),
 		Enabled:          true,
 	}
 	if raw, err := json.Marshal(uris); err == nil {
@@ -160,7 +162,7 @@ func (h *AdminHandler) CreateOAuthClient(c *gin.Context) {
 			c.GetString("request_id"), "", nil, oauthClientPayload(client))
 	})
 	if err != nil {
-		if isUniqueViolation(err, "client_id") {
+		if errs.UniqueViolationColumn(err) == "client_id" {
 			errs.Abort(c, errs.ErrInternal)
 			return
 		}
@@ -270,7 +272,7 @@ func (h *AdminHandler) ResetOAuthClientSecret(c *gin.Context) {
 			return err
 		}
 		if err := tx.Model(&model.OAuthClient{}).Where("id = ?", clientID).
-			Update("client_secret_hash", hashOAuthClientSecret(secret)).Error; err != nil {
+			Update("client_secret_hash", account.HashOAuthClientSecret(secret)).Error; err != nil {
 			return err
 		}
 		return h.audit.Record(tx, actorID, "sso.client.reset_secret", "oauth_client", clientID.String(),

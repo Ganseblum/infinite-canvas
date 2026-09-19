@@ -1,4 +1,4 @@
-package handler
+package canvas
 
 import (
 	"errors"
@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/service"
 )
@@ -47,14 +48,14 @@ func (h *CommunityHandler) List(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"community": "社区暂未开放"}))
 		return
 	}
-	size, err := parseCursorSize(c.Query("size"))
+	size, err := httpx.ParseCursorSize(c.Query("size"))
 	if err != nil {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"size": "size 必须是 1-100 的整数"}))
 		return
 	}
 	query := h.db.Model(&model.CommunityWork{}).Where(listablePublic)
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
-		pattern := searchPattern(q)
+		pattern := httpx.SearchPattern(q)
 		query = query.Where("LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(tags) LIKE ?", pattern, pattern, pattern)
 	}
 	if tag := strings.TrimSpace(c.Query("tag")); tag != "" {
@@ -267,7 +268,7 @@ func (h *CommunityHandler) Delete(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 // Like 点赞与取消点赞，重复调用幂等，计数在同一事务内更新。
@@ -384,7 +385,7 @@ func (h *CommunityHandler) UserProfile(c *gin.Context) {
 			"username":    user.Username,
 			"displayName": user.DisplayName,
 			"avatarUrl":   user.AvatarURL,
-			"createdAt":   formatTime(user.CreatedAt),
+			"createdAt":   httpx.FormatTime(user.CreatedAt),
 		},
 		"stats": gin.H{
 			"works": len(works),
@@ -461,7 +462,7 @@ func (h *CommunityHandler) payloads(works []model.CommunityWork) []gin.H {
 			"likeCount":   work.LikeCount,
 			"remixCount":  work.RemixCount,
 			"reportCount": work.ReportCount,
-			"createdAt":   formatTime(work.CreatedAt),
+			"createdAt":   httpx.FormatTime(work.CreatedAt),
 			"author": gin.H{
 				"id":          author.ID.String(),
 				"username":    author.Username,

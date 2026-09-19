@@ -18,14 +18,14 @@ func newCORSTestRouter(allowed []string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(CORS(allowed))
-	r.GET("/api/thing", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
-	r.POST("/api/thing", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	r.GET("/api/v1/thing", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	r.POST("/api/v1/thing", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	return r
 }
 
 func doCORSRequest(t *testing.T, r *gin.Engine, method, origin string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, "/api/thing", nil)
+	req := httptest.NewRequest(method, "/api/v1/thing", nil)
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}
@@ -125,7 +125,7 @@ func TestCORSPreflight(t *testing.T) {
 func TestCORSPreflightOnUnregisteredPath(t *testing.T) {
 	// 引擎级中间件也必须覆盖没有匹配路由的路径（gin 的 noRoute 链），否则预检会落成 404/405。
 	r := newCORSTestRouter([]string{testAdminOrigin})
-	req := httptest.NewRequest(http.MethodOptions, "/api/does-not-exist", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/does-not-exist", nil)
 	req.Header.Set("Origin", testAdminOrigin)
 	req.Header.Set("Access-Control-Request-Method", "POST")
 	w := httptest.NewRecorder()

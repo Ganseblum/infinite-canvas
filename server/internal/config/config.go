@@ -312,7 +312,7 @@ func (c *Config) validate() error {
 	}
 	// 支付回调地址默认由 APP_BASE_URL 推导，可显式覆盖以指向独立域名。
 	if c.PaymentNotifyURL == "" {
-		c.PaymentNotifyURL = strings.TrimRight(c.AppBaseURL, "/") + "/api/payments/webhook"
+		c.PaymentNotifyURL = strings.TrimRight(c.AppBaseURL, "/") + "/api/v1/payments/webhook"
 	}
 	// 易支付网关承载真实资金流，正式环境强制 https；测试/本地联调可放宽。
 	if c.EasyPayEnabled && c.SiteEnv == "production" && !strings.HasPrefix(c.EasyPayAPIBase, "https://") {

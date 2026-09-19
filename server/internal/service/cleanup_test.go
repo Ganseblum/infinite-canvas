@@ -18,7 +18,7 @@ import (
 
 // mapStorage 是清理测试用的内存存储驱动。
 type mapStorage struct {
-	objects    map[string][]byte
+	objects map[string][]byte
 	deleted    []string         // Delete 调用过的全部路径（含失败调用），供断言 orig 连带删除
 	failDelete map[string]error // 指定路径的 Delete 注入错误，验证 best-effort 语义
 }

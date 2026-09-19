@@ -1,4 +1,4 @@
-package handler
+package ai
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // stubWatermarker 是生成落盘水印挂钩的测试替身：可注入错误、可记录调用次数。
@@ -59,7 +60,7 @@ func newWatermarkRouter(t *testing.T, g *gorm.DB, cfg *config.Config, stor stora
 	if err := r.SetTrustedProxies(nil); err != nil {
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
-	api := r.Group("/api", middleware.Auth([]byte(cfg.JWTSecret)))
+	api := r.Group("/api/v1", middleware.Auth([]byte(cfg.JWTSecret)))
 	api.POST("/ai/quote", aiHandler.Quote)
 	api.POST("/ai/images/generations", aiHandler.Images)
 	return r, aiHandler
@@ -81,7 +82,7 @@ func seedGrantedCredits(t *testing.T, g *gorm.DB, userID uuid.UUID, micros int64
 func generateImage(t *testing.T, r *gin.Engine, token, idempotencyKey string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	quote := mustQuote(t, r, token, "test-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model":          "test-image",
 		"prompt":         "水印挂钩测试",
 		"n":              1,
@@ -92,7 +93,7 @@ func generateImage(t *testing.T, r *gin.Engine, token, idempotencyKey string) (*
 	})
 	key := ""
 	if w.Code == http.StatusOK {
-		body := decodeBody(t, w)
+		body := testutil.DecodeBody(t, w)
 		images, _ := body["images"].([]any)
 		if len(images) != 1 {
 			t.Fatalf("应返回一张图片: %v", body)
@@ -106,21 +107,21 @@ func generateImage(t *testing.T, r *gin.Engine, token, idempotencyKey string) (*
 // TestImageGenerationWatermarkFailClosed 锁死 S1 红线：free 档水印烧录失败 →
 // 整单失败并退款，存储中无主对象也无 orig 对象，无任何媒体行（绝不漏出干净字节）。
 func TestImageGenerationWatermarkFailClosed(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
-	stor := newFakeStorage("local")
+	stor := testutil.NewFakeStorage("local")
 	wm := &stubWatermarker{err: errors.New("注入的水印故障")}
 	r, _ := newWatermarkRouter(t, g, cfg, stor, wm, func() bool { return true })
-	user := createUser(t, g, "wmfail@example.com", "wmfail", "password123", true)
+	user := testutil.CreateUser(t, g, "wmfail@example.com", "wmfail", "password123", true)
 	seedGrantedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	w, _ := generateImage(t, r, token, "wm-fail-1")
-	if w.Code != http.StatusBadGateway || errorCode(t, w) != "UPSTREAM_ERROR" {
+	if w.Code != http.StatusBadGateway || testutil.ErrorCode(t, w) != "UPSTREAM_ERROR" {
 		t.Fatalf("水印失败应走既有失败路径 502 UPSTREAM_ERROR, got %d %s", w.Code, w.Body.String())
 	}
 
@@ -129,8 +130,8 @@ func TestImageGenerationWatermarkFailClosed(t *testing.T) {
 	if mediaCount != 0 {
 		t.Fatalf("fail-closed 不应产生任何媒体行, got %d", mediaCount)
 	}
-	if len(stor.objects) != 0 {
-		t.Fatalf("存储中不应有任何对象（主对象与 orig 均不可落盘）: %v", stor.objects)
+	if len(stor.Objects) != 0 {
+		t.Fatalf("存储中不应有任何对象（主对象与 orig 均不可落盘）: %v", stor.Objects)
 	}
 	var request model.AIRequest
 	if err := g.Where("user_id = ?", user.ID).First(&request).Error; err != nil {
@@ -163,22 +164,22 @@ func TestImageGenerationWatermarkFailClosed(t *testing.T) {
 // orig Put 失败 → 整单失败退款。水印版主对象尚未落盘，存储中主对象与 orig 均不存在，
 // 无任何媒体行。putErr 注入命中首个 Put 即 orig（水印烧录不经过存储）。
 func TestImageGenerationOrigPutFailureFailsClosed(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
-	stor := newFakeStorage("local")
-	stor.putErr = errors.New("注入的 orig 写入故障")
+	stor := testutil.NewFakeStorage("local")
+	stor.PutErr = errors.New("注入的 orig 写入故障")
 	wm := &stubWatermarker{}
 	r, _ := newWatermarkRouter(t, g, cfg, stor, wm, func() bool { return true })
-	user := createUser(t, g, "wmorigfail@example.com", "wmorigfail", "password123", true)
+	user := testutil.CreateUser(t, g, "wmorigfail@example.com", "wmorigfail", "password123", true)
 	seedGrantedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	w, _ := generateImage(t, r, token, "wm-origfail-1")
-	if w.Code != http.StatusBadGateway || errorCode(t, w) != "UPSTREAM_ERROR" {
+	if w.Code != http.StatusBadGateway || testutil.ErrorCode(t, w) != "UPSTREAM_ERROR" {
 		t.Fatalf("orig 写入失败应走既有失败路径 502 UPSTREAM_ERROR, got %d %s", w.Code, w.Body.String())
 	}
 	var mediaCount int64
@@ -186,8 +187,8 @@ func TestImageGenerationOrigPutFailureFailsClosed(t *testing.T) {
 	if mediaCount != 0 {
 		t.Fatalf("orig 写入失败不应产生任何媒体行, got %d", mediaCount)
 	}
-	if len(stor.objects) != 0 {
-		t.Fatalf("orig 写入失败时主对象与 orig 均不应落盘: %v", stor.objects)
+	if len(stor.Objects) != 0 {
+		t.Fatalf("orig 写入失败时主对象与 orig 均不应落盘: %v", stor.Objects)
 	}
 	var request model.AIRequest
 	if err := g.Where("user_id = ?", user.ID).First(&request).Error; err != nil {
@@ -213,18 +214,18 @@ func TestImageGenerationOrigPutFailureFailsClosed(t *testing.T) {
 // TestImageGenerationWatermarkFreeStoresOrig 验证 free 档成功序：
 // orig 保留原始字节、主对象为水印后字节、媒体行记录水印版 mime 与大小。
 func TestImageGenerationWatermarkFreeStoresOrig(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
-	stor := newFakeStorage("local")
+	stor := testutil.NewFakeStorage("local")
 	wm := &stubWatermarker{}
 	r, _ := newWatermarkRouter(t, g, cfg, stor, wm, func() bool { return true })
-	user := createUser(t, g, "wmfree@example.com", "wmfree", "password123", true)
+	user := testutil.CreateUser(t, g, "wmfree@example.com", "wmfree", "password123", true)
 	seedGrantedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	w, key := generateImage(t, r, token, "wm-free-1")
 	if w.Code != http.StatusOK || key == "" {
@@ -240,10 +241,10 @@ func TestImageGenerationWatermarkFreeStoresOrig(t *testing.T) {
 	if origPath == "" {
 		t.Fatalf("生成产物 storageKey 必含冒号，orig 路径不应为空")
 	}
-	if got, ok := stor.objects[origPath]; !ok || !bytes.Equal(got, original) {
+	if got, ok := stor.Objects[origPath]; !ok || !bytes.Equal(got, original) {
 		t.Fatalf("orig 应存在且内容为原始字节: %q", got)
 	}
-	if got, ok := stor.objects[mainPath]; !ok || !bytes.Equal(got, wantWM) {
+	if got, ok := stor.Objects[mainPath]; !ok || !bytes.Equal(got, wantWM) {
 		t.Fatalf("主对象应为水印后字节: %q", got)
 	}
 	var file model.MediaFile
@@ -272,19 +273,19 @@ func TestImageGenerationWatermarkFreeStoresOrig(t *testing.T) {
 // TestImageGenerationPaidSkipsWatermark 验证付费档现状不变：不烧水印、不写 orig、
 // 主对象即原始字节。
 func TestImageGenerationPaidSkipsWatermark(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
-	stor := newFakeStorage("local")
+	stor := testutil.NewFakeStorage("local")
 	wm := &stubWatermarker{}
 	r, _ := newWatermarkRouter(t, g, cfg, stor, wm, func() bool { return true })
-	user := createUser(t, g, "wmpaid@example.com", "wmpaid", "password123", true)
+	user := testutil.CreateUser(t, g, "wmpaid@example.com", "wmpaid", "password123", true)
 	makePaid(t, g, user)                  // 有效订阅 → paid 档（D6）
 	seedCredits(t, g, user.ID, 1_000_000) // 余额可预扣
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	w, key := generateImage(t, r, token, "wm-paid-1")
 	if w.Code != http.StatusOK || key == "" {
@@ -293,11 +294,11 @@ func TestImageGenerationPaidSkipsWatermark(t *testing.T) {
 	if wm.calls != 0 {
 		t.Fatalf("付费档不应调用水印: calls=%d", wm.calls)
 	}
-	if len(stor.objects) != 1 {
-		t.Fatalf("付费档不应写 orig, objects=%v", stor.objects)
+	if len(stor.Objects) != 1 {
+		t.Fatalf("付费档不应写 orig, objects=%v", stor.Objects)
 	}
 	mainPath := storage.ObjectPath(user.ID.String(), key)
-	if got, ok := stor.objects[mainPath]; !ok || !bytes.Equal(got, []byte("fake-png-data")) {
+	if got, ok := stor.Objects[mainPath]; !ok || !bytes.Equal(got, []byte("fake-png-data")) {
 		t.Fatalf("付费档主对象应为原始字节: %q", got)
 	}
 	var file model.MediaFile
@@ -312,18 +313,18 @@ func TestImageGenerationPaidSkipsWatermark(t *testing.T) {
 // TestImageGenerationWatermarkDisabled 验证开关关闭时整段跳过：free 档也不判档、
 // 不写 orig、不烧水印，行为与现状完全一致。
 func TestImageGenerationWatermarkDisabled(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
-	stor := newFakeStorage("local")
+	stor := testutil.NewFakeStorage("local")
 	wm := &stubWatermarker{}
 	r, _ := newWatermarkRouter(t, g, cfg, stor, wm, func() bool { return false })
-	user := createUser(t, g, "wmoff@example.com", "wmoff", "password123", true)
+	user := testutil.CreateUser(t, g, "wmoff@example.com", "wmoff", "password123", true)
 	seedGrantedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	w, key := generateImage(t, r, token, "wm-off-1")
 	if w.Code != http.StatusOK || key == "" {
@@ -332,11 +333,11 @@ func TestImageGenerationWatermarkDisabled(t *testing.T) {
 	if wm.calls != 0 {
 		t.Fatalf("开关关闭时不应调用水印: calls=%d", wm.calls)
 	}
-	if len(stor.objects) != 1 {
-		t.Fatalf("开关关闭时不应写 orig, objects=%v", stor.objects)
+	if len(stor.Objects) != 1 {
+		t.Fatalf("开关关闭时不应写 orig, objects=%v", stor.Objects)
 	}
 	mainPath := storage.ObjectPath(user.ID.String(), key)
-	if got, ok := stor.objects[mainPath]; !ok || !bytes.Equal(got, []byte("fake-png-data")) {
+	if got, ok := stor.Objects[mainPath]; !ok || !bytes.Equal(got, []byte("fake-png-data")) {
 		t.Fatalf("开关关闭时主对象应为原始字节: %q", got)
 	}
 }
@@ -344,18 +345,18 @@ func TestImageGenerationWatermarkDisabled(t *testing.T) {
 // TestImageGenerationSaveFailureCompensatesOrig 验证落盘序第③步：
 // 正式存储失败时补偿删除已写的 orig（best-effort），仍然整单失败退款。
 func TestImageGenerationSaveFailureCompensatesOrig(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
-	stor := newFakeStorage("local")
+	stor := testutil.NewFakeStorage("local")
 	wm := &stubWatermarker{}
 	r, _ := newWatermarkRouter(t, g, cfg, stor, wm, func() bool { return true })
-	user := createUser(t, g, "wmcomp@example.com", "wmcomp", "password123", true)
+	user := testutil.CreateUser(t, g, "wmcomp@example.com", "wmcomp", "password123", true)
 	seedGrantedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	// 把 free 档单文件上限压到与原始产物等大：水印字节必然超限，Save 必失败。
 	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("max_file_bytes", len("fake-png-data")).Error; err != nil {
@@ -363,21 +364,21 @@ func TestImageGenerationSaveFailureCompensatesOrig(t *testing.T) {
 	}
 
 	w, _ := generateImage(t, r, token, "wm-comp-1")
-	if w.Code != http.StatusInsufficientStorage || errorCode(t, w) != "STORAGE_QUOTA_EXCEEDED" {
+	if w.Code != http.StatusInsufficientStorage || testutil.ErrorCode(t, w) != "STORAGE_QUOTA_EXCEEDED" {
 		t.Fatalf("落盘失败应返回 507, got %d %s", w.Code, w.Body.String())
 	}
-	if len(stor.objects) != 0 {
-		t.Fatalf("补偿后不应残留任何对象: %v", stor.objects)
+	if len(stor.Objects) != 0 {
+		t.Fatalf("补偿后不应残留任何对象: %v", stor.Objects)
 	}
 	wantOrig := user.ID.String() + "/orig/"
 	found := false
-	for _, deleted := range stor.deleted {
+	for _, deleted := range stor.Deleted {
 		if len(deleted) > len(wantOrig) && deleted[:len(wantOrig)] == wantOrig {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("应补偿删除 orig, deleted=%v", stor.deleted)
+		t.Fatalf("应补偿删除 orig, deleted=%v", stor.Deleted)
 	}
 	var mediaCount int64
 	g.Model(&model.MediaFile{}).Where("user_id = ?", user.ID).Count(&mediaCount)

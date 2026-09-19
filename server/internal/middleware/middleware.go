@@ -222,9 +222,9 @@ func RequireNotPendingDeletion() gin.HandlerFunc {
 // passwordChangeAllowlist 是强制改密期间仍然放行的路由：登出与刷新用于维持或结束会话，
 // 改密接口本身是唯一的出口，其余接口（含 /api/me、管理后台与媒体读）一律拦截。
 var passwordChangeAllowlist = map[string]bool{
-	"POST /api/auth/logout":  true,
-	"POST /api/auth/refresh": true,
-	"POST /api/me/password":  true,
+	"POST /api/v1/auth/logout":  true,
+	"POST /api/v1/auth/refresh": true,
+	"POST /api/v1/me/password":  true,
 }
 
 // RequirePasswordChanged 拦截 must_change_password 的用户，返回 403 PASSWORD_CHANGE_REQUIRED。
@@ -280,8 +280,8 @@ func MaintenanceGate(settings *service.SiteSettingService, idn *identity.Service
 		path := c.Request.URL.Path
 		// 支付回调是渠道服务器的服务端调用，维护期也必须照常到账，
 		// 否则渠道会反复重试而订单长期 pending。
-		if strings.HasPrefix(path, "/api/auth/") || strings.HasPrefix(path, "/api/admin/") ||
-			strings.HasPrefix(path, "/api/payments/webhook/") || strings.HasPrefix(path, "/api/oidc/") {
+		if strings.HasPrefix(path, "/api/v1/auth/") || strings.HasPrefix(path, "/api/admin/") ||
+			strings.HasPrefix(path, "/api/v1/payments/webhook/") || strings.HasPrefix(path, "/api/v1/oidc/") {
 			c.Next()
 			return
 		}

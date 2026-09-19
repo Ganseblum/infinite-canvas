@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // decodeSSOBody 解析 JSON 响应体到目标结构。
@@ -33,7 +34,7 @@ func newAdminSSORouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engine
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
 	secret := []byte(cfg.JWTSecret)
-	adminH := NewAdminHandler(g, cfg, newFakeStorage("local"))
+	adminH := NewAdminHandler(g, cfg, testutil.NewFakeStorage("local"))
 	admin := r.Group("/api/admin",
 		middleware.Auth(secret),
 		middleware.RequireActiveUser(identity.NewService(g)),
@@ -48,12 +49,12 @@ func newAdminSSORouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engine
 }
 
 func TestCreateOAuthClientReturnsSecretOnce(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminSSORouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "sso-admin@example.com", "sso-admin")
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
 		"name":         "blog",
 		"redirectUris": []string{"https://blog.example.com/callback", "http://localhost:5173/callback"},
 		"productId":    "youc-canvas",
@@ -87,12 +88,12 @@ func TestCreateOAuthClientReturnsSecretOnce(t *testing.T) {
 }
 
 func TestCreateOAuthClientRejectsInsecureRedirect(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminSSORouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "sso-admin2@example.com", "sso-admin2")
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
 		"name":         "bad",
 		"redirectUris": []string{"http://evil.example.com/callback"},
 	})
@@ -105,12 +106,12 @@ func TestCreateOAuthClientRejectsInsecureRedirect(t *testing.T) {
 }
 
 func TestResetOAuthClientSecretRotatesHash(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminSSORouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "sso-admin3@example.com", "sso-admin3")
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
 		"name": "app", "redirectUris": []string{"https://app.example.com/cb"}, "productId": "youc-canvas",
 	})
 	var created struct {
@@ -125,7 +126,7 @@ func TestResetOAuthClientSecretRotatesHash(t *testing.T) {
 	g.First(&row, "id = ?", created.Client.ID)
 	oldHash = row.ClientSecretHash
 
-	w = doAuthJSON(r, http.MethodPost, "/api/admin/sso/clients/"+created.Client.ID+"/reset-secret", token, nil)
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/sso/clients/"+created.Client.ID+"/reset-secret", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("重置应 200, got %d %s", w.Code, w.Body.String())
 	}
@@ -136,12 +137,12 @@ func TestResetOAuthClientSecretRotatesHash(t *testing.T) {
 }
 
 func TestDeleteOAuthClient(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminSSORouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "sso-admin4@example.com", "sso-admin4")
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/sso/clients", token, map[string]any{
 		"name": "gone", "redirectUris": []string{"https://gone.example.com/cb"}, "productId": "youc-canvas",
 	})
 	var created struct {
@@ -150,11 +151,11 @@ func TestDeleteOAuthClient(t *testing.T) {
 		} `json:"client"`
 	}
 	decodeSSOBody(t, w, &created)
-	w = doAuthJSON(r, http.MethodDelete, "/api/admin/sso/clients/"+created.Client.ID, token, nil)
+	w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/sso/clients/"+created.Client.ID, token, nil)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("删除应 204, got %d %s", w.Code, w.Body.String())
 	}
-	w = doAuthJSON(r, http.MethodDelete, "/api/admin/sso/clients/"+created.Client.ID, token, nil)
+	w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/sso/clients/"+created.Client.ID, token, nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("重复删除应 404, got %d", w.Code)
 	}

@@ -1,4 +1,4 @@
-package main
+package admin
 
 import (
 	"testing"
@@ -7,7 +7,6 @@ import (
 
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/config"
-	"github.com/infinite-canvas/server/internal/handler"
 )
 
 // expectedAdminRouteCount 是管理后台的路由总数：41 条既有路由 + 7 条 RBAC 路由 + 管理员建号 + 用量分析。
@@ -19,8 +18,8 @@ func newAdminRouteTestEngine(t *testing.T) (*gin.Engine, []adminRouteSpec) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := handler.NewAdminHandlerWithUpstream(nil, &config.Config{}, nil, nil)
-	specs := registerAdminRoutes(r.Group("/api/admin"), h)
+	h := NewAdminHandlerWithUpstream(nil, &config.Config{}, nil, nil)
+	specs := RegisterRoutes(r.Group("/api/admin"), h)
 	return r, specs
 }
 
@@ -111,7 +110,7 @@ func TestAdminMembershipRoutesRegistered(t *testing.T) {
 
 func TestAdminRouteRegistrarPanicsOnUnknownPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := handler.NewAdminHandlerWithUpstream(nil, &config.Config{}, nil, nil)
+	h := NewAdminHandlerWithUpstream(nil, &config.Config{}, nil, nil)
 	defer func() {
 		if recover() == nil {
 			t.Fatalf("未注册的权限点必须在启动期 panic")
@@ -123,7 +122,7 @@ func TestAdminRouteRegistrarPanicsOnUnknownPermission(t *testing.T) {
 
 func TestAdminRouteRegistrarPanicsOnMissingPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := handler.NewAdminHandlerWithUpstream(nil, &config.Config{}, nil, nil)
+	h := NewAdminHandlerWithUpstream(nil, &config.Config{}, nil, nil)
 	defer func() {
 		if recover() == nil {
 			t.Fatalf("非 allowlist 路由缺少权限点必须在启动期 panic")

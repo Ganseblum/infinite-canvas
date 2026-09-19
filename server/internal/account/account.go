@@ -1,4 +1,4 @@
-package handler
+package account
 
 import (
 	"errors"
@@ -13,6 +13,7 @@ import (
 	"github.com/infinite-canvas/server/internal/auth"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/billing"
@@ -50,14 +51,6 @@ func NewAccountHandler(db *gorm.DB, cfg *config.Config, grant *service.FreeGrant
 
 // latestPaidUntil 返回该用户最新订阅的 period_end；无订阅时为 nil。
 // paidUntil 键的值来源由 credits.paid_until 迁移到订阅周期（D6）。
-func latestPaidUntil(db *gorm.DB, userID uuid.UUID) *time.Time {
-	var sub model.MembershipSubscription
-	if err := db.Where("user_id = ?", userID).Order("period_end DESC").First(&sub).Error; err != nil {
-		return nil
-	}
-	return &sub.PeriodEnd
-}
-
 func (h *AccountHandler) GetMe(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
 	var user model.PlatformUser
@@ -102,7 +95,7 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 
 	deletion := gin.H{"status": "none", "scheduledAt": nil}
 	if user.Status == "pending_deletion" {
-		deletion = gin.H{"status": "pending", "scheduledAt": formatTimePtr(user.DeletionScheduledAt)}
+		deletion = gin.H{"status": "pending", "scheduledAt": httpx.FormatTimePtr(user.DeletionScheduledAt)}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -127,7 +120,7 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 			"purchasedMicros": account.PurchasedMicros,
 			"grantedMicros":   account.GrantedMicros,
 			"totalMicros":     account.PurchasedMicros + account.GrantedMicros,
-			"paidUntil":       formatTimePtr(latestPaidUntil(h.db, uid)),
+			"paidUntil":       httpx.FormatTimePtr(membership.LatestPaidUntil(h.db, uid)),
 		},
 		"usage": gin.H{
 			"storageBytes":        used,
@@ -135,12 +128,12 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 			"freeVideoTrialsUsed": videoTrials,
 		},
 		"mediaExpiry": gin.H{
-			"nearestAt":     formatTimePtr(expiry.NearestAt),
+			"nearestAt":     httpx.FormatTimePtr(expiry.NearestAt),
 			"expiringCount": expiry.ExpiringCount,
 		},
 		"deletion":    deletion,
 		"readOnly":    readOnly,
-		"graceEndsAt": formatTimePtr(graceEndsAt),
+		"graceEndsAt": httpx.FormatTimePtr(graceEndsAt),
 	})
 }
 
@@ -151,13 +144,6 @@ func (h *AccountHandler) usageValue(uid uuid.UUID, metric string) (int64, error)
 		return 0, nil
 	}
 	return record.Value, err
-}
-
-func formatTimePtr(t *time.Time) any {
-	if t == nil {
-		return nil
-	}
-	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // ExportMe 导出当前用户的个人数据（差异清单 #123）：档案基本字段、点数余额、
@@ -204,8 +190,8 @@ func (h *AccountHandler) ExportMe(c *gin.Context) {
 			"purchasedMicros": order.PurchasedMicros,
 			"grantedMicros":   order.GrantedMicros,
 			"status":          order.Status,
-			"paidAt":          formatTimePtr(order.PaidAt),
-			"createdAt":       formatTime(order.CreatedAt),
+			"paidAt":          httpx.FormatTimePtr(order.PaidAt),
+			"createdAt":       httpx.FormatTime(order.CreatedAt),
 		})
 	}
 	generationItems := make([]gin.H, 0, len(generations))
@@ -218,7 +204,7 @@ func (h *AccountHandler) ExportMe(c *gin.Context) {
 			"model":            item.Model,
 			"durationMs":       item.DurationMs,
 			"moderationStatus": item.ModerationStatus,
-			"createdAt":        formatTime(item.CreatedAt),
+			"createdAt":        httpx.FormatTime(item.CreatedAt),
 		})
 	}
 	canvasItems := make([]gin.H, 0, len(canvases))
@@ -228,13 +214,13 @@ func (h *AccountHandler) ExportMe(c *gin.Context) {
 			"title":           canvas.Title,
 			"nodeCount":       canvas.NodeCount,
 			"connectionCount": canvas.ConnectionCount,
-			"createdAt":       formatTime(canvas.CreatedAt),
-			"updatedAt":       formatTime(canvas.UpdatedAt),
+			"createdAt":       httpx.FormatTime(canvas.CreatedAt),
+			"updatedAt":       httpx.FormatTime(canvas.UpdatedAt),
 		})
 	}
 	c.Header("Content-Disposition", `attachment; filename="youc-export.json"`)
 	c.JSON(http.StatusOK, gin.H{
-		"exportedAt": formatTime(time.Now()),
+		"exportedAt": httpx.FormatTime(time.Now()),
 		"profile": gin.H{
 			"id":            user.ID.String(),
 			"email":         user.Email,
@@ -242,7 +228,7 @@ func (h *AccountHandler) ExportMe(c *gin.Context) {
 			"displayName":   user.DisplayName,
 			"avatarUrl":     user.AvatarURL,
 			"emailVerified": user.EmailVerifiedAt != nil,
-			"createdAt":     formatTime(user.CreatedAt),
+			"createdAt":     httpx.FormatTime(user.CreatedAt),
 		},
 		"credits": gin.H{
 			"purchasedMicros": credit.PurchasedMicros,
@@ -399,7 +385,7 @@ func (h *AccountHandler) ClaimFreeGrant(c *gin.Context) {
 	}
 	if err := h.db.Create(&claim).Error; err != nil {
 		// 唯一索引兜底并发
-		if isDuplicateKey(err) {
+		if errs.IsDuplicateKey(err) {
 			h.db.Where("user_id = ? AND campaign_id = ?", uid, h.cfg.FreeGrantCampaignID).First(&existing)
 			c.JSON(http.StatusOK, grantPayload(existing))
 			return

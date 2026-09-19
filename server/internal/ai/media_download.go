@@ -1,4 +1,4 @@
-package handler
+package ai
 
 import (
 	"bytes"
@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/storage"
 )
@@ -126,7 +127,7 @@ func verifyDownloadToken(secret []byte, token string) (*downloadClaims, bool) {
 // 社区放行分支——那是本 feature 最严重的泄漏面：社区浏览者绝不能借下载端点
 // 取得作者名下对象的干净原件。归属不符与不存在一律 404，防探测。
 func (h *MediaHandler) RequestDownload(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -157,7 +158,7 @@ func (h *MediaHandler) RequestDownload(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	mediaURL := "/api/media/" + key
+	mediaURL := "/api/v1/media/" + key
 	if planID != "paid" {
 		// 非付费档：下发层本就出主对象（水印版），无需签发取件链接。
 		c.JSON(http.StatusOK, gin.H{"url": mediaURL, "expiresAt": nil})
@@ -180,13 +181,13 @@ func (h *MediaHandler) RequestDownload(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"url": "/api/media-download/" + token, "expiresAt": exp.Format(time.RFC3339)})
+	c.JSON(http.StatusOK, gin.H{"url": "/api/v1/media-download/" + token, "expiresAt": exp.Format(time.RFC3339)})
 }
 
 // ServeDownload 处理 GET /api/media-download/:token：校验链任一步失败一律 404，
 // 不区分过期、篡改、跨用户或归属行已删（防探测）。成功时回流干净原件。
 func (h *MediaHandler) ServeDownload(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -202,7 +203,7 @@ func (h *MediaHandler) ServeDownload(c *gin.Context) {
 	}
 	// storageKey 由本服务签发、签发前已过格式校验，取件侧再过一次正则，
 	// 保证进入对象路径拼装与附件文件名的字符串绝对干净；不符按伪造处理。
-	if !storageKeyRe.MatchString(claims.storageKey) {
+	if !model.StorageKeyRe.MatchString(claims.storageKey) {
 		errs.Abort(c, errs.ErrNotFound)
 		return
 	}
@@ -268,7 +269,7 @@ func (h *MediaHandler) serveOrigLocal(c *gin.Context, origPath, storageKey strin
 	if exts, err := mime.ExtensionsByType(sniffed); err == nil && len(exts) > 0 {
 		ext = exts[0]
 	}
-	// storageKey 已过 storageKeyRe，对象 id 段仅含 [A-Za-z0-9_-]，文件名无需再转义。
+	// storageKey 已过 StorageKeyRe，对象 id 段仅含 [A-Za-z0-9_-]，文件名无需再转义。
 	c.Header("Content-Type", sniffed)
 	c.Header("Content-Disposition", `attachment; filename="ic-`+storageObjectID(storageKey)+ext+`"`)
 	c.Header("Cache-Control", "private, no-store")

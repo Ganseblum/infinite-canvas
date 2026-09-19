@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/platform/membership"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // newAdminMembershipRouter 按生产同样的中间件链注册会员订阅四条路由与用户列表/详情，
@@ -30,7 +31,7 @@ func newAdminMembershipRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
 	secret := []byte(cfg.JWTSecret)
-	adminH := NewAdminHandler(g, cfg, newFakeStorage("local"))
+	adminH := NewAdminHandler(g, cfg, testutil.NewFakeStorage("local"))
 	admin := r.Group("/api/admin",
 		middleware.Auth(secret),
 		middleware.RequireActiveUser(identity.NewService(g)),
@@ -79,12 +80,12 @@ func insertSubscription(t *testing.T, g *gorm.DB, userID uuid.UUID, planID, stat
 }
 
 func TestAdminListSubscriptionsFiltersAndPaginates(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMembershipRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "lister@example.com", "lister")
-	user1 := createUser(t, g, "member1@example.com", "member1", "password123", true)
-	user2 := createUser(t, g, "member2@example.com", "member2", "password123", true)
+	user1 := testutil.CreateUser(t, g, "member1@example.com", "member1", "password123", true)
+	user2 := testutil.CreateUser(t, g, "member2@example.com", "member2", "password123", true)
 
 	base := time.Now().Add(-24 * time.Hour)
 	subA := insertSubscription(t, g, user1.ID, "paid", "active", base, base.AddDate(0, 0, 30), base)
@@ -93,15 +94,15 @@ func TestAdminListSubscriptionsFiltersAndPaginates(t *testing.T) {
 	subD := insertSubscription(t, g, user2.ID, "paid", "active", base, base.AddDate(0, 0, 30), base.Add(3*time.Hour))
 
 	// 无筛选：按 created_at 倒序，最新在前。
-	w := doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions", token, nil)
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("订阅列表应 200, got %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	if body["total"] != float64(4) || body["page"] != float64(1) || body["size"] != float64(20) {
 		t.Fatalf("分页元信息错误: %s", w.Body.String())
 	}
-	items := decodeItems(t, w)
+	items := testutil.DecodeItems(t, w)
 	if len(items) != 4 || items[0]["id"] != subD.ID.String() {
 		t.Fatalf("列表应按 created_at 倒序: %s", w.Body.String())
 	}
@@ -119,62 +120,62 @@ func TestAdminListSubscriptionsFiltersAndPaginates(t *testing.T) {
 	}
 
 	// userId 精确筛选 + 分页：user1 共 3 条，第 2 页剩 1 条（最旧的 subA）。
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?userId="+user1.ID.String()+"&page=2&size=2", token, nil)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?userId="+user1.ID.String()+"&page=2&size=2", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("userId 筛选应 200, got %d %s", w.Code, w.Body.String())
 	}
-	body = decodeBody(t, w)
-	items = decodeItems(t, w)
+	body = testutil.DecodeBody(t, w)
+	items = testutil.DecodeItems(t, w)
 	if body["total"] != float64(3) || len(items) != 1 || items[0]["id"] != subA.ID.String() {
 		t.Fatalf("userId 筛选分页错误: %s", w.Body.String())
 	}
 
 	// planId 精确筛选。
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?planId=paid", token, nil)
-	if decodeBody(t, w)["total"] != float64(4) {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?planId=paid", token, nil)
+	if testutil.DecodeBody(t, w)["total"] != float64(4) {
 		t.Fatalf("planId=paid 应命中 4 条: %s", w.Body.String())
 	}
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?planId=free", token, nil)
-	if decodeBody(t, w)["total"] != float64(0) {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?planId=free", token, nil)
+	if testutil.DecodeBody(t, w)["total"] != float64(0) {
 		t.Fatalf("planId=free 应命中 0 条: %s", w.Body.String())
 	}
 
 	// status 筛选。
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?status=ended", token, nil)
-	items = decodeItems(t, w)
-	if decodeBody(t, w)["total"] != float64(1) || items[0]["id"] != subC.ID.String() || items[0]["status"] != "ended" {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?status=ended", token, nil)
+	items = testutil.DecodeItems(t, w)
+	if testutil.DecodeBody(t, w)["total"] != float64(1) || items[0]["id"] != subC.ID.String() || items[0]["status"] != "ended" {
 		t.Fatalf("status=ended 应只命中已作废行: %s", w.Body.String())
 	}
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?status=active", token, nil)
-	if decodeBody(t, w)["total"] != float64(3) {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?status=active", token, nil)
+	if testutil.DecodeBody(t, w)["total"] != float64(3) {
 		t.Fatalf("status=active 应命中 3 条: %s", w.Body.String())
 	}
 
 	// 非法 status 与非法 userId。
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?status=cancelled", token, nil)
-	if w.Code != http.StatusBadRequest || errorCode(t, w) != "VALIDATION_FAILED" || errFields(t, w)["status"] == "" {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?status=cancelled", token, nil)
+	if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "VALIDATION_FAILED" || errFields(t, w)["status"] == "" {
 		t.Fatalf("非法 status 应 400 VALIDATION_FAILED 带字段说明, got %d %s", w.Code, w.Body.String())
 	}
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?userId=not-a-uuid", token, nil)
-	if w.Code != http.StatusBadRequest || errorCode(t, w) != "VALIDATION_FAILED" || errFields(t, w)["userId"] == "" {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/membership/subscriptions?userId=not-a-uuid", token, nil)
+	if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "VALIDATION_FAILED" || errFields(t, w)["userId"] == "" {
 		t.Fatalf("非法 userId 应 400 VALIDATION_FAILED 带字段说明, got %d %s", w.Code, w.Body.String())
 	}
 }
 
 func TestAdminGrantSubscriptionWritesRowQuotaAndAudit(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMembershipRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "granter@example.com", "granter")
-	user := createUser(t, g, "member@example.com", "member", "password123", true)
+	user := testutil.CreateUser(t, g, "member@example.com", "member", "password123", true)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, map[string]string{
 		"userId": user.ID.String(), "planId": "paid", "reason": "运营活动赠送",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("发放应 200, got %d %s", w.Code, w.Body.String())
 	}
-	sub, ok := decodeBody(t, w)["subscription"].(map[string]any)
+	sub, ok := testutil.DecodeBody(t, w)["subscription"].(map[string]any)
 	if !ok {
 		t.Fatalf("响应缺少 subscription 对象: %s", w.Body.String())
 	}
@@ -229,11 +230,11 @@ func TestAdminGrantSubscriptionWritesRowQuotaAndAudit(t *testing.T) {
 }
 
 func TestAdminGrantSubscriptionValidation(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMembershipRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "granter2@example.com", "granter2")
-	user := createUser(t, g, "member2@example.com", "member2", "password123", true)
+	user := testutil.CreateUser(t, g, "member2@example.com", "member2", "password123", true)
 
 	cases := []struct {
 		name   string
@@ -248,8 +249,8 @@ func TestAdminGrantSubscriptionValidation(t *testing.T) {
 		{"原因缺失", map[string]string{"userId": user.ID.String(), "planId": "paid", "reason": " "}, "reason", "必须填写原因"},
 	}
 	for _, tc := range cases {
-		w := doAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, tc.body)
-		if w.Code != http.StatusBadRequest || errorCode(t, w) != "VALIDATION_FAILED" {
+		w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, tc.body)
+		if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "VALIDATION_FAILED" {
 			t.Fatalf("%s 应 400 VALIDATION_FAILED, got %d %s", tc.name, w.Code, w.Body.String())
 		}
 		if got := errFields(t, w)[tc.field]; got != tc.expect {
@@ -258,7 +259,7 @@ func TestAdminGrantSubscriptionValidation(t *testing.T) {
 	}
 
 	// 空请求体：三个字段的错误一起返回。
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, map[string]string{})
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, map[string]string{})
 	fields := errFields(t, w)
 	if w.Code != http.StatusBadRequest || fields["userId"] == "" || fields["planId"] == "" || fields["reason"] == "" {
 		t.Fatalf("空请求体应 400 并带全部字段说明, got %d %s", w.Code, w.Body.String())
@@ -272,19 +273,19 @@ func TestAdminGrantSubscriptionValidation(t *testing.T) {
 }
 
 func TestAdminCompensateSubscriptionAuditsDistinctAction(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMembershipRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "compensator@example.com", "compensator")
-	user := createUser(t, g, "member3@example.com", "member3", "password123", true)
+	user := testutil.CreateUser(t, g, "member3@example.com", "member3", "password123", true)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/membership/compensate", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/membership/compensate", token, map[string]string{
 		"userId": user.ID.String(), "planId": "paid", "reason": "故障补偿",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("补偿应 200, got %d %s", w.Code, w.Body.String())
 	}
-	sub, ok := decodeBody(t, w)["subscription"].(map[string]any)
+	sub, ok := testutil.DecodeBody(t, w)["subscription"].(map[string]any)
 	if !ok || sub["planId"] != "paid" || sub["sourceRef"] != "故障补偿" {
 		t.Fatalf("补偿响应形状错误: %s", w.Body.String())
 	}
@@ -303,11 +304,11 @@ func TestAdminCompensateSubscriptionAuditsDistinctAction(t *testing.T) {
 }
 
 func TestAdminRevokeSubscriptionEndsImmediatelyAndConflicts(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMembershipRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "revoker@example.com", "revoker")
-	user := createUser(t, g, "member4@example.com", "member4", "password123", true)
+	user := testutil.CreateUser(t, g, "member4@example.com", "member4", "password123", true)
 
 	// 直接用域服务发放，避免与发放接口耦合。
 	if err := membership.NewService(g).Compensate(g, user.ID, "paid", "初始发放"); err != nil {
@@ -318,13 +319,13 @@ func TestAdminRevokeSubscriptionEndsImmediatelyAndConflicts(t *testing.T) {
 		t.Fatalf("读取订阅夹具失败: %v", err)
 	}
 
-	w := doAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+sub.ID.String(), token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+sub.ID.String(), token, map[string]string{
 		"reason": "误发回收",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("作废应 200, got %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	if body["id"] != sub.ID.String() || body["status"] != "ended" {
 		t.Fatalf("作废响应应为 {id, status:ended}: %s", w.Body.String())
 	}
@@ -360,32 +361,32 @@ func TestAdminRevokeSubscriptionEndsImmediatelyAndConflicts(t *testing.T) {
 	}
 
 	// 已作废再作废 → 409。
-	w = doAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+sub.ID.String(), token, map[string]string{
+	w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+sub.ID.String(), token, map[string]string{
 		"reason": "再作废",
 	})
-	if w.Code != http.StatusConflict || errorCode(t, w) != "VALIDATION_FAILED" {
+	if w.Code != http.StatusConflict || testutil.ErrorCode(t, w) != "VALIDATION_FAILED" {
 		t.Fatalf("重复作废应 409, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 不存在的订阅 → 404；缺 reason → 400。
-	w = doAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+uuid.NewString(), token, map[string]string{"reason": "x"})
+	w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+uuid.NewString(), token, map[string]string{"reason": "x"})
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("作废不存在的订阅应 404, got %d", w.Code)
 	}
-	w = doAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+sub.ID.String(), token, map[string]string{"reason": " "})
+	w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/membership/subscriptions/"+sub.ID.String(), token, map[string]string{"reason": " "})
 	if w.Code != http.StatusBadRequest || errFields(t, w)["reason"] == "" {
 		t.Fatalf("缺少原因应 400 带字段说明, got %d %s", w.Code, w.Body.String())
 	}
 }
 
 func TestAdminUserResponsesCarryMembershipStorageProducts(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMembershipRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "fieldchecker@example.com", "fieldchecker")
-	user := createUser(t, g, "fielduser@example.com", "fielduser", "password123", true)
+	user := testutil.CreateUser(t, g, "fielduser@example.com", "fielduser", "password123", true)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/membership/grant", token, map[string]string{
 		"userId": user.ID.String(), "planId": "paid", "reason": "字段验收",
 	})
 	if w.Code != http.StatusOK {
@@ -393,11 +394,11 @@ func TestAdminUserResponsesCarryMembershipStorageProducts(t *testing.T) {
 	}
 
 	// 列表行：新聚合键与旧键并存。
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/users?q=fielduser", token, nil)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users?q=fielduser", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("用户列表失败: %d %s", w.Code, w.Body.String())
 	}
-	items := decodeItems(t, w)
+	items := testutil.DecodeItems(t, w)
 	if len(items) != 1 {
 		t.Fatalf("用户筛选应命中 1 条: %s", w.Body.String())
 	}
@@ -425,11 +426,11 @@ func TestAdminUserResponsesCarryMembershipStorageProducts(t *testing.T) {
 	}
 
 	// 详情：同样的三个字段，旧键（含 planName/storageLimit）保留。
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/users/"+user.ID.String(), token, nil)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users/"+user.ID.String(), token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("用户详情失败: %d %s", w.Code, w.Body.String())
 	}
-	detail, ok := decodeBody(t, w)["user"].(map[string]any)
+	detail, ok := testutil.DecodeBody(t, w)["user"].(map[string]any)
 	if !ok {
 		t.Fatalf("详情缺少 user 对象: %s", w.Body.String())
 	}

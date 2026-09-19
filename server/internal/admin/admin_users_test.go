@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"net/http"
@@ -10,13 +10,16 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/account"
 	"github.com/infinite-canvas/server/internal/auth"
 	"github.com/infinite-canvas/server/internal/authz"
+	"github.com/infinite-canvas/server/internal/canvas"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // newAdminUsersRouter 按生产同样的中间件链注册本批涉及的路由：
@@ -30,12 +33,12 @@ func newAdminUsersRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engi
 	secret := []byte(cfg.JWTSecret)
 	active := middleware.RequireActiveUser(identity.NewService(g))
 	gate := middleware.RequirePasswordChanged(identity.NewService(g))
-	authH := NewAuthHandler(g, cfg, testMailer())
-	acct := NewAccountHandler(g, cfg, service.NewFreeGrantService(g), authH)
-	adminH := NewAdminHandler(g, cfg, newFakeStorage("local"))
-	canvasH := NewCanvasHandler(g)
+	authH := account.NewAuthHandler(g, cfg, testutil.TestMailer())
+	acct := account.NewAccountHandler(g, cfg, service.NewFreeGrantService(g), authH)
+	adminH := NewAdminHandler(g, cfg, testutil.NewFakeStorage("local"))
+	canvasH := canvas.NewCanvasHandler(g)
 
-	api := r.Group("/api")
+	api := r.Group("/api/v1")
 	authGroup := api.Group("/auth")
 	authGroup.POST("/login", authH.Login)
 	authGroup.POST("/refresh", authH.Refresh)
@@ -47,7 +50,7 @@ func newAdminUsersRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engi
 	canvases := api.Group("/canvases", middleware.Auth(secret), active, gate)
 	canvases.GET("", canvasH.List)
 
-	admin := api.Group("/admin", middleware.Auth(secret), active, gate, middleware.LoadAdminAccess(identity.NewService(g), g))
+	admin := r.Group("/api/admin", middleware.Auth(secret), active, gate, middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.POST("/users", middleware.RequirePermission(authz.PermRolesManage), adminH.CreateUser)
 	admin.GET("/users/:id", middleware.RequirePermission(authz.PermUsersRead), adminH.GetUser)
 	admin.POST("/users/:id/password", middleware.RequirePermission(authz.PermUsersWrite), adminH.ResetPassword)
@@ -57,24 +60,24 @@ func newAdminUsersRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engi
 // createAdminToken 建一个系统角色管理员并签发 access token。
 func createAdminToken(t *testing.T, g *gorm.DB, cfg *config.Config, email, username string) string {
 	t.Helper()
-	admin := createUser(t, g, email, username, "password123", true)
-	promoteAdmin(t, g, &admin)
-	return accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, email, username, "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	return testutil.AccessToken(t, cfg, &admin)
 }
 
 func TestAdminCreateUserReturnsOneTimeTemporaryPassword(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminUsersRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "creator@example.com", "creator")
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
 		"email": "New.User@Example.com", "displayName": "新同事", "roleKey": "admin",
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("建号应返回 201, got %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	password, _ := body["temporaryPassword"].(string)
 	if len(password) < 8 {
 		t.Fatalf("响应必须带回一次性临时密码: %s", w.Body.String())
@@ -127,7 +130,7 @@ func TestAdminCreateUserReturnsOneTimeTemporaryPassword(t *testing.T) {
 		t.Fatalf("审计摘要绝不允许出现临时密码: %s", summary)
 	}
 	// 临时密码只出现这一次：用户详情接口不再回传明文。
-	detail := doAuthJSON(r, http.MethodGet, "/api/admin/users/"+row.ID.String(), token, nil)
+	detail := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users/"+row.ID.String(), token, nil)
 	if detail.Code != http.StatusOK {
 		t.Fatalf("读取用户详情失败: %d %s", detail.Code, detail.Body.String())
 	}
@@ -137,16 +140,16 @@ func TestAdminCreateUserReturnsOneTimeTemporaryPassword(t *testing.T) {
 }
 
 func TestAdminCreateUserRejectsDuplicateEmail(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminUsersRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "creator2@example.com", "creator2")
-	createUser(t, g, "taken@example.com", "takenuser", "password123", false)
+	testutil.CreateUser(t, g, "taken@example.com", "takenuser", "password123", false)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
 		"email": "taken@example.com", "displayName": "重复", "roleKey": "admin",
 	})
-	if w.Code != http.StatusConflict || errorCode(t, w) != "EMAIL_TAKEN" {
+	if w.Code != http.StatusConflict || testutil.ErrorCode(t, w) != "EMAIL_TAKEN" {
 		t.Fatalf("重复邮箱应复用既有 409 EMAIL_TAKEN, got %d %s", w.Code, w.Body.String())
 	}
 	var count int64
@@ -157,15 +160,15 @@ func TestAdminCreateUserRejectsDuplicateEmail(t *testing.T) {
 }
 
 func TestAdminCreateUserRejectsUnknownRole(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminUsersRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "creator3@example.com", "creator3")
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
 		"email": "ghost-role@example.com", "displayName": "未知角色", "roleKey": "ghost",
 	})
-	if w.Code != http.StatusBadRequest || errorCode(t, w) != "VALIDATION_FAILED" {
+	if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "VALIDATION_FAILED" {
 		t.Fatalf("未知 roleKey 应 400 VALIDATION_FAILED, got %d %s", w.Code, w.Body.String())
 	}
 	var count int64
@@ -176,8 +179,8 @@ func TestAdminCreateUserRejectsUnknownRole(t *testing.T) {
 }
 
 func TestAdminCreateUserRequiresRolesManagePermission(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminUsersRouter(t, g, cfg)
 	// 只给 users.read 的自定义角色：能看到用户，但不能建号。
 	if err := g.Create(&model.Role{Key: "viewer", Name: "只读"}).Error; err != nil {
@@ -186,15 +189,15 @@ func TestAdminCreateUserRequiresRolesManagePermission(t *testing.T) {
 	if err := g.Create(&model.RolePermission{RoleKey: "viewer", PermissionKey: authz.PermUsersRead}).Error; err != nil {
 		t.Fatalf("分配权限失败: %v", err)
 	}
-	viewer := createUser(t, g, "viewer@example.com", "viewer", "password123", true)
+	viewer := testutil.CreateUser(t, g, "viewer@example.com", "viewer", "password123", true)
 	viewerKey := "viewer"
-	setUserRole(t, g, &viewer, &viewerKey)
-	token := accessToken(t, cfg, &viewer)
+	testutil.SetUserRole(t, g, &viewer, &viewerKey)
+	token := testutil.AccessToken(t, cfg, &viewer)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users", token, map[string]string{
 		"email": "should-not-exist@example.com", "displayName": "越权", "roleKey": "admin",
 	})
-	if w.Code != http.StatusForbidden || errorCode(t, w) != "FORBIDDEN" {
+	if w.Code != http.StatusForbidden || testutil.ErrorCode(t, w) != "FORBIDDEN" {
 		t.Fatalf("无 roles.manage 权限应 403 FORBIDDEN, got %d %s", w.Code, w.Body.String())
 	}
 	var count int64
@@ -205,60 +208,60 @@ func TestAdminCreateUserRequiresRolesManagePermission(t *testing.T) {
 }
 
 func TestForcedPasswordChangeGate(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminUsersRouter(t, g, cfg)
-	user := createUser(t, g, "forced@example.com", "forced", "initial-pass-1", true)
+	user := testutil.CreateUser(t, g, "forced@example.com", "forced", "initial-pass-1", true)
 	if err := g.Model(&model.PlatformUser{}).Where("id = ?", user.ID).
 		Update("must_change_password", true).Error; err != nil {
 		t.Fatalf("置位 must_change_password 失败: %v", err)
 	}
 
 	// 登录响应必须带 mustChangePassword。
-	w := doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/login", map[string]string{
 		"account": "forced@example.com", "password": "initial-pass-1",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("登录失败: %d %s", w.Code, w.Body.String())
 	}
-	if decodeBody(t, w)["mustChangePassword"] != true {
+	if testutil.DecodeBody(t, w)["mustChangePassword"] != true {
 		t.Fatalf("登录响应必须带 mustChangePassword=true: %s", w.Body.String())
 	}
-	loginCookie := findCookie(w, RefreshCookieName)
+	loginCookie := testutil.FindCookie(w, account.RefreshCookieName)
 	if loginCookie == nil {
 		t.Fatal("登录未下发 refresh cookie")
 	}
-	loginToken := decodeSession(t, w).AccessToken
+	loginToken := testutil.DecodeSession(t, w).AccessToken
 
 	// 业务接口被拦。
-	w = doAuthJSON(r, http.MethodGet, "/api/canvases", loginToken, nil)
-	if w.Code != http.StatusForbidden || errorCode(t, w) != "PASSWORD_CHANGE_REQUIRED" {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/canvases", loginToken, nil)
+	if w.Code != http.StatusForbidden || testutil.ErrorCode(t, w) != "PASSWORD_CHANGE_REQUIRED" {
 		t.Fatalf("强制改密期间业务接口应 403 PASSWORD_CHANGE_REQUIRED, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 刷新放行并轮换 cookie。
-	w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, loginCookie)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, loginCookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("强制改密期间刷新应放行, got %d %s", w.Code, w.Body.String())
 	}
-	refreshedCookie := findCookie(w, RefreshCookieName)
-	refreshedToken := decodeSession(t, w).AccessToken
+	refreshedCookie := testutil.FindCookie(w, account.RefreshCookieName)
+	refreshedToken := testutil.DecodeSession(t, w).AccessToken
 
 	// 改密接口本身放行：旧密码错误时是 401 而不是 403，说明没有被强制改密中间件拦下。
-	w = doAuthJSON(r, http.MethodPost, "/api/me/password", refreshedToken, map[string]string{
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/password", refreshedToken, map[string]string{
 		"oldPassword": "wrong-password", "newPassword": "brand-new-pass-1",
 	})
-	if w.Code != http.StatusUnauthorized || errorCode(t, w) != "INVALID_CREDENTIALS" {
+	if w.Code != http.StatusUnauthorized || testutil.ErrorCode(t, w) != "INVALID_CREDENTIALS" {
 		t.Fatalf("旧密码错误应 401 INVALID_CREDENTIALS, got %d %s", w.Code, w.Body.String())
 	}
 
-	w = doAuthJSON(r, http.MethodPost, "/api/me/password", refreshedToken, map[string]string{
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/password", refreshedToken, map[string]string{
 		"oldPassword": "initial-pass-1", "newPassword": "brand-new-pass-1",
 	})
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("强制改密应成功, got %d %s", w.Code, w.Body.String())
 	}
-	newCookie := findCookie(w, RefreshCookieName)
+	newCookie := testutil.FindCookie(w, account.RefreshCookieName)
 	if newCookie == nil {
 		t.Fatal("改密后应下发新的 refresh cookie")
 	}
@@ -271,34 +274,34 @@ func TestForcedPasswordChangeGate(t *testing.T) {
 	if row.MustChangePassword {
 		t.Fatal("改密成功后 must_change_password 必须清掉")
 	}
-	w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, newCookie)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, newCookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("改密后刷新应正常, got %d %s", w.Code, w.Body.String())
 	}
-	w = doAuthJSON(r, http.MethodGet, "/api/canvases", decodeSession(t, w).AccessToken, nil)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/canvases", testutil.DecodeSession(t, w).AccessToken, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("改密后业务接口应恢复, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 改密前签发的 refresh token 全部失效。
 	for name, cookie := range map[string]*http.Cookie{"登录": loginCookie, "刷新": refreshedCookie} {
-		w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, cookie)
+		w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, cookie)
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("改密后%s签发的旧 refresh token 应失效, got %d %s", name, w.Code, w.Body.String())
 		}
 	}
 
 	// 登出放行。
-	w = doJSON(r, http.MethodPost, "/api/auth/logout", nil, newCookie)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/logout", nil, newCookie)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("强制改密期间登出应放行, got %d %s", w.Code, w.Body.String())
 	}
 }
 
 func TestPickUsernameFollowsEmailLocalPart(t *testing.T) {
-	g := newTestDB(t)
-	createUser(t, g, "alice@example.com", "alice", "password123", false)
-	createUser(t, g, "alice2@example.com", "alice2", "password123", false)
+	g := testutil.NewTestDB(t)
+	testutil.CreateUser(t, g, "alice@example.com", "alice", "password123", false)
+	testutil.CreateUser(t, g, "alice2@example.com", "alice2", "password123", false)
 
 	name, err := pickUsername(g, "alice@example.com")
 	if err != nil {
@@ -324,11 +327,11 @@ func TestPickUsernameFollowsEmailLocalPart(t *testing.T) {
 }
 
 func TestAdminResetPasswordSetsMustChangeAndRevokesTokens(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminUsersRouter(t, g, cfg)
 	token := createAdminToken(t, g, cfg, "creator4@example.com", "creator4")
-	target := createUser(t, g, "target@example.com", "targetuser", "password123", true)
+	target := testutil.CreateUser(t, g, "target@example.com", "targetuser", "password123", true)
 	rt := model.Session{
 		ID:        uuid.New(),
 		UserID:    target.ID,
@@ -339,7 +342,7 @@ func TestAdminResetPasswordSetsMustChangeAndRevokesTokens(t *testing.T) {
 		t.Fatalf("写入 refresh token 失败: %v", err)
 	}
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/users/"+target.ID.String()+"/password", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users/"+target.ID.String()+"/password", token, map[string]string{
 		"password": "admin-set-pass-1",
 	})
 	if w.Code != http.StatusNoContent {
@@ -367,12 +370,12 @@ func TestAdminResetPasswordSetsMustChangeAndRevokesTokens(t *testing.T) {
 // TestAdminResetOwnPasswordKeepsUnforced 管理员重置自己的密码：不置位强制改密，
 // 其余行为不变——密码生效、refresh token 撤销、审计记录实际值而不是硬编码的 true。
 func TestAdminResetOwnPasswordKeepsUnforced(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminUsersRouter(t, g, cfg)
-	admin := createUser(t, g, "selfreset@example.com", "selfreset", "password123", true)
-	promoteAdmin(t, g, &admin)
-	token := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "selfreset@example.com", "selfreset", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	token := testutil.AccessToken(t, cfg, &admin)
 	rt := model.Session{
 		ID:        uuid.New(),
 		UserID:    admin.ID,
@@ -383,7 +386,7 @@ func TestAdminResetOwnPasswordKeepsUnforced(t *testing.T) {
 		t.Fatalf("写入 refresh token 失败: %v", err)
 	}
 
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/users/"+admin.ID.String()+"/password", token, map[string]string{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users/"+admin.ID.String()+"/password", token, map[string]string{
 		"password": "self-set-pass-1",
 	})
 	if w.Code != http.StatusNoContent {

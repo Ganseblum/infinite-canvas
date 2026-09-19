@@ -11,7 +11,7 @@ import (
 // 无扩展名；storageKey 不含冒号时返回空串，调用方视为无原件。
 //
 // 安全口径与 ObjectPath 一致：本函数不做二次校验、按输入原样拼接。依据是
-// storageKey 由服务端生成且必须先过 handler 的 storageKeyRe（internal/handler/media.go:28，
+// storageKey 由服务端生成且必须先过 ai 域的 StorageKeyRe（internal/model/storage_key.go，
 // 仅允许「类型:[A-Za-z0-9_-]{1,64}」，天然拦掉 ..、/ 与特殊字符），uid 来自鉴权后的
 // 当前用户而非请求参数。即使出现越界输入，local 驱动的 resolve（local.go:29）也会
 // 用根目录前缀检查拒绝越出根目录的路径，S3 侧 key 是不透明字符串、无文件系统语义。

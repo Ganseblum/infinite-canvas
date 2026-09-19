@@ -1,4 +1,4 @@
-package handler
+package ai
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/platform/membership"
@@ -26,9 +26,6 @@ import (
 	"github.com/infinite-canvas/server/internal/storage"
 	"github.com/infinite-canvas/server/internal/watermark"
 )
-
-// storageKeyRe 与前端 storageKeyPattern 对齐并收紧字符集，不匹配一律 400。
-var storageKeyRe = regexp.MustCompile(`^(image|video|audio|file|video-reference|audio-reference):[A-Za-z0-9_-]{1,64}$`)
 
 // origPresignTTL 是干净原件 S3 直链的预签名有效期（计划冻结的边界值 360s）。
 const origPresignTTL = 360 * time.Second
@@ -308,7 +305,7 @@ func matchETag(header, etag string) bool {
 }
 
 func (h *MediaHandler) Put(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -497,7 +494,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 }
 
 func (h *MediaHandler) Delete(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -508,7 +505,7 @@ func (h *MediaHandler) Delete(c *gin.Context) {
 	var file model.MediaFile
 	err := h.db.Where("user_id = ? AND storage_key = ?", uid, key).First(&file).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		noContent(c)
+		httpx.NoContent(c)
 		return
 	}
 	if err != nil {
@@ -540,7 +537,7 @@ func (h *MediaHandler) Delete(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 // quarantineUpload 处理开启审核时的上传：写隔离区、送审、通过后提交正式对象并计配额。
@@ -680,7 +677,7 @@ func (h *MediaHandler) abortStorageError(c *gin.Context, err error, plan model.M
 }
 
 func (h *MediaHandler) findOwned(c *gin.Context) (*model.MediaFile, bool) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return nil, false
 	}
@@ -793,7 +790,7 @@ func mediaFamily(t string) string {
 
 func validStorageKey(c *gin.Context) (string, bool) {
 	key := c.Param("storageKey")
-	if !storageKeyRe.MatchString(key) {
+	if !model.StorageKeyRe.MatchString(key) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"storageKey": "storageKey 格式不合法"}))
 		return "", false
 	}

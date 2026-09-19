@@ -1,4 +1,4 @@
-package handler
+package canvas
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 )
 
@@ -52,15 +53,15 @@ type assetPatchReq struct {
 }
 
 func (h *AssetHandler) List(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
-	page, ok := parsePageParams(c)
+	page, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
-	order, ok := parseSort(c.Query("sort"), assetSortColumns, "-updatedAt")
+	order, ok := httpx.ParseSort(c.Query("sort"), assetSortColumns, "-updatedAt")
 	if !ok {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"sort": "sort 不在白名单内"}))
 		return
@@ -81,7 +82,7 @@ func (h *AssetHandler) List(c *gin.Context) {
 			db = db.Where("assets.kind = ?", kind)
 		}
 		if search != "" {
-			pattern := searchPattern(search)
+			pattern := httpx.SearchPattern(search)
 			db = db.Where("LOWER(assets.title) LIKE ? OR LOWER("+assetContentExpr(h.db.Dialector.Name())+") LIKE ?", pattern, pattern)
 		}
 		if len(tags) > 0 {
@@ -138,7 +139,7 @@ func (h *AssetHandler) List(c *gin.Context) {
 }
 
 func (h *AssetHandler) Create(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -158,7 +159,7 @@ func (h *AssetHandler) Create(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"bytes": "bytes 不能为负数"}))
 		return
 	}
-	if req.StorageKey != "" && !storageKeyRe.MatchString(req.StorageKey) {
+	if req.StorageKey != "" && !model.StorageKeyRe.MatchString(req.StorageKey) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"storageKey": "storageKey 格式不合法"}))
 		return
 	}
@@ -198,7 +199,7 @@ func (h *AssetHandler) Create(c *gin.Context) {
 }
 
 func (h *AssetHandler) Get(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -216,7 +217,7 @@ func (h *AssetHandler) Get(c *gin.Context) {
 }
 
 func (h *AssetHandler) Patch(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -240,7 +241,7 @@ func (h *AssetHandler) Patch(c *gin.Context) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"bytes": "bytes 不能为负数"}))
 		return
 	}
-	if req.StorageKey != nil && *req.StorageKey != "" && !storageKeyRe.MatchString(*req.StorageKey) {
+	if req.StorageKey != nil && *req.StorageKey != "" && !model.StorageKeyRe.MatchString(*req.StorageKey) {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"storageKey": "storageKey 格式不合法"}))
 		return
 	}
@@ -316,7 +317,7 @@ func (h *AssetHandler) Patch(c *gin.Context) {
 }
 
 func (h *AssetHandler) Delete(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -342,7 +343,7 @@ func (h *AssetHandler) Delete(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 func (h *AssetHandler) findOwned(c *gin.Context, uid uuid.UUID) (*model.Asset, bool) {
@@ -507,7 +508,17 @@ func assetPayload(asset model.Asset, tags []string) gin.H {
 		"data":       asset.Data,
 		"storageKey": asset.StorageKey,
 		"bytes":      asset.Bytes,
-		"createdAt":  formatTime(asset.CreatedAt),
-		"updatedAt":  formatTime(asset.UpdatedAt),
+		"createdAt":  httpx.FormatTime(asset.CreatedAt),
+		"updatedAt":  httpx.FormatTime(asset.UpdatedAt),
 	}
+}
+
+// assetContentExpr 返回提取素材正文的方言表达式。MySQL 用 JSON_UNQUOTE +
+// JSON_EXTRACT，测试库 SQLite 用 json_extract；只查询明确的 content 键，
+// 不把整个 JSON 转文本，避免 storageKey、mimeType 等元数据被搜出来。
+func assetContentExpr(dialector string) string {
+	if dialector == "mysql" {
+		return "JSON_UNQUOTE(JSON_EXTRACT(data, '$.content'))"
+	}
+	return "json_extract(data, '$.content')"
 }

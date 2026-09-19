@@ -13,17 +13,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/infinite-canvas/server/internal/account"
+	"github.com/infinite-canvas/server/internal/admin"
+	"github.com/infinite-canvas/server/internal/ai"
 	"github.com/infinite-canvas/server/internal/authz"
+	"github.com/infinite-canvas/server/internal/billing"
+	"github.com/infinite-canvas/server/internal/canvas"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/db"
 	"github.com/infinite-canvas/server/internal/envload"
-	"github.com/infinite-canvas/server/internal/handler"
 	"github.com/infinite-canvas/server/internal/mail"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
-	"github.com/infinite-canvas/server/internal/platform/billing"
+	platformbilling "github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/service"
@@ -143,13 +147,13 @@ func main() {
 	}
 	// 平台身份域：认证、授权与管理端的身份读写统一入口。
 	idn := identity.NewService(gormDB)
-	authHandler := handler.NewAuthHandler(gormDB, cfg, mailer)
+	authHandler := account.NewAuthHandler(gormDB, cfg, mailer)
 	authHandler.SetSettings(siteSettings)
 	grantService := service.NewFreeGrantService(gormDB)
-	accountHandler := handler.NewAccountHandler(gormDB, cfg, grantService, authHandler)
-	canvasHandler := handler.NewCanvasHandler(gormDB)
-	assetHandler := handler.NewAssetHandler(gormDB)
-	generationHandler := handler.NewGenerationHandler(gormDB)
+	accountHandler := account.NewAccountHandler(gormDB, cfg, grantService, authHandler)
+	canvasHandler := canvas.NewCanvasHandler(gormDB)
+	assetHandler := canvas.NewAssetHandler(gormDB)
+	generationHandler := canvas.NewGenerationHandler(gormDB)
 
 	// 第五期：内容审核。审核链路的开关、阈值与 fail mode 全部来自环境变量，
 	// fail mode 未配置时启动即失败，不在代码里静默默认放行。
@@ -181,16 +185,16 @@ func main() {
 	// 媒体水印服务：WATERMARK_ENABLED 只控制生成链路是否烧录（生成挂钩消费），
 	// 下发闸门与下载端点不读该开关、永远在线（计划红线）。
 	wmService := watermark.NewService(cfg.WatermarkFontPath, cfg.WatermarkText)
-	mediaHandler := handler.NewMediaHandler(gormDB, mediaStorage, moderationService, []byte(cfg.JWTSecret), wmService)
+	mediaHandler := ai.NewMediaHandler(gormDB, mediaStorage, moderationService, []byte(cfg.JWTSecret), wmService)
 	paymentRegistry, err := service.NewPaymentRegistry(cfg)
 	if err != nil {
 		slog.Error("支付渠道配置无效", "err", err)
 		os.Exit(1)
 	}
-	creditHandler := handler.NewCreditHandler(gormDB, paymentRegistry)
-	orderHandler := handler.NewOrderHandler(gormDB, paymentRegistry)
-	paymentHandler := handler.NewPaymentHandler(gormDB, paymentRegistry)
-	catalogHandler := handler.NewModelHandler(gormDB, func() bool { return cfg.PromotionEnabled })
+	creditHandler := billing.NewCreditHandler(gormDB, paymentRegistry)
+	orderHandler := billing.NewOrderHandler(gormDB, paymentRegistry)
+	paymentHandler := billing.NewPaymentHandler(gormDB, paymentRegistry)
+	catalogHandler := ai.NewModelHandler(gormDB, func() bool { return cfg.PromotionEnabled })
 
 	timeouts := service.DefaultUpstreamTimeouts()
 	if cfg.AIImageTimeout > 0 {
@@ -212,10 +216,10 @@ func main() {
 	upstreamService.SetAllowPrivate(cfg.AIAllowPrivateUpstream)
 	// 平台权益三域：报价的免费试用判定走 billing 域，媒体记账与档位派生走 storage/membership 域。
 	catalogService := service.NewCatalogService(gormDB, func() bool { return cfg.PromotionEnabled })
-	billingService := billing.NewService(gormDB, model.ProductCanvas)
+	billingService := platformbilling.NewService(gormDB, model.ProductCanvas)
 	storageService := platformstorage.NewService(gormDB, model.ProductCanvas)
 	quoteService := service.NewQuoteService(catalogService, billingService, cfg.JWTSecret)
-	aiHandler := handler.NewAIHandler(gormDB, catalogService, quoteService, upstreamService, mediaStorage, cfg.AppBaseURL, moderationService)
+	aiHandler := ai.NewAIHandler(gormDB, catalogService, quoteService, upstreamService, mediaStorage, cfg.AppBaseURL, moderationService)
 	aiTaskService := service.NewAITaskService(gormDB, upstreamService, service.NewMediaWriteService(gormDB, mediaStorage))
 	aiTaskService.SetModeration(moderationService)
 	// T5 生成落盘水印挂钩：WATERMARK_ENABLED 只控制生成时是否烧录（下发闸门与下载
@@ -224,16 +228,16 @@ func main() {
 	aiTaskService.SetWatermark(wmService, watermark.Enabled)
 	requestService := service.NewAIRequestService(gormDB)
 
-	adminHandler := handler.NewAdminHandlerWithUpstream(gormDB, cfg, mediaStorage, upstreamService)
+	adminHandler := admin.NewAdminHandlerWithUpstream(gormDB, cfg, mediaStorage, upstreamService)
 	adminHandler.SetModeration(moderationService)
 	adminHandler.SetSettings(siteSettings)
-	communityHandler := handler.NewCommunityHandler(gormDB, siteSettings)
-	activityHandler := handler.NewActivityHandler(gormDB, siteSettings, grantService, cfg)
+	communityHandler := canvas.NewCommunityHandler(gormDB, siteSettings)
+	activityHandler := canvas.NewActivityHandler(gormDB, siteSettings, grantService, cfg)
 
 	// M3 OIDC Provider（PLAN T09）：签名密钥从 OIDC_JWKS_PRIVATE_KEY（PEM PKCS#8）读取，
 	// 配置了但解析失败直接退出（fail-fast）；未配置时生成临时密钥并告警——重启后旧 token 失效，
 	// 生产环境必须显式配置。
-	oidcHandler, err := handler.NewOIDCHandler(gormDB, cfg, idn)
+	oidcHandler, err := account.NewOIDCHandler(gormDB, cfg, idn)
 	if err != nil {
 		slog.Error("初始化 OIDC Provider 失败", "err", err)
 		os.Exit(1)
@@ -242,7 +246,7 @@ func main() {
 	router := gin.New()
 	router.Use(middleware.RequestID(), middleware.Logger(level.Level()), middleware.Recovery())
 	// 管理后台独立部署时跨源直连 API；CORS_ALLOWED_ORIGINS 为空则完全不启用。
-	// 必须挂在引擎级：group handlers 在路由注册时固化，挂在 /api/admin 会漏掉 /api/auth/login 等路径。
+	// 必须挂在引擎级：group handlers 在路由注册时固化，挂在 /api/admin 会漏掉 /api/v1/auth/login 等路径。
 	router.Use(middleware.CORS(cfg.CORSAllowedOrigins))
 	// 仅信任 TRUSTED_PROXIES 配置的代理网段解析 X-Forwarded-For / X-Real-IP；
 	// 默认为空表示不信任任何代理头，ClientIP 直接使用 RemoteAddr。
@@ -270,17 +274,14 @@ func main() {
 
 	secret := []byte(cfg.JWTSecret)
 
-	// 限流器
-	regLimiter := middleware.NewLimiter(time.Hour, 10)
-	loginLimiter := middleware.NewLimiter(10*time.Minute, 20)
-	mailLimiter := middleware.NewLimiter(time.Hour, 10)
+	// 限流器（认证域的三个限流器随 account.MountAuthRoutes 注册）
 	orderLimiter := middleware.NewLimiter(time.Hour, 10)
 	// 社区发布限流：与 handler 内的每日上限双保险（差异清单 #38）。
 	publishLimiter := middleware.NewLimiter(time.Hour, 12)
 	// 申请下载限流：签发端无状态，按用户限流防刷短时效链接（60 次/小时）。
 	downloadLimiter := middleware.NewLimiter(time.Hour, 60)
 
-	api := router.Group("/api")
+	api := router.Group("/api/v1")
 
 	// 维护模式写拦截（差异清单 #117）：开启后非管理员的写请求 503，
 	// 读操作、认证、管理端与支付回调放行。
@@ -290,24 +291,15 @@ func main() {
 	// 挂到每个需要登录的路由上，新增受保护分组必须一并挂上。
 	passwordGate := middleware.RequirePasswordChanged(idn)
 
-	authGroup := api.Group("/auth")
-	{
-		authGroup.POST("/register", middleware.RateLimit(regLimiter, func(c *gin.Context) string { return "reg:" + middleware.ClientIP(c) }), authHandler.Register)
-		authGroup.POST("/login", middleware.RateLimit(loginLimiter, func(c *gin.Context) string { return "login:" + middleware.ClientIP(c) }), authHandler.Login)
-		authGroup.POST("/refresh", authHandler.Refresh)
-		authGroup.POST("/logout", authHandler.Logout)
-		authGroup.POST("/verify-email/send", middleware.Auth(secret), passwordGate, middleware.RateLimit(mailLimiter, func(c *gin.Context) string { return "mail:" + middleware.ClientIP(c) }), authHandler.VerifyEmailSend)
-		authGroup.POST("/verify-email", authHandler.VerifyEmail)
-		authGroup.POST("/password/forgot", middleware.RateLimit(mailLimiter, func(c *gin.Context) string { return "mail:" + middleware.ClientIP(c) }), authHandler.ForgotPassword)
-		authGroup.POST("/password/reset", authHandler.ResetPassword)
-	}
+	// 认证八端点的路由表在 account 包内维护，main 与测试夹具共用。
+	account.MountAuthRoutes(api.Group("/auth"), authHandler, secret)
 
 	// 全站业务接口要求登录且账号未封禁；注销冷静期的账号可以浏览，但生成与下单被拦截。
 	active := middleware.RequireActiveUser(idn)
 
 	// OIDC Provider 四端点（PLAN T09）：authorize 要求登录（Auth + RequireActiveUser），
 	// token/jwks 公开；userinfo 在 handler 内验 OIDC 签发的 RS256 access token，
-	// 与平台 HS256 会话是两套凭据，不走 middleware.Auth。/api/oidc/ 也在维护模式豁免前缀内
+	// 与平台 HS256 会话是两套凭据，不走 middleware.Auth。/api/v1/oidc/ 也在维护模式豁免前缀内
 	// （token 是 POST，不能被维护模式拦断）。T09 不含 admin 管理端点（T10 再挂 sso.read/write）。
 	oidc := api.Group("/oidc")
 	oidc.GET("/authorize", middleware.Auth(secret), active, oidcHandler.Authorize)
@@ -328,30 +320,13 @@ func main() {
 	}
 
 	canvases := api.Group("/canvases", middleware.Auth(secret), active, passwordGate)
-	{
-		canvases.GET("", canvasHandler.List)
-		canvases.POST("", canvasHandler.Create)
-		canvases.GET("/:id", canvasHandler.Get)
-		canvases.PUT("/:id", canvasHandler.Update)
-		canvases.PATCH("/:id", canvasHandler.Patch)
-		canvases.DELETE("/:id", canvasHandler.Delete)
-	}
+	canvas.MountCanvasRoutes(canvases, canvasHandler)
 
 	assets := api.Group("/assets", middleware.Auth(secret), active, passwordGate)
-	{
-		assets.GET("", assetHandler.List)
-		assets.POST("", assetHandler.Create)
-		assets.GET("/:id", assetHandler.Get)
-		assets.PATCH("/:id", assetHandler.Patch)
-		assets.DELETE("/:id", assetHandler.Delete)
-	}
+	canvas.MountAssetRoutes(assets, assetHandler)
 
 	generations := api.Group("/generations", middleware.Auth(secret), active, passwordGate)
-	{
-		generations.GET("", generationHandler.List)
-		generations.GET("/:id", generationHandler.Get)
-		generations.DELETE("/:id", generationHandler.Delete)
-	}
+	canvas.MountGenerationRoutes(generations, generationHandler)
 
 	// 社区：作品复用用户素材，浏览无需额外权限，发布与互动需登录。
 	community := api.Group("/community", middleware.Auth(secret), active, passwordGate)
@@ -381,44 +356,37 @@ func main() {
 
 	// AI 报价与生成：全部走平台目录与服务端托管的渠道。
 	// 注销冷静期允许浏览与导出，但生成属写操作，与下单同口径拦截。
-	ai := api.Group("/ai", middleware.Auth(secret), active, passwordGate, middleware.RequireNotPendingDeletion())
+	aiGroup := api.Group("/ai", middleware.Auth(secret), active, passwordGate, middleware.RequireNotPendingDeletion())
 	{
-		ai.POST("/quote", aiHandler.Quote)
-		ai.POST("/images/generations", aiHandler.Images)
-		ai.POST("/videos/generations", aiHandler.CreateVideo)
-		ai.GET("/videos/tasks/:id", aiHandler.VideoTask)
-		ai.POST("/audio/speech", aiHandler.Speech)
-		ai.POST("/chat/completions", aiHandler.Chat)
+		aiGroup.POST("/quote", aiHandler.Quote)
+		aiGroup.POST("/images/generations", aiHandler.Images)
+		aiGroup.POST("/videos/generations", aiHandler.CreateVideo)
+		aiGroup.GET("/videos/tasks/:id", aiHandler.VideoTask)
+		aiGroup.POST("/audio/speech", aiHandler.Speech)
+		aiGroup.POST("/chat/completions", aiHandler.Chat)
 	}
 
 	// 媒体读路径额外认 ic_media cookie（GET/HEAD），写路径只认 Bearer。
 	media := api.Group("/media", middleware.MediaAuth(secret, idn), active, passwordGate)
-	{
-		media.HEAD("/:storageKey", mediaHandler.Head)
-		media.GET("/:storageKey", mediaHandler.Get)
-		media.PUT("/:storageKey", mediaHandler.Put)
-		media.DELETE("/:storageKey", mediaHandler.Delete)
-		// 申请下载：严格归属校验后签发短期取件链接（POST 认 Bearer，与写路径同口径）。
-		media.POST("/:storageKey/download",
-			middleware.RateLimit(downloadLimiter, func(c *gin.Context) string { return "download:" + c.GetString("user_id") }),
-			mediaHandler.RequestDownload)
-	}
+	ai.MountMediaRoutes(media, mediaHandler)
+	// 申请下载：严格归属校验后签发短期取件链接（POST 认 Bearer，与写路径同口径）。
+	media.POST("/:storageKey/download",
+		middleware.RateLimit(downloadLimiter, func(c *gin.Context) string { return "download:" + c.GetString("user_id") }),
+		mediaHandler.RequestDownload)
 
 	// 干净原件取件：签名 URL 必须同时过 MediaAuth（ic_media cookie 或 Bearer），
 	// 这是防盗链的第二道闸；签名、过期与归属校验在 handler 内完成，任一失败一律 404。
 	mediaDownload := api.Group("/media-download", middleware.MediaAuth(secret, idn), active, passwordGate)
-	{
-		mediaDownload.GET("/:token", mediaHandler.ServeDownload)
-	}
+	ai.MountMediaDownloadRoutes(mediaDownload, mediaHandler)
 
 	// 点数、档位与模型目录
-	billing := api.Group("", middleware.Auth(secret), active, passwordGate)
+	billingGroup := api.Group("", middleware.Auth(secret), active, passwordGate)
 	{
-		billing.GET("/credits", creditHandler.GetBalance)
-		billing.GET("/credits/transactions", creditHandler.ListTransactions)
-		billing.GET("/credit-packages", creditHandler.ListPackages)
-		billing.GET("/plans", creditHandler.ListPlans)
-		billing.GET("/models", catalogHandler.List)
+		billingGroup.GET("/credits", creditHandler.GetBalance)
+		billingGroup.GET("/credits/transactions", creditHandler.ListTransactions)
+		billingGroup.GET("/credit-packages", creditHandler.ListPackages)
+		billingGroup.GET("/plans", creditHandler.ListPlans)
+		billingGroup.GET("/models", catalogHandler.List)
 	}
 
 	// 订单：下单额外要求不在注销冷静期，并按用户限流防刷垃圾待支付订单。
@@ -435,10 +403,10 @@ func main() {
 	// 支付回调是唯一的公开写接口：不鉴权但必须验签。
 	api.POST("/payments/webhook/:provider", paymentHandler.Webhook)
 
-	// 管理后台：每请求按库里的角色判定权限（不读 JWT 里的 role claim，避免 15 分钟陈旧授权），
-	// 具体权限点由 registerAdminRoutes 逐条挂载。
-	admin := api.Group("/admin", middleware.Auth(secret), active, passwordGate, middleware.LoadAdminAccess(idn, gormDB))
-	registerAdminRoutes(admin, adminHandler)
+	// 管理后台：每请求按库里的角色判定权限（不读 JWT 里的 role claim，避免 15 分钟陈旧授权）。
+	// 管理面挂顶层 /api/admin，不进 /api/v1 公开版本契约；路由表在 admin 包内维护。
+	adminGroup := router.Group("/api/admin", middleware.Auth(secret), active, passwordGate, middleware.LoadAdminAccess(idn, gormDB))
+	admin.RegisterRoutes(adminGroup, adminHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

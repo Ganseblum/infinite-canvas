@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"log/slog"
@@ -48,8 +48,8 @@ func (h *AdminHandler) UsageAnalytics(c *gin.Context) {
 		}
 		days = parsed
 	}
-	today := time.Now().In(statZone)
-	start := today.AddDate(0, 0, -(days - 1)).Format(statDateFormat)
+	today := time.Now().In(model.StatZone)
+	start := today.AddDate(0, 0, -(days - 1)).Format(model.StatDateFormat)
 
 	var summary struct {
 		Requests       int64
@@ -95,7 +95,7 @@ func (h *AdminHandler) UsageAnalytics(c *gin.Context) {
 	}
 	daily := make([]gin.H, 0, days)
 	for i := days - 1; i >= 0; i-- {
-		date := today.AddDate(0, 0, -i).Format(statDateFormat)
+		date := today.AddDate(0, 0, -i).Format(model.StatDateFormat)
 		row := byDate[date]
 		daily = append(daily, gin.H{
 			"date":        date,

@@ -1,4 +1,4 @@
-package handler
+package canvas
 
 import (
 	"net/http"
@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/account"
+	"github.com/infinite-canvas/server/internal/admin"
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/middleware"
@@ -16,6 +18,7 @@ import (
 	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // newSiteRouter 组装社区、活动与管理端站点设置路由。
@@ -27,7 +30,7 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 	}
 	community := NewCommunityHandler(g, settings)
 	activity := NewActivityHandler(g, settings, service.NewFreeGrantService(g), cfg)
-	adminHandler := NewAdminHandler(g, cfg, newFakeStorage("local"))
+	adminHandler := admin.NewAdminHandler(g, cfg, testutil.NewFakeStorage("local"))
 	adminHandler.SetSettings(settings)
 
 	r := gin.New()
@@ -35,7 +38,7 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
 	secret := []byte(cfg.JWTSecret)
-	api := r.Group("/api")
+	api := r.Group("/api/v1")
 	active := middleware.RequireActiveUser(identity.NewService(g))
 
 	group := api.Group("/community", middleware.Auth(secret), active)
@@ -57,11 +60,11 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 
 	api.GET("/settings/public", adminHandler.PublicSettings)
 
-	accountHandler := NewAccountHandler(g, cfg, service.NewFreeGrantService(g), NewAuthHandler(g, cfg, testMailer()))
+	accountHandler := account.NewAccountHandler(g, cfg, service.NewFreeGrantService(g), account.NewAuthHandler(g, cfg, testutil.TestMailer()))
 	me := api.Group("/me", middleware.Auth(secret), active)
 	me.GET("", accountHandler.GetMe)
 
-	admin := api.Group("/admin", middleware.Auth(secret), active, middleware.LoadAdminAccess(identity.NewService(g), g))
+	admin := r.Group("/api/admin", middleware.Auth(secret), active, middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/settings", middleware.RequirePermission(authz.PermSettingsRead), adminHandler.GetSettings)
 	admin.PATCH("/settings", middleware.RequirePermission(authz.PermSettingsWrite), adminHandler.UpdateSettings)
 	admin.GET("/admins", middleware.RequirePermission(authz.PermRolesRead), adminHandler.ListAdmins)
@@ -78,9 +81,9 @@ func newSiteRouter(t *testing.T, g *gorm.DB, cfg *config.Config) (*gin.Engine, *
 
 func createAdminUser(t *testing.T, g *gorm.DB, cfg *config.Config, email, username string) (model.PlatformUser, string) {
 	t.Helper()
-	user := createUser(t, g, email, username, "password123", true)
-	promoteAdmin(t, g, &user)
-	return user, accessToken(t, cfg, &user)
+	user := testutil.CreateUser(t, g, email, username, "password123", true)
+	testutil.PromoteAdmin(t, g, &user)
+	return user, testutil.AccessToken(t, cfg, &user)
 }
 
 func seedCommunityAsset(t *testing.T, g *gorm.DB, userID uuid.UUID) model.Asset {
@@ -96,13 +99,13 @@ func seedCommunityAsset(t *testing.T, g *gorm.DB, userID uuid.UUID) model.Asset 
 }
 
 func TestSiteSettingsPersistAndGateRegistration(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r, settings := newSiteRouter(t, g, cfg)
 	_, adminToken := createAdminUser(t, g, cfg, "admin-settings@example.com", "adminsettings")
 
 	// 数字设置写入后重新加载不应失败（曾经的 JSONB 扫描问题）。
-	w := doAuthJSON(r, http.MethodPatch, "/api/admin/settings", adminToken, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/settings", adminToken, map[string]any{
 		"announcement":        "站点公告",
 		"checkinRewardMicros": 50000,
 		"registrationEnabled": false,
@@ -116,80 +119,80 @@ func TestSiteSettingsPersistAndGateRegistration(t *testing.T) {
 	if settings.CheckinRewardMicros() != 50000 {
 		t.Fatalf("设置未持久化: %d", settings.CheckinRewardMicros())
 	}
-	public := doJSON(r, http.MethodGet, "/api/settings/public", nil)
-	if decodeBody(t, public)["announcement"] != "站点公告" {
+	public := testutil.DoJSON(r, http.MethodGet, "/api/v1/settings/public", nil)
+	if testutil.DecodeBody(t, public)["announcement"] != "站点公告" {
 		t.Fatalf("公开设置未返回公告: %s", public.Body.String())
 	}
 }
 
 func TestCommunityPublishLikeReportAndAdminRemove(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r, _ := newSiteRouter(t, g, cfg)
-	author := createUser(t, g, "author@example.com", "author", "password123", true)
-	authorToken := accessToken(t, cfg, &author)
-	viewer := createUser(t, g, "viewer2@example.com", "viewer2", "password123", true)
-	viewerToken := accessToken(t, cfg, &viewer)
+	author := testutil.CreateUser(t, g, "author@example.com", "author", "password123", true)
+	authorToken := testutil.AccessToken(t, cfg, &author)
+	viewer := testutil.CreateUser(t, g, "viewer2@example.com", "viewer2", "password123", true)
+	viewerToken := testutil.AccessToken(t, cfg, &viewer)
 	_, adminToken := createAdminUser(t, g, cfg, "admin-community@example.com", "admincommunity")
 
 	asset := seedCommunityAsset(t, g, author.ID)
-	w := doAuthJSON(r, http.MethodPost, "/api/community/works", authorToken, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works", authorToken, map[string]any{
 		"assetId": asset.ID.String(), "title": "第一张作品", "description": "来自画布", "tags": "风光, 测试",
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("发布失败: %d %s", w.Code, w.Body.String())
 	}
-	workID := decodeBody(t, w)["work"].(map[string]any)["id"].(string)
+	workID := testutil.DecodeBody(t, w)["work"].(map[string]any)["id"].(string)
 
 	// 点赞幂等，取消点赞回退计数。
-	first := doAuthJSON(r, http.MethodPost, "/api/community/works/"+workID+"/like", viewerToken, nil)
-	if decodeBody(t, first)["likeCount"] != float64(1) {
+	first := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works/"+workID+"/like", viewerToken, nil)
+	if testutil.DecodeBody(t, first)["likeCount"] != float64(1) {
 		t.Fatalf("点赞失败: %s", first.Body.String())
 	}
-	second := doAuthJSON(r, http.MethodPost, "/api/community/works/"+workID+"/like", viewerToken, nil)
-	if decodeBody(t, second)["likeCount"] != float64(1) {
+	second := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works/"+workID+"/like", viewerToken, nil)
+	if testutil.DecodeBody(t, second)["likeCount"] != float64(1) {
 		t.Fatalf("重复点赞应幂等: %s", second.Body.String())
 	}
-	unlike := doAuthJSON(r, http.MethodPost, "/api/community/works/"+workID+"/unlike", viewerToken, nil)
-	unliked := decodeBody(t, unlike)
+	unlike := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works/"+workID+"/unlike", viewerToken, nil)
+	unliked := testutil.DecodeBody(t, unlike)
 	if unliked["likeCount"] != float64(0) || unliked["liked"] != false {
 		t.Fatalf("取消点赞失败: %s", unlike.Body.String())
 	}
 
 	// 举报一次成功，重复举报冲突；管理员采纳并下架后前台不可见。
-	report := doAuthJSON(r, http.MethodPost, "/api/community/works/"+workID+"/report", viewerToken, map[string]any{"reason": "测试举报"})
+	report := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works/"+workID+"/report", viewerToken, map[string]any{"reason": "测试举报"})
 	if report.Code != http.StatusCreated {
 		t.Fatalf("举报失败: %d %s", report.Code, report.Body.String())
 	}
-	again := doAuthJSON(r, http.MethodPost, "/api/community/works/"+workID+"/report", viewerToken, map[string]any{"reason": "重复"})
+	again := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/community/works/"+workID+"/report", viewerToken, map[string]any{"reason": "重复"})
 	if again.Code != http.StatusConflict {
 		t.Fatalf("重复举报应 409, got %d", again.Code)
 	}
 
-	reports := doAuthJSON(r, http.MethodGet, "/api/admin/community/reports?status=pending", adminToken, nil)
-	items := decodeItems(t, reports)
+	reports := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/community/reports?status=pending", adminToken, nil)
+	items := testutil.DecodeItems(t, reports)
 	if len(items) != 1 {
 		t.Fatalf("应有一条待处理举报: %v", items)
 	}
-	handle := doAuthJSON(r, http.MethodPatch, "/api/admin/community/reports/"+items[0]["id"].(string), adminToken, map[string]any{
+	handle := testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/community/reports/"+items[0]["id"].(string), adminToken, map[string]any{
 		"status": "handled", "removeWork": true,
 	})
 	if handle.Code != http.StatusOK {
 		t.Fatalf("处理举报失败: %d %s", handle.Code, handle.Body.String())
 	}
-	list := doAuthJSON(r, http.MethodGet, "/api/community/works?size=10", viewerToken, nil)
-	if len(decodeItems(t, list)) != 0 {
+	list := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/community/works?size=10", viewerToken, nil)
+	if len(testutil.DecodeItems(t, list)) != 0 {
 		t.Fatalf("下架作品不应出现在前台列表")
 	}
-	detail := doAuthJSON(r, http.MethodGet, "/api/community/works/"+workID, viewerToken, nil)
+	detail := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/community/works/"+workID, viewerToken, nil)
 	if detail.Code != http.StatusNotFound {
 		t.Fatalf("下架作品详情应 404, got %d", detail.Code)
 	}
 }
 
 func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r, settings := newSiteRouter(t, g, cfg)
 	if err := settings.Set(t.Context(), service.SettingCheckinRewardMicros, 30000, nil); err != nil {
 		t.Fatalf("写入签到奖励失败: %v", err)
@@ -201,23 +204,23 @@ func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
 		t.Fatalf("写入受邀奖励失败: %v", err)
 	}
 
-	inviter := createUser(t, g, "inviter@example.com", "inviter", "password123", true)
-	inviterToken := accessToken(t, cfg, &inviter)
-	invitee := createUser(t, g, "invitee@example.com", "invitee", "password123", true)
+	inviter := testutil.CreateUser(t, g, "inviter@example.com", "inviter", "password123", true)
+	inviterToken := testutil.AccessToken(t, cfg, &inviter)
+	invitee := testutil.CreateUser(t, g, "invitee@example.com", "invitee", "password123", true)
 	// 邀请防刷要求被邀请人注册满 inviteMinAccountAge，测试账号回拨注册时间。
 	if err := g.Model(&model.PlatformUser{}).Where("id = ?", invitee.ID).
 		Update("created_at", time.Now().Add(-2*time.Hour)).Error; err != nil {
 		t.Fatalf("回拨邀请账号注册时间失败: %v", err)
 	}
-	inviteeToken := accessToken(t, cfg, &invitee)
+	inviteeToken := testutil.AccessToken(t, cfg, &invitee)
 
 	// 签到：首次发放，重复幂等。
-	first := doAuthJSON(r, http.MethodPost, "/api/activity/checkin", inviterToken, nil)
-	if decodeBody(t, first)["granted"] != true {
+	first := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/activity/checkin", inviterToken, nil)
+	if testutil.DecodeBody(t, first)["granted"] != true {
 		t.Fatalf("首次签到应发放: %s", first.Body.String())
 	}
-	second := doAuthJSON(r, http.MethodPost, "/api/activity/checkin", inviterToken, nil)
-	if decodeBody(t, second)["granted"] != false {
+	second := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/activity/checkin", inviterToken, nil)
+	if testutil.DecodeBody(t, second)["granted"] != false {
 		t.Fatalf("重复签到不应再发放: %s", second.Body.String())
 	}
 	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(t.Context(), inviter.ID)
@@ -226,16 +229,16 @@ func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
 	}
 
 	// 邀请码懒生成 + 绑定发放双方奖励，且不产生付费身份。
-	info := doAuthJSON(r, http.MethodGet, "/api/activity/invite", inviterToken, nil)
-	code, _ := decodeBody(t, info)["code"].(string)
+	info := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/activity/invite", inviterToken, nil)
+	code, _ := testutil.DecodeBody(t, info)["code"].(string)
 	if code == "" {
 		t.Fatalf("应生成邀请码: %s", info.Body.String())
 	}
-	bind := doAuthJSON(r, http.MethodPost, "/api/activity/invite/bind", inviteeToken, map[string]any{"code": code})
+	bind := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/activity/invite/bind", inviteeToken, map[string]any{"code": code})
 	if bind.Code != http.StatusOK {
 		t.Fatalf("绑定邀请失败: %d %s", bind.Code, bind.Body.String())
 	}
-	repeat := doAuthJSON(r, http.MethodPost, "/api/activity/invite/bind", inviteeToken, map[string]any{"code": code})
+	repeat := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/activity/invite/bind", inviteeToken, map[string]any{"code": code})
 	if repeat.Code != http.StatusConflict {
 		t.Fatalf("重复绑定应 409, got %d", repeat.Code)
 	}
@@ -244,44 +247,44 @@ func TestActivityCheckinAndInviteGrantedOnly(t *testing.T) {
 	if inviterBalance.GrantedMicros != 100000 || inviteeBalance.GrantedMicros != 20000 {
 		t.Fatalf("邀请奖励金额错误: inviter=%d invitee=%d", inviterBalance.GrantedMicros, inviteeBalance.GrantedMicros)
 	}
-	me := doAuthJSON(r, http.MethodGet, "/api/me", inviteeToken, nil)
-	if decodeBody(t, me)["plan"].(map[string]any)["id"] != "free" {
+	me := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/me", inviteeToken, nil)
+	if testutil.DecodeBody(t, me)["plan"].(map[string]any)["id"] != "free" {
 		t.Fatalf("赠送奖励不应产生付费身份")
 	}
 }
 
 func TestAdminManagementGuards(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r, _ := newSiteRouter(t, g, cfg)
 	admin, adminToken := createAdminUser(t, g, cfg, "admin-guard@example.com", "adminguard")
-	target := createUser(t, g, "target-admin@example.com", "targetadmin", "password123", true)
-	normal := createUser(t, g, "normal@example.com", "normaluser2", "password123", true)
-	normalToken := accessToken(t, cfg, &normal)
+	target := testutil.CreateUser(t, g, "target-admin@example.com", "targetadmin", "password123", true)
+	normal := testutil.CreateUser(t, g, "normal@example.com", "normaluser2", "password123", true)
+	normalToken := testutil.AccessToken(t, cfg, &normal)
 
 	// 非管理员访问管理接口一律 403。
 	for _, path := range []string{"/api/admin/settings", "/api/admin/admins", "/api/admin/audit-logs", "/api/admin/stats/revenue"} {
-		w := doAuthJSON(r, http.MethodGet, path, normalToken, nil)
+		w := testutil.DoAuthJSON(r, http.MethodGet, path, normalToken, nil)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("非管理员访问 %s 应 403, got %d", path, w.Code)
 		}
 	}
 	// 提升已有用户成功，重复提升冲突。
-	add := doAuthJSON(r, http.MethodPost, "/api/admin/admins", adminToken, map[string]any{"email": target.Email})
+	add := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/admins", adminToken, map[string]any{"email": target.Email})
 	if add.Code != http.StatusOK {
 		t.Fatalf("提升管理员失败: %d %s", add.Code, add.Body.String())
 	}
-	repeat := doAuthJSON(r, http.MethodPost, "/api/admin/admins", adminToken, map[string]any{"email": target.Email})
+	repeat := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/admins", adminToken, map[string]any{"email": target.Email})
 	if repeat.Code != http.StatusConflict {
 		t.Fatalf("重复提升应 409, got %d", repeat.Code)
 	}
 	// 不能撤销自己。
-	self := doAuthJSON(r, http.MethodDelete, "/api/admin/admins/"+admin.ID.String(), adminToken, nil)
+	self := testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/admins/"+admin.ID.String(), adminToken, nil)
 	if self.Code != http.StatusBadRequest {
 		t.Fatalf("撤销自己应 400, got %d", self.Code)
 	}
 	// 可以撤销另一位管理员。
-	remove := doAuthJSON(r, http.MethodDelete, "/api/admin/admins/"+target.ID.String(), adminToken, nil)
+	remove := testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/admins/"+target.ID.String(), adminToken, nil)
 	if remove.Code != http.StatusNoContent {
 		t.Fatalf("撤销管理员失败: %d %s", remove.Code, remove.Body.String())
 	}

@@ -1,4 +1,4 @@
-package handler
+package account
 
 import (
 	"crypto/rand"
@@ -170,7 +170,7 @@ func NewOIDCHandler(db *gorm.DB, cfg *config.Config, idn *identity.Service) (*OI
 }
 
 // newOAuthClientID 生成「ic_ + 32 位十六进制随机数」的客户端 ID（T10 admin 管理端与测试共用）。
-func newOAuthClientID() (string, error) {
+func NewOAuthClientID() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -179,7 +179,7 @@ func newOAuthClientID() (string, error) {
 }
 
 // hashOAuthClientSecret 返回客户端密钥的 SHA-256 十六进制摘要：库内只存摘要，不存明文。
-func hashOAuthClientSecret(secret string) string {
+func HashOAuthClientSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
@@ -304,7 +304,7 @@ func (h *OIDCHandler) Token(c *gin.Context) {
 		errs.Abort(c, appErr)
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(hashOAuthClientSecret(req.ClientSecret)), []byte(client.ClientSecretHash)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(HashOAuthClientSecret(req.ClientSecret)), []byte(client.ClientSecretHash)) != 1 {
 		errs.Abort(c, errOIDCInvalidClient)
 		return
 	}

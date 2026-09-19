@@ -1,4 +1,4 @@
-package handler
+package billing
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/payment"
 	"github.com/infinite-canvas/server/internal/service"
@@ -33,7 +34,7 @@ type createOrderReq struct {
 }
 
 func (h *OrderHandler) Create(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -79,17 +80,17 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{
-		"order":   orderPayload(result.Order),
+		"order":   OrderPayload(result.Order),
 		"payment": gin.H{"type": result.Payment.Type, "payload": result.Payment.Payload},
 	})
 }
 
 func (h *OrderHandler) List(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
-	size, err := parseCursorSize(c.Query("size"))
+	size, err := httpx.ParseCursorSize(c.Query("size"))
 	if err != nil {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"size": "size 必须是 1-100 的整数"}))
 		return
@@ -106,7 +107,7 @@ func (h *OrderHandler) List(c *gin.Context) {
 	}
 	payloads := make([]gin.H, 0, len(items))
 	for i := range items {
-		payloads = append(payloads, orderPayload(&items[i]))
+		payloads = append(payloads, OrderPayload(&items[i]))
 	}
 	payload := gin.H{"items": payloads, "nextCursor": nil}
 	if nextCursor != "" {
@@ -116,7 +117,7 @@ func (h *OrderHandler) List(c *gin.Context) {
 }
 
 func (h *OrderHandler) Get(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -135,11 +136,11 @@ func (h *OrderHandler) Get(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"order": orderPayload(order)})
+	c.JSON(http.StatusOK, gin.H{"order": OrderPayload(order)})
 }
 
 func (h *OrderHandler) Cancel(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -161,10 +162,10 @@ func (h *OrderHandler) Cancel(c *gin.Context) {
 		}
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"order": orderPayload(order)})
+	c.JSON(http.StatusOK, gin.H{"order": OrderPayload(order)})
 }
 
-func orderPayload(order *model.Order) gin.H {
+func OrderPayload(order *model.Order) gin.H {
 	payload := gin.H{
 		"id":              order.ID.String(),
 		"provider":        order.Provider,
@@ -175,9 +176,9 @@ func orderPayload(order *model.Order) gin.H {
 		"grantedMicros":   order.GrantedMicros,
 		"entitlementDays": order.EntitlementDays,
 		"status":          order.Status,
-		"paidAt":          formatTimePtr(order.PaidAt),
-		"createdAt":       formatTime(order.CreatedAt),
-		"updatedAt":       formatTime(order.UpdatedAt),
+		"paidAt":          httpx.FormatTimePtr(order.PaidAt),
+		"createdAt":       httpx.FormatTime(order.CreatedAt),
+		"updatedAt":       httpx.FormatTime(order.UpdatedAt),
 	}
 	if order.ProviderOrderID != nil {
 		payload["providerOrderId"] = *order.ProviderOrderID

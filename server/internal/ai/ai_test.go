@@ -1,8 +1,7 @@
-package handler
+package ai
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,7 +15,9 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/admin"
 	"github.com/infinite-canvas/server/internal/authz"
+	"github.com/infinite-canvas/server/internal/canvas"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/crypto"
 	"github.com/infinite-canvas/server/internal/middleware"
@@ -25,6 +26,7 @@ import (
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	"github.com/infinite-canvas/server/internal/provider"
 	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/testutil"
 	"gorm.io/datatypes"
 )
 
@@ -70,7 +72,7 @@ func newAITestRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Config,
 	upstream.SetAllowPrivate(true) // 测试用 localhost 假上游
 	catalog := service.NewCatalogService(g, func() bool { return cfg.PromotionEnabled })
 	quotes := service.NewQuoteService(catalog, billing.NewService(g, model.ProductCanvas), cfg.JWTSecret)
-	store := newFakeStorage("local")
+	store := testutil.NewFakeStorage("local")
 	aiHandler := NewAIHandler(g, catalog, quotes, upstream, store, "http://localhost:3000", moderationService)
 
 	r := gin.New()
@@ -78,7 +80,7 @@ func newAITestRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Config,
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
 	secret := []byte(cfg.JWTSecret)
-	api := r.Group("/api")
+	api := r.Group("/api/v1")
 	ai := api.Group("/ai", middleware.Auth(secret))
 	ai.POST("/quote", aiHandler.Quote)
 	ai.POST("/images/generations", aiHandler.Images)
@@ -87,13 +89,13 @@ func newAITestRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Config,
 	ai.POST("/audio/speech", aiHandler.Speech)
 	ai.POST("/chat/completions", aiHandler.Chat)
 
-	generationHandler := NewGenerationHandler(g)
+	generationHandler := canvas.NewGenerationHandler(g)
 	generations := api.Group("/generations", middleware.Auth(secret))
 	generations.GET("", generationHandler.List)
 	generations.GET("/:id", generationHandler.Get)
 	generations.DELETE("/:id", generationHandler.Delete)
 
-	adminHandler := NewAdminHandlerWithUpstream(g, cfg, store, upstream)
+	adminHandler := admin.NewAdminHandlerWithUpstream(g, cfg, store, upstream)
 	if moderationService != nil {
 		adminHandler.SetModeration(moderationService)
 	}
@@ -146,111 +148,72 @@ func seedCredits(t *testing.T, g *gorm.DB, userID uuid.UUID, purchased int64) {
 
 func mustQuote(t *testing.T, r *gin.Engine, token, modelName, capability string, params map[string]any) map[string]any {
 	t.Helper()
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/quote", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/quote", token, map[string]any{
 		"model": modelName, "capability": capability, "params": params,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("获取报价失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	return decodeBody(t, w)
-}
-
-// fakeOpenAIUpstream 模拟 OpenAI 兼容上游：生图返回 b64，视频创建与查询返回状态。
-func fakeOpenAIUpstream(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
-		payload := base64.StdEncoding.EncodeToString([]byte("fake-png-data"))
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{{"b64_json": payload}},
-		})
-	})
-	mux.HandleFunc("/v1/videos", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "upstream-video-1"})
-	})
-	mux.HandleFunc("/v1/videos/upstream-video-1", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed", "url": "http://127.0.0.1:1/result.mp4"})
-	})
-	mux.HandleFunc("/v1/audio/speech", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "audio/mpeg")
-		_, _ = w.Write([]byte("fake-mp3"))
-	})
-	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
-		for _, chunk := range []string{"你好", "，世界"} {
-			_, _ = w.Write([]byte("event: response.output_text.delta\ndata: " + `{"type":"response.output_text.delta","delta":"` + chunk + `"}` + "\n\n"))
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n"))
-		if flusher != nil {
-			flusher.Flush()
-		}
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	return server
+	return testutil.DecodeBody(t, w)
 }
 
 func TestQuoteRejectsUnsupportedParams(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 	channel := seedPlatformChannel(t, g, "http://127.0.0.1:9", "openai")
 	seedImageModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "quote@example.com", "quoteuser", "password123", true)
-	token := accessToken(t, cfg, &user)
+	user := testutil.CreateUser(t, g, "quote@example.com", "quoteuser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/quote", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/quote", token, map[string]any{
 		"model": "test-image", "capability": "image", "params": map[string]any{"size": "2048x2048"},
 	})
-	if w.Code != http.StatusBadRequest || errorCode(t, w) != "PARAM_NOT_SUPPORTED" {
+	if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "PARAM_NOT_SUPPORTED" {
 		t.Fatalf("非法参数应 400 PARAM_NOT_SUPPORTED, got %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	errObj, _ := body["error"].(map[string]any)
 	if errObj["param"] != "size" {
 		t.Fatalf("错误应带 param 与 allowed: %v", body)
 	}
 
 	// 能力不匹配返回 MODEL_NOT_SUPPORTED。
-	w = doAuthJSON(r, http.MethodPost, "/api/ai/quote", token, map[string]any{
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/quote", token, map[string]any{
 		"model": "test-image", "capability": "video", "params": map[string]any{},
 	})
-	if w.Code != http.StatusBadRequest || errorCode(t, w) != "MODEL_NOT_SUPPORTED" {
+	if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "MODEL_NOT_SUPPORTED" {
 		t.Fatalf("能力不匹配应 400 MODEL_NOT_SUPPORTED, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 目录外的模型名一律拒绝。
-	w = doAuthJSON(r, http.MethodPost, "/api/ai/quote", token, map[string]any{
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/quote", token, map[string]any{
 		"model": "not-in-catalog", "capability": "image", "params": map[string]any{},
 	})
-	if errorCode(t, w) != "MODEL_NOT_SUPPORTED" {
+	if testutil.ErrorCode(t, w) != "MODEL_NOT_SUPPORTED" {
 		t.Fatalf("目录外模型应 MODEL_NOT_SUPPORTED, got %s", w.Body.String())
 	}
 }
 
 func TestImageGenerationReservesCreditsAndWritesGeneration(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "gen@example.com", "genuser", "password123", true)
+	user := testutil.CreateUser(t, g, "gen@example.com", "genuser", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "test-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
 	if quote["finalCostMicros"] != float64(100000) {
 		t.Fatalf("报价金额错误: %v", quote)
 	}
 
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model":          "test-image",
 		"prompt":         "一只猫",
 		"n":              1,
@@ -262,7 +225,7 @@ func TestImageGenerationReservesCreditsAndWritesGeneration(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("生图失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	images, _ := body["images"].([]any)
 	if len(images) != 1 {
 		t.Fatalf("应返回一张图片: %v", body)
@@ -290,8 +253,8 @@ func TestImageGenerationReservesCreditsAndWritesGeneration(t *testing.T) {
 }
 
 func TestImageGenerationRefundsOnUpstreamFailure(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 	// 上游固定返回 500。
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -301,12 +264,12 @@ func TestImageGenerationRefundsOnUpstreamFailure(t *testing.T) {
 	channel := seedPlatformChannel(t, g, failing.URL, "openai")
 	seedImageModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "refund@example.com", "refunduser", "password123", true)
+	user := testutil.CreateUser(t, g, "refund@example.com", "refunduser", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "test-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model":          "test-image",
 		"prompt":         "会失败",
 		"size":           "1024x1024",
@@ -314,7 +277,7 @@ func TestImageGenerationRefundsOnUpstreamFailure(t *testing.T) {
 		"quoteToken":     quote["quoteToken"],
 		"idempotencyKey": "idem-refund-1",
 	})
-	if w.Code != http.StatusBadGateway || errorCode(t, w) != "UPSTREAM_ERROR" {
+	if w.Code != http.StatusBadGateway || testutil.ErrorCode(t, w) != "UPSTREAM_ERROR" {
 		t.Fatalf("上游 500 应映射为 502 UPSTREAM_ERROR, got %d %s", w.Code, w.Body.String())
 	}
 
@@ -330,23 +293,23 @@ func TestImageGenerationRefundsOnUpstreamFailure(t *testing.T) {
 }
 
 func TestImageGenerationIdempotencyAndMissingKey(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "idem@example.com", "idemuser", "password123", true)
+	user := testutil.CreateUser(t, g, "idem@example.com", "idemuser", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	// 缺少 idempotencyKey 直接 400。
 	quote := mustQuote(t, r, token, "test-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model": "test-image", "prompt": "缺少幂等键", "size": "1024x1024", "quality": "low", "quoteToken": quote["quoteToken"],
 	})
-	if w.Code != http.StatusBadRequest || errorCode(t, w) != "VALIDATION_FAILED" {
+	if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "VALIDATION_FAILED" {
 		t.Fatalf("缺少幂等键应 400, got %d %s", w.Code, w.Body.String())
 	}
 
@@ -354,11 +317,11 @@ func TestImageGenerationIdempotencyAndMissingKey(t *testing.T) {
 		"model": "test-image", "prompt": "重复提交", "size": "1024x1024", "quality": "low",
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "same-key",
 	}
-	first := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, payload)
+	first := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, payload)
 	if first.Code != http.StatusOK {
 		t.Fatalf("首次生成失败: %d %s", first.Code, first.Body.String())
 	}
-	second := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, payload)
+	second := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, payload)
 	if second.Code == http.StatusOK {
 		t.Fatalf("重复提交不应再次生成成功")
 	}
@@ -369,25 +332,25 @@ func TestImageGenerationIdempotencyAndMissingKey(t *testing.T) {
 }
 
 func TestImageGenerationInsufficientCredits(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedImageModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "poor@example.com", "pooruser", "password123", true)
-	token := accessToken(t, cfg, &user)
+	user := testutil.CreateUser(t, g, "poor@example.com", "pooruser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "test-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model": "test-image", "prompt": "没有点数", "size": "1024x1024", "quality": "low",
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "poor-1",
 	})
-	if w.Code != http.StatusPaymentRequired || errorCode(t, w) != "INSUFFICIENT_CREDITS" {
+	if w.Code != http.StatusPaymentRequired || testutil.ErrorCode(t, w) != "INSUFFICIENT_CREDITS" {
 		t.Fatalf("点数不足应 402, got %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	errObj, _ := body["error"].(map[string]any)
 	if errObj["shortfallMicros"] != float64(100000) {
 		t.Fatalf("错误应带差额: %v", body)
@@ -395,10 +358,10 @@ func TestImageGenerationInsufficientCredits(t *testing.T) {
 }
 
 func TestChatStreamEventsAndSlotRelease(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 
 	channelIDs, _ := json.Marshal([]uuid.UUID{channel.ID})
@@ -413,14 +376,14 @@ func TestChatStreamEventsAndSlotRelease(t *testing.T) {
 		t.Fatalf("写入文本模型失败: %v", err)
 	}
 	r, aiHandler := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "chat@example.com", "chatuser", "password123", true)
+	user := testutil.CreateUser(t, g, "chat@example.com", "chatuser", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	// 连续发起多轮 SSE，验证槽位在断开时被正确释放。
 	for i := 0; i < 5; i++ {
 		quote := mustQuote(t, r, token, "test-text", "text", map[string]any{})
-		w := doAuthJSON(r, http.MethodPost, "/api/ai/chat/completions", token, map[string]any{
+		w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/chat/completions", token, map[string]any{
 			"model":          "test-text",
 			"messages":       []map[string]any{{"role": "user", "content": "你好"}},
 			"stream":         true,
@@ -461,7 +424,7 @@ func seedTextModel(t *testing.T, g *gorm.DB, channelIDs ...uuid.UUID) model.Mode
 func postChatStream(t *testing.T, r *gin.Engine, token, modelName, idempotencyKey string) *httptest.ResponseRecorder {
 	t.Helper()
 	quote := mustQuote(t, r, token, modelName, "text", map[string]any{})
-	return doAuthJSON(r, http.MethodPost, "/api/ai/chat/completions", token, map[string]any{
+	return testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/chat/completions", token, map[string]any{
 		"model":          modelName,
 		"messages":       []map[string]any{{"role": "user", "content": "你好"}},
 		"stream":         true,
@@ -517,8 +480,8 @@ func creditTxCount(t *testing.T, g *gorm.DB, userID uuid.UUID, txType string) in
 // delta 后失败，必须立即终止——响应体恰好是已发出的 2 个 delta 加 1 个 done，
 // 不重试、不切渠道、无重复正文；已产出按成功记账，不产生退款流水。
 func TestChatStreamStopsFailoverAfterProducedOutput(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 
 	var aHits, bHits int32
@@ -546,9 +509,9 @@ func TestChatStreamStopsFailoverAfterProducedOutput(t *testing.T) {
 	channelB := seedPlatformChannel(t, g, upstreamB.URL, "openai")
 	seedTextModel(t, g, channelA.ID, channelB.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "produced@example.com", "produced", "password123", true)
+	user := testutil.CreateUser(t, g, "produced@example.com", "produced", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	w := postChatStream(t, r, token, "test-text", "produced-1")
 	if w.Code != http.StatusOK {
@@ -590,13 +553,13 @@ func TestChatStreamStopsFailoverAfterProducedOutput(t *testing.T) {
 // 全部失败时全额退款并给出 error 事件。
 func TestChatStreamRetryAndFailoverBilling(t *testing.T) {
 	newFixture := func(t *testing.T) (*gorm.DB, *gin.Engine, model.PlatformUser, string) {
-		g := newTestDB(t)
-		cfg := testConfig()
+		g := testutil.NewTestDB(t)
+		cfg := testutil.TestConfig()
 		cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 		r, _ := newAITestRouter(t, g, cfg)
-		user := createUser(t, g, "failover@example.com", "failover", "password123", true)
+		user := testutil.CreateUser(t, g, "failover@example.com", "failover", "password123", true)
 		seedCredits(t, g, user.ID, 1_000_000)
-		return g, r, user, accessToken(t, cfg, &user)
+		return g, r, user, testutil.AccessToken(t, cfg, &user)
 	}
 
 	t.Run("首渠道 502 两次后切渠道成功：一条消费流水、无退款", func(t *testing.T) {
@@ -680,8 +643,8 @@ func TestChatStreamRetryAndFailoverBilling(t *testing.T) {
 // TestCallChatCanceledContextMakesNoSecondUpstreamRequest 决策 2 的取消语义：
 // context.Canceled 原样上抛不打标，两谓词均为 false，因此不产生第二次上游请求。
 func TestCallChatCanceledContextMakesNoSecondUpstreamRequest(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 
 	var hits int32

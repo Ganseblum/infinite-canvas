@@ -1,4 +1,4 @@
-package handler
+package ai
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/platform/billing"
@@ -144,7 +145,7 @@ func (h *AIHandler) Quote(c *gin.Context) {
 		"priceVersion":     quote.PriceVersion,
 		"promotionVersion": quote.PromotionVersion,
 		"quoteToken":       quote.Token,
-		"expiresAt":        formatTime(quote.ExpiresAt),
+		"expiresAt":        httpx.FormatTime(quote.ExpiresAt),
 	}
 	if quote.BillingMode == service.BillingModeFreeTrial {
 		payload["freeTrialsLeft"] = quote.FreeTrialsLeft
@@ -1396,7 +1397,7 @@ func (h *AIHandler) beginRequest(c *gin.Context, user model.PlatformUser, catalo
 		SessionID:        sessionIDOf(dims.SessionID),
 		Params:           paramsSnapshot(dims.Params),
 		ParamSpec:        clipRunes(dims.Spec, 64),
-		StatDate:         time.Now().In(statZone).Format(statDateFormat),
+		StatDate:         time.Now().In(model.StatZone).Format(model.StatDateFormat),
 		Status:           "running",
 	}
 	var reserved *service.ReserveResult
@@ -1667,12 +1668,6 @@ func requireIdempotencyKey(c *gin.Context, key string) bool {
 	return true
 }
 
-// statZone 是用量统计统一使用的 UTC+8 时区；statDateFormat 是统计日期列的格式。
-// 用 FixedZone 而不是 LoadLocation，避免容器缺少 tzdata 时 panic。
-var statZone = time.FixedZone("UTC+8", 8*3600)
-
-const statDateFormat = "2006-01-02"
-
 // sessionIDOf 清洗客户端会话标识：去首尾空白、按字符截断到 64，空白返回 nil。
 func sessionIDOf(raw string) *string {
 	id := clipRunes(strings.TrimSpace(raw), 64)
@@ -1735,7 +1730,7 @@ func randomKey() string {
 }
 
 // randomStorageID 给生成产物分配 storageKey 的对象段。
-func randomStorageID() string { return randomKey() }
+func RandomStorageID() string { return randomKey() }
 
 func defaultMime(prefix string) string {
 	switch prefix {

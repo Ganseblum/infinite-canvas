@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 func newAdminMetaRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engine {
@@ -22,24 +23,23 @@ func newAdminMetaRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Engin
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
 	secret := []byte(cfg.JWTSecret)
-	h := NewAdminHandler(g, cfg, newFakeStorage("local"))
-	api := r.Group("/api")
-	admin := api.Group("/admin", middleware.Auth(secret), middleware.RequireActiveUser(identity.NewService(g)), middleware.LoadAdminAccess(identity.NewService(g), g))
+	h := NewAdminHandler(g, cfg, testutil.NewFakeStorage("local"))
+	admin := r.Group("/api/admin", middleware.Auth(secret), middleware.RequireActiveUser(identity.NewService(g)), middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/meta", h.AdminMeta)
 	return r
 }
 
 // AdminMeta 是多产品后台的引导接口：产品标识固定，模块清单按调用者权限过滤。
 func TestAdminMetaFiltersModulesByPermission(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMetaRouter(t, g, cfg)
 
 	// 系统管理员：全部模块。
-	admin := createUser(t, g, "meta-admin@example.com", "metaadmin", "password123", true)
+	admin := testutil.CreateUser(t, g, "meta-admin@example.com", "metaadmin", "password123", true)
 	adminKey := authz.SystemRoleKey
-	setUserRole(t, g, &admin, &adminKey)
-	w := doAuthJSON(r, http.MethodGet, "/api/admin/meta", accessToken(t, cfg, &admin), nil)
+	testutil.SetUserRole(t, g, &admin, &adminKey)
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/meta", testutil.AccessToken(t, cfg, &admin), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("管理员取 meta 应 200: %d %s", w.Code, w.Body.String())
 	}
@@ -80,10 +80,10 @@ func TestAdminMetaFiltersModulesByPermission(t *testing.T) {
 	if err := g.Create(&model.RolePermission{RoleKey: "meta-viewer", PermissionKey: authz.PermUsersRead}).Error; err != nil {
 		t.Fatalf("分配受限角色权限失败: %v", err)
 	}
-	limited := createUser(t, g, "meta-limited@example.com", "metalimited", "password123", true)
+	limited := testutil.CreateUser(t, g, "meta-limited@example.com", "metalimited", "password123", true)
 	viewerKey := "meta-viewer"
-	setUserRole(t, g, &limited, &viewerKey)
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/meta", accessToken(t, cfg, &limited), nil)
+	testutil.SetUserRole(t, g, &limited, &viewerKey)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/meta", testutil.AccessToken(t, cfg, &limited), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("受限角色取 meta 应 200: %d %s", w.Code, w.Body.String())
 	}
@@ -113,11 +113,11 @@ func TestAdminMetaFiltersModulesByPermission(t *testing.T) {
 
 // 无后台角色的账号不能取 meta。
 func TestAdminMetaRejectsNonAdmin(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminMetaRouter(t, g, cfg)
-	user := createUser(t, g, "meta-user@example.com", "metauser", "password123", true)
-	w := doAuthJSON(r, http.MethodGet, "/api/admin/meta", accessToken(t, cfg, &user), nil)
+	user := testutil.CreateUser(t, g, "meta-user@example.com", "metauser", "password123", true)
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/meta", testutil.AccessToken(t, cfg, &user), nil)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("无后台角色应 403: %d", w.Code)
 	}

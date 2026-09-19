@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"encoding/json"
@@ -14,10 +14,13 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/account"
 	"github.com/infinite-canvas/server/internal/auth"
 	"github.com/infinite-canvas/server/internal/authz"
+	billingapi "github.com/infinite-canvas/server/internal/billing"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
@@ -94,7 +97,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 	displayName := strings.TrimSpace(req.DisplayName)
 	roleKey := strings.TrimSpace(req.RoleKey)
 	fields := map[string]string{}
-	if !emailRe.MatchString(email) {
+	if !account.EmailRe.MatchString(email) {
 		fields["email"] = "邮箱格式不正确"
 	}
 	if roleKey == "" {
@@ -169,11 +172,11 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 			})
 	})
 	if err != nil {
-		if isUniqueViolation(err, "email") {
+		if errs.UniqueViolationColumn(err) == "email" {
 			errs.Abort(c, errs.ErrEmailTaken)
 			return
 		}
-		if isUniqueViolation(err, "username") {
+		if errs.UniqueViolationColumn(err) == "username" {
 			errs.Abort(c, errs.ErrUsernameTaken)
 			return
 		}
@@ -191,7 +194,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 			"status":             user.Status,
 			"emailVerified":      user.EmailVerifiedAt != nil,
 			"mustChangePassword": user.MustChangePassword,
-			"createdAt":          formatTime(user.CreatedAt),
+			"createdAt":          httpx.FormatTime(user.CreatedAt),
 		},
 		// 明文只在这里出现一次：库里只存 bcrypt 哈希，审计摘要与后续查询都不回传。
 		"temporaryPassword": password,
@@ -270,11 +273,11 @@ func planFilter(planID string, now time.Time) (string, []any) {
 }
 
 func (h *AdminHandler) ListUsers(c *gin.Context) {
-	params, ok := parsePageParams(c)
+	params, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
-	sortColumn, ok := parseSort(c.Query("sort"), adminUserSorts, "-createdAt")
+	sortColumn, ok := httpx.ParseSort(c.Query("sort"), adminUserSorts, "-createdAt")
 	if !ok {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"sort": "sort 不在白名单内"}))
 		return
@@ -296,7 +299,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		Joins("LEFT JOIN storage_accounts sa ON sa.user_id = platform_users.id").
 		Where("platform_users.id <> ?", uuid.Nil)
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
-		pattern := searchPattern(q)
+		pattern := httpx.SearchPattern(q)
 		base = base.Where("LOWER(platform_users.email) LIKE ? OR LOWER(platform_users.username) LIKE ?", pattern, pattern)
 	}
 	if status != "" {
@@ -354,7 +357,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			return
 		}
 		// membership.periodEnd 与 paidUntil 同源：最新订阅行的 period_end。
-		paidUntil := latestPaidUntil(h.db, row.ID)
+		paidUntil := membership.LatestPaidUntil(h.db, row.ID)
 		items = append(items, gin.H{
 			"id":              row.ID.String(),
 			"email":           row.Email,
@@ -366,14 +369,14 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"planId":          derived,
 			"purchasedMicros": row.PurchasedMicros,
 			"grantedMicros":   row.GrantedMicros,
-			"paidUntil":       formatTimePtr(paidUntil),
+			"paidUntil":       httpx.FormatTimePtr(paidUntil),
 			"storageBytes":    row.StorageBytes,
-			"createdAt":       formatTime(row.CreatedAt),
+			"createdAt":       httpx.FormatTime(row.CreatedAt),
 			// T07 纯加法：会员/存储/产品聚合键，旧键全部保留。
 			"membership": gin.H{
 				"planId":      derived,
-				"periodEnd":   formatTimePtr(paidUntil),
-				"graceEndsAt": formatTimePtr(graceEndsAt),
+				"periodEnd":   httpx.FormatTimePtr(paidUntil),
+				"graceEndsAt": httpx.FormatTimePtr(graceEndsAt),
 			},
 			"storage": gin.H{
 				"usedBytes":  row.StorageBytes,
@@ -414,7 +417,7 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 	}
 	mediaCount, _ := h.mediaCount(userID)
 	// membership.periodEnd 与 paidUntil 同源：最新订阅行的 period_end。
-	paidUntil := latestPaidUntil(h.db, userID)
+	paidUntil := membership.LatestPaidUntil(h.db, userID)
 	c.JSON(http.StatusOK, gin.H{"user": gin.H{
 		"id":              user.ID.String(),
 		"email":           user.Email,
@@ -423,8 +426,8 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		"roleKey":         roleKeyJSON(user.RoleKey),
 		"status":          user.Status,
 		"emailVerified":   user.EmailVerifiedAt != nil,
-		"createdAt":       formatTime(user.CreatedAt),
-		"lastLoginAt":     formatTimePtr(user.LastLoginAt),
+		"createdAt":       httpx.FormatTime(user.CreatedAt),
+		"lastLoginAt":     httpx.FormatTimePtr(user.LastLoginAt),
 		"planId":          plan.ID,
 		"planName":        plan.Name,
 		"storageLimit":    plan.StorageBytes,
@@ -432,15 +435,15 @@ func (h *AdminHandler) GetUser(c *gin.Context) {
 		"retentionDays":   plan.RetentionDays,
 		"purchasedMicros": balance.PurchasedMicros,
 		"grantedMicros":   balance.GrantedMicros,
-		"paidUntil":       formatTimePtr(paidUntil),
+		"paidUntil":       httpx.FormatTimePtr(paidUntil),
 		"storageBytes":    storageBytes,
 		"mediaCount":      mediaCount,
 		"readOnly":        storageBytes > plan.StorageBytes,
 		// T07 纯加法：会员/存储/产品聚合键，旧键全部保留。
 		"membership": gin.H{
 			"planId":      plan.ID,
-			"periodEnd":   formatTimePtr(paidUntil),
-			"graceEndsAt": formatTimePtr(graceEndsAt),
+			"periodEnd":   httpx.FormatTimePtr(paidUntil),
+			"graceEndsAt": httpx.FormatTimePtr(graceEndsAt),
 		},
 		"storage": gin.H{
 			"usedBytes":  storageBytes,
@@ -569,7 +572,7 @@ func (h *AdminHandler) ResetPassword(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 type adjustCreditsReq struct {
@@ -912,7 +915,7 @@ func (h *AdminHandler) DeleteModel(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 func modelSummaryAudit(item model.ModelCatalog) gin.H {
@@ -1122,10 +1125,10 @@ func promotionPayload(promotion *model.ModelPricePromotion) gin.H {
 		"priority":    promotion.Priority,
 		"version":     promotion.Version,
 		"status":      promotion.Status,
-		"startsAt":    formatTime(promotion.StartsAt),
-		"endsAt":      formatTime(promotion.EndsAt),
-		"createdAt":   formatTime(promotion.CreatedAt),
-		"updatedAt":   formatTime(promotion.UpdatedAt),
+		"startsAt":    httpx.FormatTime(promotion.StartsAt),
+		"endsAt":      httpx.FormatTime(promotion.EndsAt),
+		"createdAt":   httpx.FormatTime(promotion.CreatedAt),
+		"updatedAt":   httpx.FormatTime(promotion.UpdatedAt),
 	}
 }
 
@@ -1136,8 +1139,8 @@ func promotionAudit(promotion model.ModelPricePromotion) gin.H {
 		"priority":    promotion.Priority,
 		"version":     promotion.Version,
 		"status":      promotion.Status,
-		"startsAt":    formatTime(promotion.StartsAt),
-		"endsAt":      formatTime(promotion.EndsAt),
+		"startsAt":    httpx.FormatTime(promotion.StartsAt),
+		"endsAt":      httpx.FormatTime(promotion.EndsAt),
 	}
 }
 
@@ -1303,11 +1306,11 @@ var adminOrderSorts = map[string]string{
 }
 
 func (h *AdminHandler) ListOrders(c *gin.Context) {
-	params, ok := parsePageParams(c)
+	params, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
-	sortColumn, ok := parseSort(c.Query("sort"), adminOrderSorts, "-createdAt")
+	sortColumn, ok := httpx.ParseSort(c.Query("sort"), adminOrderSorts, "-createdAt")
 	if !ok {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"sort": "sort 不在白名单内"}))
 		return
@@ -1346,7 +1349,7 @@ func (h *AdminHandler) ListOrders(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(orders))
 	for i := range orders {
-		payload := orderPayload(&orders[i])
+		payload := billingapi.OrderPayload(&orders[i])
 		payload["userId"] = orders[i].UserID.String()
 		items = append(items, payload)
 	}

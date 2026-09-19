@@ -28,7 +28,7 @@ const (
 	MediaTokenTTL = 30 * 24 * time.Hour
 	// MediaCookieName / MediaCookiePath 限定这枚只读凭据的可见路径。
 	MediaCookieName = "ic_media"
-	MediaCookiePath = "/api/media"
+	MediaCookiePath = "/api/v1/media"
 	// MediaScope 是媒体 JWT 的唯一合法 scope。业务接口的 access token
 	// 不带 scope，解析到 scope=media 的令牌一律拒绝，避免两套凭据混用。
 	MediaScope = "media"

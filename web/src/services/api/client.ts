@@ -15,7 +15,7 @@ type ApiRequestOptions = {
     signal?: AbortSignal;
 };
 
-// 默认空串，走同源 /api：生产由 nginx 反代，开发由 vite proxy 转发。
+// 默认空串，走同源 /api/v1：生产由 nginx 反代，开发由 vite proxy 转发。
 // 容器部署时可由入口脚本注入 API_BASE_URL，同一份镜像可指向不同环境的接口。
 export const API_BASE_URL = RUNTIME_API_BASE_URL.trim().replace(/\/+$/, "");
 
@@ -33,7 +33,7 @@ function buildUrl(path: string, query?: ApiRequestOptions["query"]) {
         params.set(key, String(value));
     }
     const search = params.toString();
-    return `${API_BASE_URL}/api${path.startsWith("/") ? path : `/${path}`}${search ? `?${search}` : ""}`;
+    return `${API_BASE_URL}/api/v1${path.startsWith("/") ? path : `/${path}`}${search ? `?${search}` : ""}`;
 }
 
 function buildBody(body: unknown, headers: Headers) {
@@ -116,7 +116,7 @@ let refreshInFlight: Promise<SessionPayload | null> | null = null;
 
 async function performRefresh(): Promise<SessionPayload | null> {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, { method: "POST", credentials: "include" });
+        const response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, { method: "POST", credentials: "include" });
         if (!response.ok) {
             useAuthStore.getState().clearSession();
             return null;

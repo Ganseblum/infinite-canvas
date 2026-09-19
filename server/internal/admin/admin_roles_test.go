@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"net/http"
@@ -13,6 +13,7 @@ import (
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // newAdminAccessRouter 按生产同样的组级中间件与权限参数注册管理路由，用于 RBAC 行为测试。
@@ -23,9 +24,8 @@ func newAdminAccessRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Eng
 		t.Fatalf("设置可信代理失败: %v", err)
 	}
 	secret := []byte(cfg.JWTSecret)
-	h := NewAdminHandler(g, cfg, newFakeStorage("local"))
-	api := r.Group("/api")
-	admin := api.Group("/admin", middleware.Auth(secret), middleware.RequireActiveUser(identity.NewService(g)), middleware.LoadAdminAccess(identity.NewService(g), g))
+	h := NewAdminHandler(g, cfg, testutil.NewFakeStorage("local"))
+	admin := r.Group("/api/admin", middleware.Auth(secret), middleware.RequireActiveUser(identity.NewService(g)), middleware.LoadAdminAccess(identity.NewService(g), g))
 	admin.GET("/me", h.Me)
 	admin.GET("/users", middleware.RequirePermission(authz.PermUsersRead), h.ListUsers)
 	admin.PATCH("/users/:id", middleware.RequirePermission(authz.PermUsersWrite), h.PatchUser)
@@ -41,7 +41,7 @@ func newAdminAccessRouter(t *testing.T, g *gorm.DB, cfg *config.Config) *gin.Eng
 
 func createRole(t *testing.T, r http.Handler, token, key, name string) {
 	t.Helper()
-	w := doAuthJSON(r, http.MethodPost, "/api/admin/roles", token, map[string]any{"key": key, "name": name})
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/roles", token, map[string]any{"key": key, "name": name})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("创建角色 %s 失败: %d %s", key, w.Code, w.Body.String())
 	}
@@ -55,7 +55,7 @@ func assignRole(t *testing.T, r http.Handler, token, userID, roleKey string) {
 	} else {
 		body = map[string]any{"roleKey": nil}
 	}
-	w := doAuthJSON(r, http.MethodPatch, "/api/admin/users/"+userID+"/role", token, body)
+	w := testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/users/"+userID+"/role", token, body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("分配角色失败: %d %s", w.Code, w.Body.String())
 	}
@@ -63,25 +63,25 @@ func assignRole(t *testing.T, r http.Handler, token, userID, roleKey string) {
 
 func grantPermissions(t *testing.T, r http.Handler, token, roleKey string, permissions []string) {
 	t.Helper()
-	w := doAuthJSON(r, http.MethodPatch, "/api/admin/roles/"+roleKey, token, map[string]any{"permissions": permissions})
+	w := testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/roles/"+roleKey, token, map[string]any{"permissions": permissions})
 	if w.Code != http.StatusOK {
 		t.Fatalf("分配权限失败: %d %s", w.Code, w.Body.String())
 	}
 }
 
 func TestAdminMeReturnsRoleAndPermissions(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	admin := createUser(t, g, "me-admin@example.com", "meadmin", "password123", true)
-	promoteAdmin(t, g, &admin)
-	token := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "me-admin@example.com", "meadmin", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	token := testutil.AccessToken(t, cfg, &admin)
 
-	w := doAuthJSON(r, http.MethodGet, "/api/admin/me", token, nil)
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/me", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("读取 /admin/me 失败: %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	role, ok := body["role"].(map[string]any)
 	if !ok || role["key"] != "admin" || role["isSystem"] != true {
 		t.Fatalf("系统角色应隐式全量: %s", w.Body.String())
@@ -92,23 +92,23 @@ func TestAdminMeReturnsRoleAndPermissions(t *testing.T) {
 	}
 
 	// 没有后台角色的普通用户连 /admin/me 都不能访问。
-	normal := createUser(t, g, "me-normal@example.com", "menormal", "password123", true)
-	normalToken := accessToken(t, cfg, &normal)
-	w = doAuthJSON(r, http.MethodGet, "/api/admin/me", normalToken, nil)
-	if w.Code != http.StatusForbidden || errorCode(t, w) != "FORBIDDEN" {
+	normal := testutil.CreateUser(t, g, "me-normal@example.com", "menormal", "password123", true)
+	normalToken := testutil.AccessToken(t, cfg, &normal)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/me", normalToken, nil)
+	if w.Code != http.StatusForbidden || testutil.ErrorCode(t, w) != "FORBIDDEN" {
 		t.Fatalf("无后台角色访问 /admin/me 应 403 FORBIDDEN, got %d %s", w.Code, w.Body.String())
 	}
 }
 
 func TestPermissionDeniedForUserWithoutRole(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	normal := createUser(t, g, "norole@example.com", "norole", "password123", true)
-	token := accessToken(t, cfg, &normal)
+	normal := testutil.CreateUser(t, g, "norole@example.com", "norole", "password123", true)
+	token := testutil.AccessToken(t, cfg, &normal)
 
-	w := doAuthJSON(r, http.MethodGet, "/api/admin/users", token, nil)
-	if w.Code != http.StatusForbidden || errorCode(t, w) != "FORBIDDEN" {
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", token, nil)
+	if w.Code != http.StatusForbidden || testutil.ErrorCode(t, w) != "FORBIDDEN" {
 		t.Fatalf("无角色用户访问管理接口应 403 FORBIDDEN, got %d %s", w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), authz.PermUsersRead) {
@@ -117,44 +117,44 @@ func TestPermissionDeniedForUserWithoutRole(t *testing.T) {
 }
 
 func TestCustomRoleOnlyGrantsAssignedRoutes(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	admin := createUser(t, g, "rbac-admin@example.com", "rbacadmin", "password123", true)
-	promoteAdmin(t, g, &admin)
-	adminToken := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "rbac-admin@example.com", "rbacadmin", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	adminToken := testutil.AccessToken(t, cfg, &admin)
 
 	createRole(t, r, adminToken, "support", "客服")
-	operator := createUser(t, g, "rbac-support@example.com", "rbacsupport", "password123", true)
-	operatorToken := accessToken(t, cfg, &operator)
+	operator := testutil.CreateUser(t, g, "rbac-support@example.com", "rbacsupport", "password123", true)
+	operatorToken := testutil.AccessToken(t, cfg, &operator)
 	assignRole(t, r, adminToken, operator.ID.String(), "support")
 
 	// 角色还没有任何权限：管理接口一律 403。
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("空权限角色访问用户列表应 403, got %d %s", w.Code, w.Body.String())
 	}
 
 	grantPermissions(t, r, adminToken, "support", []string{authz.PermUsersRead})
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusOK {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusOK {
 		t.Fatalf("已授予 users.read 应放行, got %d %s", w.Code, w.Body.String())
 	}
 	// 未被授予的路由必须拒绝。
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/roles", operatorToken, nil); w.Code != http.StatusForbidden {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/roles", operatorToken, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("未授予 roles.read 应 403, got %d %s", w.Code, w.Body.String())
 	}
-	target := createUser(t, g, "rbac-target@example.com", "rbactarget", "password123", true)
+	target := testutil.CreateUser(t, g, "rbac-target@example.com", "rbactarget", "password123", true)
 	creditBody := map[string]any{"bucket": "granted", "amountMicros": 100, "note": "测试"}
-	if w := doAuthJSON(r, http.MethodPost, "/api/admin/users/"+target.ID.String()+"/credits", operatorToken, creditBody); w.Code != http.StatusForbidden {
+	if w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users/"+target.ID.String()+"/credits", operatorToken, creditBody); w.Code != http.StatusForbidden {
 		t.Fatalf("未授予 users.credits 应 403, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 追加授权后同一条 access token 立刻生效（权限每请求查库，不读 JWT claim）。
 	grantPermissions(t, r, adminToken, "support", []string{authz.PermUsersRead, authz.PermUsersCredits})
-	if w := doAuthJSON(r, http.MethodPost, "/api/admin/users/"+target.ID.String()+"/credits", operatorToken, creditBody); w.Code != http.StatusOK {
+	if w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users/"+target.ID.String()+"/credits", operatorToken, creditBody); w.Code != http.StatusOK {
 		t.Fatalf("授予 users.credits 后应立即放行, got %d %s", w.Code, w.Body.String())
 	}
-	me := doAuthJSON(r, http.MethodGet, "/api/admin/me", operatorToken, nil)
-	meBody := decodeBody(t, me)
+	me := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/me", operatorToken, nil)
+	meBody := testutil.DecodeBody(t, me)
 	perms, _ := meBody["permissions"].([]any)
 	if len(perms) != 2 {
 		t.Fatalf("自定义角色的权限集合应只含被授予的两项: %s", me.Body.String())
@@ -164,29 +164,29 @@ func TestCustomRoleOnlyGrantsAssignedRoutes(t *testing.T) {
 // TestFailClosedOnUnknownPermissionKey 覆盖失败关闭：role_permissions 出现注册表外的 key 时，
 // 中间件忽略它而不是放行；typo 只会让谁都进不去，不会让谁都能进。
 func TestFailClosedOnUnknownPermissionKey(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	admin := createUser(t, g, "typo-admin@example.com", "typoadmin", "password123", true)
-	promoteAdmin(t, g, &admin)
-	adminToken := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "typo-admin@example.com", "typoadmin", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	adminToken := testutil.AccessToken(t, cfg, &admin)
 
 	createRole(t, r, adminToken, "broken", "错别字角色")
-	operator := createUser(t, g, "typo-user@example.com", "typouser", "password123", true)
-	operatorToken := accessToken(t, cfg, &operator)
+	operator := testutil.CreateUser(t, g, "typo-user@example.com", "typouser", "password123", true)
+	operatorToken := testutil.AccessToken(t, cfg, &operator)
 	assignRole(t, r, adminToken, operator.ID.String(), "broken")
 	if err := g.Create(&model.RolePermission{RoleKey: "broken", PermissionKey: "users.raed"}).Error; err != nil {
 		t.Fatalf("写入错误权限分配失败: %v", err)
 	}
 
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("未注册的权限 key 必须拒绝, got %d %s", w.Code, w.Body.String())
 	}
-	me := doAuthJSON(r, http.MethodGet, "/api/admin/me", operatorToken, nil)
+	me := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/me", operatorToken, nil)
 	if me.Code != http.StatusOK {
 		t.Fatalf("角色本身有效，/admin/me 应 200, got %d", me.Code)
 	}
-	perms, _ := decodeBody(t, me)["permissions"].([]any)
+	perms, _ := testutil.DecodeBody(t, me)["permissions"].([]any)
 	if len(perms) != 0 {
 		t.Fatalf("未注册的权限不允许出现在权限集合里: %s", me.Body.String())
 	}
@@ -194,27 +194,27 @@ func TestFailClosedOnUnknownPermissionKey(t *testing.T) {
 
 // TestRoleChangeTakesEffectImmediately 覆盖降权立即生效：不改 token、不等 15 分钟。
 func TestRoleChangeTakesEffectImmediately(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	admin := createUser(t, g, "demote-admin@example.com", "demoteadmin", "password123", true)
-	promoteAdmin(t, g, &admin)
-	adminToken := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "demote-admin@example.com", "demoteadmin", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	adminToken := testutil.AccessToken(t, cfg, &admin)
 	createRole(t, r, adminToken, "viewer", "只读")
 	grantPermissions(t, r, adminToken, "viewer", []string{authz.PermUsersRead})
 
-	operator := createUser(t, g, "demote-user@example.com", "demoteuser", "password123", true)
-	operatorToken := accessToken(t, cfg, &operator)
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
+	operator := testutil.CreateUser(t, g, "demote-user@example.com", "demoteuser", "password123", true)
+	operatorToken := testutil.AccessToken(t, cfg, &operator)
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("尚未授权时应 403, got %d", w.Code)
 	}
 	assignRole(t, r, adminToken, operator.ID.String(), "viewer")
 	// 同一条 token 立刻可用：说明授权来自库里的角色，不是签发时的 JWT claim。
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusOK {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusOK {
 		t.Fatalf("授权后同一条 token 应立即生效, got %d %s", w.Code, w.Body.String())
 	}
 	assignRole(t, r, adminToken, operator.ID.String(), "")
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("降权后同一条 token 必须立刻 403, got %d", w.Code)
 	}
 	// refresh token 同步撤销。
@@ -230,42 +230,42 @@ func TestRoleChangeTakesEffectImmediately(t *testing.T) {
 // TestLockoutGuards 覆盖防锁死四类操作：改自己角色、动最后一个系统角色成员、
 // 删除仍有成员的角色、编辑系统角色权限，全部被拒且不留状态变更。
 func TestLockoutGuards(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	admin := createUser(t, g, "lock-admin@example.com", "lockadmin", "password123", true)
-	promoteAdmin(t, g, &admin)
-	adminToken := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "lock-admin@example.com", "lockadmin", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	adminToken := testutil.AccessToken(t, cfg, &admin)
 
 	// 1) 不能修改自己的角色。
-	w := doAuthJSON(r, http.MethodPatch, "/api/admin/users/"+admin.ID.String()+"/role", adminToken, map[string]any{"roleKey": nil})
+	w := testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/users/"+admin.ID.String()+"/role", adminToken, map[string]any{"roleKey": nil})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("修改自己的角色应被拒, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 2) 系统角色不可编辑权限、不可删除。
-	w = doAuthJSON(r, http.MethodPatch, "/api/admin/roles/admin", adminToken, map[string]any{"permissions": []string{authz.PermStatsRead}})
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/roles/admin", adminToken, map[string]any{"permissions": []string{authz.PermStatsRead}})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("编辑系统角色权限应被拒, got %d %s", w.Code, w.Body.String())
 	}
-	w = doAuthJSON(r, http.MethodDelete, "/api/admin/roles/admin", adminToken, nil)
+	w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/roles/admin", adminToken, nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("删除系统角色应被拒, got %d %s", w.Code, w.Body.String())
 	}
 	// 显示名允许修改，系统角色仍在。
-	w = doAuthJSON(r, http.MethodPatch, "/api/admin/roles/admin", adminToken, map[string]any{"name": "超级管理员"})
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/roles/admin", adminToken, map[string]any{"name": "超级管理员"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("系统角色显示名应可修改, got %d %s", w.Code, w.Body.String())
 	}
-	if w := doAuthJSON(r, http.MethodGet, "/api/admin/users", adminToken, nil); w.Code != http.StatusOK {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", adminToken, nil); w.Code != http.StatusOK {
 		t.Fatalf("系统角色不允许被锁死, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 3) 不能删除仍有成员的角色。
 	createRole(t, r, adminToken, "editor", "编辑")
-	member := createUser(t, g, "lock-member@example.com", "lockmember", "password123", true)
+	member := testutil.CreateUser(t, g, "lock-member@example.com", "lockmember", "password123", true)
 	assignRole(t, r, adminToken, member.ID.String(), "editor")
-	w = doAuthJSON(r, http.MethodDelete, "/api/admin/roles/editor", adminToken, nil)
+	w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/roles/editor", adminToken, nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("删除仍有成员的角色应被拒, got %d %s", w.Code, w.Body.String())
 	}
@@ -275,24 +275,24 @@ func TestLockoutGuards(t *testing.T) {
 		t.Fatalf("被拒的删除不允许产生状态变更")
 	}
 	assignRole(t, r, adminToken, member.ID.String(), "")
-	if w = doAuthJSON(r, http.MethodDelete, "/api/admin/roles/editor", adminToken, nil); w.Code != http.StatusNoContent {
+	if w = testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/roles/editor", adminToken, nil); w.Code != http.StatusNoContent {
 		t.Fatalf("成员清空后应可删除角色, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 4) 系统角色必须保留至少一个 active 用户：用带 roles.manage 的自定义角色去尝试。
 	createRole(t, r, adminToken, "ops", "运维")
 	grantPermissions(t, r, adminToken, "ops", []string{authz.PermRolesManage, authz.PermUsersWrite})
-	operator := createUser(t, g, "lock-ops@example.com", "lockops", "password123", true)
+	operator := testutil.CreateUser(t, g, "lock-ops@example.com", "lockops", "password123", true)
 	assignRole(t, r, adminToken, operator.ID.String(), "ops")
-	operatorToken := accessToken(t, cfg, &operator)
+	operatorToken := testutil.AccessToken(t, cfg, &operator)
 	var auditBefore int64
 	g.Model(&model.AdminAuditLog{}).Where("action = ?", "user.role").Count(&auditBefore)
 
-	w = doAuthJSON(r, http.MethodPatch, "/api/admin/users/"+admin.ID.String()+"/role", operatorToken, map[string]any{"roleKey": nil})
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/users/"+admin.ID.String()+"/role", operatorToken, map[string]any{"roleKey": nil})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("降掉最后一个系统角色成员应被拒, got %d %s", w.Code, w.Body.String())
 	}
-	w = doAuthJSON(r, http.MethodPatch, "/api/admin/users/"+admin.ID.String(), operatorToken, map[string]any{"status": "disabled"})
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/admin/users/"+admin.ID.String(), operatorToken, map[string]any{"status": "disabled"})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("封禁最后一个系统角色成员应被拒, got %d %s", w.Code, w.Body.String())
 	}
@@ -314,16 +314,16 @@ func TestLockoutGuards(t *testing.T) {
 // TestRoleChangesWriteAuditWithTextSnapshot 覆盖审计摘要存文本快照：
 // 角色被删除后，历史摘要仍能还原角色名与权限 key。
 func TestRoleChangesWriteAuditWithTextSnapshot(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	admin := createUser(t, g, "audit-admin@example.com", "auditadmin", "password123", true)
-	promoteAdmin(t, g, &admin)
-	adminToken := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "audit-admin@example.com", "auditadmin", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	adminToken := testutil.AccessToken(t, cfg, &admin)
 
 	createRole(t, r, adminToken, "support-audit", "客服支持")
 	grantPermissions(t, r, adminToken, "support-audit", []string{authz.PermUsersRead, authz.PermUsersCredits})
-	member := createUser(t, g, "audit-member@example.com", "auditmember", "password123", true)
+	member := testutil.CreateUser(t, g, "audit-member@example.com", "auditmember", "password123", true)
 	assignRole(t, r, adminToken, member.ID.String(), "support-audit")
 
 	var permissionLog model.AdminAuditLog
@@ -348,7 +348,7 @@ func TestRoleChangesWriteAuditWithTextSnapshot(t *testing.T) {
 
 	// 删除角色后，历史审计仍能还原角色名与权限。
 	assignRole(t, r, adminToken, member.ID.String(), "")
-	if w := doAuthJSON(r, http.MethodDelete, "/api/admin/roles/support-audit", adminToken, nil); w.Code != http.StatusNoContent {
+	if w := testutil.DoAuthJSON(r, http.MethodDelete, "/api/admin/roles/support-audit", adminToken, nil); w.Code != http.StatusNoContent {
 		t.Fatalf("删除角色失败: %d %s", w.Code, w.Body.String())
 	}
 	var deleteLog model.AdminAuditLog
@@ -367,18 +367,18 @@ func TestRoleChangesWriteAuditWithTextSnapshot(t *testing.T) {
 }
 
 func TestListPermissionsReturnsRegistry(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAdminAccessRouter(t, g, cfg)
-	admin := createUser(t, g, "perm-admin@example.com", "permadmin", "password123", true)
-	promoteAdmin(t, g, &admin)
-	token := accessToken(t, cfg, &admin)
+	admin := testutil.CreateUser(t, g, "perm-admin@example.com", "permadmin", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	token := testutil.AccessToken(t, cfg, &admin)
 
-	w := doAuthJSON(r, http.MethodGet, "/api/admin/permissions", token, nil)
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/permissions", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("读取权限清单失败: %d %s", w.Code, w.Body.String())
 	}
-	items := decodeItems(t, w)
+	items := testutil.DecodeItems(t, w)
 	total := 0
 	modules := map[string]bool{}
 	for _, group := range items {

@@ -1,18 +1,19 @@
-package handler
+package billing
 
 import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/cursor"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/billing"
+	"github.com/infinite-canvas/server/internal/platform/membership"
 	"github.com/infinite-canvas/server/internal/service"
 )
 
@@ -28,7 +29,7 @@ func NewCreditHandler(db *gorm.DB, registry *service.PaymentRegistry) *CreditHan
 }
 
 func (h *CreditHandler) GetBalance(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -50,17 +51,17 @@ func (h *CreditHandler) GetBalance(c *gin.Context) {
 		"purchasedMicros": balance.PurchasedMicros,
 		"grantedMicros":   balance.GrantedMicros,
 		"totalMicros":     balance.PurchasedMicros + balance.GrantedMicros,
-		"paidUntil":       formatTimePtr(latestPaidUntil(h.db, uid)),
+		"paidUntil":       httpx.FormatTimePtr(membership.LatestPaidUntil(h.db, uid)),
 		"recent":          transactionPayloads(recent),
 	})
 }
 
 func (h *CreditHandler) ListTransactions(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
-	size, err := parseCursorSize(c.Query("size"))
+	size, err := httpx.ParseCursorSize(c.Query("size"))
 	if err != nil {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"size": "size 必须是 1-100 的整数"}))
 		return
@@ -91,7 +92,7 @@ func transactionPayloads(items []model.CreditTransaction) []gin.H {
 			"type":               item.Type,
 			"amountMicros":       item.AmountMicros,
 			"balanceAfterMicros": item.BalanceAfterMicros,
-			"createdAt":          formatTime(item.CreatedAt),
+			"createdAt":          httpx.FormatTime(item.CreatedAt),
 		}
 		if item.RefType != "" {
 			payload["refType"] = item.RefType
@@ -157,16 +158,4 @@ func (h *CreditHandler) ListPlans(c *gin.Context) {
 		items = append(items, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
-}
-
-// parseCursorSize 解析游标分页的 size：缺省 20、上限 100。
-func parseCursorSize(raw string) (int, error) {
-	if raw == "" {
-		return 20, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > 100 {
-		return 0, errors.New("size 越界")
-	}
-	return n, nil
 }

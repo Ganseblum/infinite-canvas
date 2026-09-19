@@ -129,7 +129,7 @@ func TestEasyPayVerifyAndParse(t *testing.T) {
 	}
 
 	// 验签通过：GET 回调解析出统一结果。
-	r := httptest.NewRequest(http.MethodGet, "/api/payments/webhook/easypay?"+signedEasypayQuery(cloneStringMap(base)), nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/payments/webhook/easypay?"+signedEasypayQuery(cloneStringMap(base)), nil)
 	result, err := provider.VerifyAndParse(context.Background(), r)
 	if err != nil {
 		t.Fatalf("合法回调应验签通过: %v", err)
@@ -147,7 +147,7 @@ func TestEasyPayVerifyAndParse(t *testing.T) {
 	for name, value := range signed {
 		form.Set(name, value)
 	}
-	r = httptest.NewRequest(http.MethodPost, "/api/payments/webhook/easypay", strings.NewReader(form.Encode()))
+	r = httptest.NewRequest(http.MethodPost, "/api/v1/payments/webhook/easypay", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if _, err := provider.VerifyAndParse(context.Background(), r); err != nil {
 		t.Fatalf("POST 回调应验签通过: %v", err)

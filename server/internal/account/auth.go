@@ -1,4 +1,4 @@
-package handler
+package account
 
 import (
 	"context"
@@ -34,7 +34,7 @@ const (
 )
 
 var (
-	emailRe    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+	EmailRe    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 	usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
 )
 
@@ -150,7 +150,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	fields := map[string]string{}
-	if !emailRe.MatchString(strings.TrimSpace(req.Email)) {
+	if !EmailRe.MatchString(strings.TrimSpace(req.Email)) {
 		fields["email"] = "邮箱格式不正确"
 	}
 	if !usernameRe.MatchString(req.Username) {
@@ -203,11 +203,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return err
 	})
 	if err != nil {
-		if isUniqueViolation(err, "email") {
+		if errs.UniqueViolationColumn(err) == "email" {
 			errs.Abort(c, errs.ErrEmailTaken)
 			return
 		}
-		if isUniqueViolation(err, "username") {
+		if errs.UniqueViolationColumn(err) == "username" {
 			errs.Abort(c, errs.ErrUsernameTaken)
 			return
 		}
@@ -465,17 +465,6 @@ func userPayload(user *model.PlatformUser) gin.H {
 		"mustChangePassword": user.MustChangePassword,
 	}
 	return payload
-}
-
-// isDuplicateKey / isUniqueViolation 统一委托 errs 实现：
-// MySQL 按 1062 错误码并从报文取索引名映射列，SQLite 解析报错文案里的列名；
-// 不再拿报错文本去匹配「重复值」（用户名含 email 字样时会把 USERNAME_TAKEN 误判成 EMAIL_TAKEN）。
-func isDuplicateKey(err error) bool {
-	return errs.IsDuplicateKey(err)
-}
-
-func isUniqueViolation(err error, column string) bool {
-	return errs.UniqueViolationColumn(err) == column
 }
 
 // VerifyEmailSend 重发验证邮件（需登录）。

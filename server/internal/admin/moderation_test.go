@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"context"
@@ -8,16 +8,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/infinite-canvas/server/internal/ai"
+	"github.com/infinite-canvas/server/internal/authz"
+	"github.com/infinite-canvas/server/internal/canvas"
+	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/crypto"
+	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
 	"github.com/infinite-canvas/server/internal/platform/billing"
+	"github.com/infinite-canvas/server/internal/platform/identity"
 	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
 	"github.com/infinite-canvas/server/internal/service"
 	"github.com/infinite-canvas/server/internal/storage"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // newModerationForTest 组装使用 fake provider 的审核服务。
@@ -58,27 +66,27 @@ func seedModerationModel(t *testing.T, g *gorm.DB, channelID uuid.UUID) model.Mo
 }
 
 func TestModerationRejectsPromptBeforeReserve(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedModerationModel(t, g, channel.ID)
 	provider := &moderation.FakeProvider{RejectTexts: []string{"违禁词"}}
-	store := newFakeStorage("local")
+	store := testutil.NewFakeStorage("local")
 	moderationService := newModerationForTest(t, g, store, provider, "reject")
 	r, _ := newAITestRouterWithModeration(t, g, cfg, moderationService)
 
-	user := createUser(t, g, "modprompt@example.com", "modprompt", "password123", true)
+	user := testutil.CreateUser(t, g, "modprompt@example.com", "modprompt", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "moderation-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model": "moderation-image", "prompt": "包含违禁词的提示", "size": "1024x1024", "quality": "low",
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "mod-prompt-1",
 	})
-	if w.Code != http.StatusUnprocessableEntity || errorCode(t, w) != "CONTENT_REJECTED" {
+	if w.Code != http.StatusUnprocessableEntity || testutil.ErrorCode(t, w) != "CONTENT_REJECTED" {
 		t.Fatalf("违规提示词应 422 CONTENT_REJECTED, got %d %s", w.Code, w.Body.String())
 	}
 	// 不扣点、无消费流水、没有生成记录。
@@ -110,17 +118,17 @@ func TestModerationRejectsPromptBeforeReserve(t *testing.T) {
 }
 
 func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	store := newFakeStorage("local")
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	store := testutil.NewFakeStorage("local")
 	provider := &moderation.FakeProvider{RejectLabels: []string{"adult"}}
 	moderationService := newModerationForTest(t, g, store, provider, "reject")
 	r := newResourceRouterWithModeration(t, g, cfg, store, moderationService)
-	user := createUser(t, g, "modupload@example.com", "modupload", "password123", true)
-	token := accessToken(t, cfg, &user)
+	user := testutil.CreateUser(t, g, "modupload@example.com", "modupload", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
-	w := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"), "image/png", token, nil)
-	if w.Code != http.StatusUnprocessableEntity || errorCode(t, w) != "CONTENT_REJECTED" {
+	w := testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:ModUp1", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"), "image/png", token, nil)
+	if w.Code != http.StatusUnprocessableEntity || testutil.ErrorCode(t, w) != "CONTENT_REJECTED" {
 		t.Fatalf("违规上传应 422 CONTENT_REJECTED, got %d %s", w.Code, w.Body.String())
 	}
 	// 不写正式记录、不增加用量。
@@ -147,11 +155,11 @@ func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
 
 	// 审核通过后正常上传，同 storageKey 重试幂等。
 	provider.RejectLabels = nil
-	ok := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", testPNG, "image/png", token, nil)
+	ok := testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:ModUp1", testutil.TestPNG, "image/png", token, nil)
 	if ok.Code != http.StatusCreated {
 		t.Fatalf("通过审核的上传应 201, got %d %s", ok.Code, ok.Body.String())
 	}
-	okAgain := doRaw(r, http.MethodPut, "/api/media/image:ModUp1", testPNG, "image/png", token, nil)
+	okAgain := testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:ModUp1", testutil.TestPNG, "image/png", token, nil)
 	if okAgain.Code != http.StatusCreated {
 		t.Fatalf("重复上传应 201, got %d", okAgain.Code)
 	}
@@ -163,32 +171,32 @@ func TestModerationRejectsUploadWithoutQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取存储用量失败: %v", err)
 	}
-	if used != int64(len(testPNG)) {
+	if used != int64(len(testutil.TestPNG)) {
 		t.Fatalf("用量应只计正式对象, got %d", used)
 	}
 }
 
 func TestModerationFailModeRejectAndAllow(t *testing.T) {
 	// reject：审核服务故障返回 503，不预扣。
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedModerationModel(t, g, channel.ID)
 	provider := &moderation.FakeProvider{FailWith: errors.New("dial timeout")}
-	store := newFakeStorage("local")
+	store := testutil.NewFakeStorage("local")
 	r, _ := newAITestRouterWithModeration(t, g, cfg, newModerationForTest(t, g, store, provider, "reject"))
-	user := createUser(t, g, "modfail@example.com", "modfail", "password123", true)
+	user := testutil.CreateUser(t, g, "modfail@example.com", "modfail", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 	quote := mustQuote(t, r, token, "moderation-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
 
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model": "moderation-image", "prompt": "正常内容", "size": "1024x1024", "quality": "low",
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "mod-fail-1",
 	})
-	if w.Code != http.StatusServiceUnavailable || errorCode(t, w) != "MODERATION_UNAVAILABLE" {
+	if w.Code != http.StatusServiceUnavailable || testutil.ErrorCode(t, w) != "MODERATION_UNAVAILABLE" {
 		t.Fatalf("reject 模式下审核故障应 503, got %d %s", w.Code, w.Body.String())
 	}
 	balance, _ := billing.NewService(g, model.ProductCanvas).Balance(context.Background(), user.ID)
@@ -198,11 +206,11 @@ func TestModerationFailModeRejectAndAllow(t *testing.T) {
 
 	// allow：明确配置后放行，记录为 error 且继续生成。
 	provider2 := &moderation.FakeProvider{FailWith: errors.New("dial timeout")}
-	store2 := newFakeStorage("local")
+	store2 := testutil.NewFakeStorage("local")
 	provider2.RejectTexts = nil
 	r2, _ := newAITestRouterWithModeration(t, g, cfg, newModerationForTest(t, g, store2, provider2, "allow"))
 	quote2 := mustQuote(t, r2, token, "moderation-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
-	w2 := doAuthJSON(r2, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w2 := testutil.DoAuthJSON(r2, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model": "moderation-image", "prompt": "正常内容", "size": "1024x1024", "quality": "low",
 		"quoteToken": quote2["quoteToken"], "idempotencyKey": "mod-fail-2",
 	})
@@ -217,25 +225,25 @@ func TestModerationFailModeRejectAndAllow(t *testing.T) {
 }
 
 func TestModerationArtifactRejectedKeepsCredits(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedModerationModel(t, g, channel.ID)
 	provider := &moderation.FakeProvider{RejectLabels: []string{"adult"}}
-	store := newFakeStorage("local")
+	store := testutil.NewFakeStorage("local")
 	r, _ := newAITestRouterWithModeration(t, g, cfg, newModerationForTest(t, g, store, provider, "reject"))
-	user := createUser(t, g, "modartifact@example.com", "modartifact", "password123", true)
+	user := testutil.CreateUser(t, g, "modartifact@example.com", "modartifact", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 	quote := mustQuote(t, r, token, "moderation-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
 
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model": "moderation-image", "prompt": "正常提示词", "size": "1024x1024", "quality": "low",
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "mod-artifact-1",
 	})
-	if w.Code != http.StatusUnprocessableEntity || errorCode(t, w) != "CONTENT_REJECTED" {
+	if w.Code != http.StatusUnprocessableEntity || testutil.ErrorCode(t, w) != "CONTENT_REJECTED" {
 		t.Fatalf("违规产物应 422, got %d %s", w.Code, w.Body.String())
 	}
 	// 产物拒绝不退点：上游成本已经发生。
@@ -260,26 +268,26 @@ func TestModerationArtifactRejectedKeepsCredits(t *testing.T) {
 }
 
 func TestModerationReviewConflictAndCompensation(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedModerationModel(t, g, channel.ID)
 	provider := &moderation.FakeProvider{RejectTexts: []string{"违禁"}}
-	store := newFakeStorage("local")
+	store := testutil.NewFakeStorage("local")
 	moderationService := newModerationForTest(t, g, store, provider, "reject")
 	r, aiHandler := newAITestRouterWithModeration(t, g, cfg, moderationService)
 
-	admin := createUser(t, g, "adminmod@example.com", "adminmod", "password123", true)
-	promoteAdmin(t, g, &admin)
-	adminToken := accessToken(t, cfg, &admin)
-	user := createUser(t, g, "modreview@example.com", "modreview", "password123", true)
+	admin := testutil.CreateUser(t, g, "adminmod@example.com", "adminmod", "password123", true)
+	testutil.PromoteAdmin(t, g, &admin)
+	adminToken := testutil.AccessToken(t, cfg, &admin)
+	user := testutil.CreateUser(t, g, "modreview@example.com", "modreview", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "moderation-image", "image", map[string]any{"size": "1024x1024", "quality": "low"})
-	doAuthJSON(r, http.MethodPost, "/api/ai/images/generations", token, map[string]any{
+	testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/images/generations", token, map[string]any{
 		"model": "moderation-image", "prompt": "包含违禁内容", "size": "1024x1024", "quality": "low",
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "mod-review-1",
 	})
@@ -291,22 +299,22 @@ func TestModerationReviewConflictAndCompensation(t *testing.T) {
 	// 第一次复核成功。
 	adminRouter := r
 	_ = aiHandler
-	w := doAuthJSON(adminRouter, http.MethodPatch, "/api/admin/moderation/records/"+record.ID.String(), adminToken, map[string]any{
+	w := testutil.DoAuthJSON(adminRouter, http.MethodPatch, "/api/admin/moderation/records/"+record.ID.String(), adminToken, map[string]any{
 		"decision": "approved", "note": "误判，人工通过", "revision": record.ReviewRevision,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("复核应成功: %d %s", w.Code, w.Body.String())
 	}
 	// 第二个管理员用旧 revision 提交会冲突。
-	w = doAuthJSON(adminRouter, http.MethodPatch, "/api/admin/moderation/records/"+record.ID.String(), adminToken, map[string]any{
+	w = testutil.DoAuthJSON(adminRouter, http.MethodPatch, "/api/admin/moderation/records/"+record.ID.String(), adminToken, map[string]any{
 		"decision": "rejected", "note": "覆盖前一结论", "revision": record.ReviewRevision,
 	})
-	if w.Code != http.StatusConflict || errorCode(t, w) != "MODERATION_ALREADY_REVIEWED" {
+	if w.Code != http.StatusConflict || testutil.ErrorCode(t, w) != "MODERATION_ALREADY_REVIEWED" {
 		t.Fatalf("旧 revision 复核应 409, got %d %s", w.Code, w.Body.String())
 	}
 
 	// 补偿进入 granted 桶且幂等。
-	w = doAuthJSON(adminRouter, http.MethodPost, "/api/admin/moderation/records/"+record.ID.String()+"/compensate", adminToken, map[string]any{
+	w = testutil.DoAuthJSON(adminRouter, http.MethodPost, "/api/admin/moderation/records/"+record.ID.String()+"/compensate", adminToken, map[string]any{
 		"amountMicros": 100000, "note": "误判补偿",
 	})
 	if w.Code != http.StatusOK {
@@ -316,7 +324,7 @@ func TestModerationReviewConflictAndCompensation(t *testing.T) {
 	if balance.GrantedMicros != 100000 || balance.PurchasedMicros != 1_000_000 {
 		t.Fatalf("补偿应进入赠送桶且不改变付费身份: %+v", balance)
 	}
-	w = doAuthJSON(adminRouter, http.MethodPost, "/api/admin/moderation/records/"+record.ID.String()+"/compensate", adminToken, map[string]any{
+	w = testutil.DoAuthJSON(adminRouter, http.MethodPost, "/api/admin/moderation/records/"+record.ID.String()+"/compensate", adminToken, map[string]any{
 		"amountMicros": 100000, "note": "重复补偿",
 	})
 	if w.Code == http.StatusOK {
@@ -329,20 +337,122 @@ func TestModerationReviewConflictAndCompensation(t *testing.T) {
 }
 
 func TestModerationStatsAndNonAdminDenied(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	store := newFakeStorage("local")
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	store := testutil.NewFakeStorage("local")
 	provider := &moderation.FakeProvider{}
 	moderationService := newModerationForTest(t, g, store, provider, "reject")
 	r, _ := newAITestRouterWithModeration(t, g, cfg, moderationService)
-	user := createUser(t, g, "modstats@example.com", "modstats", "password123", true)
-	token := accessToken(t, cfg, &user)
+	user := testutil.CreateUser(t, g, "modstats@example.com", "modstats", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	// 非管理员访问审核接口一律 403。
 	for _, path := range []string{"/api/admin/moderation/records", "/api/admin/moderation/stats"} {
-		w := doAuthJSON(r, http.MethodGet, path, token, nil)
+		w := testutil.DoAuthJSON(r, http.MethodGet, path, token, nil)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("非管理员访问 %s 应 403, got %d", path, w.Code)
 		}
 	}
+}
+
+func seedPlatformChannel(t *testing.T, g *gorm.DB, baseURL, format string) model.PlatformChannel {
+	t.Helper()
+	cipher, err := crypto.New("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("初始化加密器失败: %v", err)
+	}
+	nonce, payload, err := cipher.Encrypt([]byte("test-api-key"))
+	if err != nil {
+		t.Fatalf("加密渠道密钥失败: %v", err)
+	}
+	channel := model.PlatformChannel{
+		ID:        uuid.New(),
+		Name:      "测试渠道",
+		BaseURL:   baseURL,
+		APIFormat: format,
+		Nonce:     nonce,
+		Payload:   payload,
+		Enabled:   true,
+	}
+	if err := g.Create(&channel).Error; err != nil {
+		t.Fatalf("写入渠道失败: %v", err)
+	}
+	return channel
+}
+
+// newAITestRouter 组装第四期路由与真实依赖，上游用注入的假服务器地址。
+
+// newAITestRouterWithModeration 组装 AI 生成与审核链路的测试引擎，与 ai 包同名夹具各自独立。
+func newAITestRouterWithModeration(t *testing.T, g *gorm.DB, cfg *config.Config, moderationService *service.ModerationService) (*gin.Engine, *ai.AIHandler) {
+	t.Helper()
+	cipher, err := crypto.New(cfg.CredentialKey)
+	if err != nil {
+		t.Fatalf("初始化加密器失败: %v", err)
+	}
+	upstream := service.NewUpstreamService(g, cipher, service.DefaultUpstreamTimeouts())
+	upstream.SetAllowPrivate(true) // 测试用 localhost 假上游
+	catalog := service.NewCatalogService(g, func() bool { return cfg.PromotionEnabled })
+	quotes := service.NewQuoteService(catalog, billing.NewService(g, model.ProductCanvas), cfg.JWTSecret)
+	store := testutil.NewFakeStorage("local")
+	aiHandler := ai.NewAIHandler(g, catalog, quotes, upstream, store, "http://localhost:3000", moderationService)
+
+	r := gin.New()
+	if err := r.SetTrustedProxies(nil); err != nil {
+		t.Fatalf("设置可信代理失败: %v", err)
+	}
+	secret := []byte(cfg.JWTSecret)
+	api := r.Group("/api/v1")
+	aiRoutes := api.Group("/ai", middleware.Auth(secret))
+	aiRoutes.POST("/quote", aiHandler.Quote)
+	aiRoutes.POST("/images/generations", aiHandler.Images)
+	aiRoutes.POST("/videos/generations", aiHandler.CreateVideo)
+	aiRoutes.GET("/videos/tasks/:id", aiHandler.VideoTask)
+	aiRoutes.POST("/audio/speech", aiHandler.Speech)
+	aiRoutes.POST("/chat/completions", aiHandler.Chat)
+
+	generationHandler := canvas.NewGenerationHandler(g)
+	generations := api.Group("/generations", middleware.Auth(secret))
+	generations.GET("", generationHandler.List)
+	generations.GET("/:id", generationHandler.Get)
+	generations.DELETE("/:id", generationHandler.Delete)
+
+	adminHandler := NewAdminHandlerWithUpstream(g, cfg, store, upstream)
+	if moderationService != nil {
+		adminHandler.SetModeration(moderationService)
+	}
+	adminRoutes := r.Group("/api/admin", middleware.Auth(secret), middleware.LoadAdminAccess(identity.NewService(g), g))
+	adminRoutes.GET("/moderation/records", middleware.RequirePermission(authz.PermModerationRead), adminHandler.ListModerationRecords)
+	adminRoutes.GET("/moderation/records/:id", middleware.RequirePermission(authz.PermModerationRead), adminHandler.GetModerationRecord)
+	adminRoutes.GET("/moderation/records/:id/preview", middleware.RequirePermission(authz.PermModerationRead), adminHandler.PreviewModerationArtifact)
+	adminRoutes.PATCH("/moderation/records/:id", middleware.RequirePermission(authz.PermModerationReview), adminHandler.ReviewModerationRecord)
+	adminRoutes.POST("/moderation/records/:id/compensate", middleware.RequirePermission(authz.PermModerationCompensate), adminHandler.CompensateModeration)
+	adminRoutes.GET("/moderation/stats", middleware.RequirePermission(authz.PermModerationRead), adminHandler.ModerationStats)
+	return r, aiHandler
+}
+
+func seedCredits(t *testing.T, g *gorm.DB, userID uuid.UUID, purchased int64) {
+	t.Helper()
+	points := billing.NewService(g, model.ProductCanvas)
+	if err := points.EnsureAccount(g, userID); err != nil {
+		t.Fatalf("建账本行失败: %v", err)
+	}
+	if purchased == 0 {
+		return
+	}
+	if err := points.Purchase(g, &model.Order{
+		ID: uuid.New(), UserID: userID, PurchasedMicros: purchased,
+	}, time.Now()); err != nil {
+		t.Fatalf("入账失败: %v", err)
+	}
+}
+
+func mustQuote(t *testing.T, r *gin.Engine, token, modelName, capability string, params map[string]any) map[string]any {
+	t.Helper()
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/quote", token, map[string]any{
+		"model": modelName, "capability": capability, "params": params,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("获取报价失败: code=%d body=%s", w.Code, w.Body.String())
+	}
+	return testutil.DecodeBody(t, w)
 }

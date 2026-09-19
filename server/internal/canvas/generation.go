@@ -1,4 +1,4 @@
-package handler
+package canvas
 
 import (
 	"encoding/base64"
@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 )
 
@@ -33,7 +34,7 @@ type GenerationHandler struct {
 func NewGenerationHandler(db *gorm.DB) *GenerationHandler { return &GenerationHandler{db: db} }
 
 func (h *GenerationHandler) List(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -114,7 +115,7 @@ func (h *GenerationHandler) List(c *gin.Context) {
 }
 
 func (h *GenerationHandler) Get(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -133,7 +134,7 @@ func (h *GenerationHandler) Get(c *gin.Context) {
 }
 
 func (h *GenerationHandler) Delete(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -159,16 +160,16 @@ func (h *GenerationHandler) Delete(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 func parseGenerationSize(c *gin.Context) (int, bool) {
 	raw := c.Query("size")
 	if raw == "" {
-		return defaultPageSize, true
+		return httpx.DefaultPageSize, true
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > maxPageSize {
+	if err != nil || n < 1 || n > httpx.MaxPageSize {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"size": "size 必须是 1-100 的整数"}))
 		return 0, false
 	}
@@ -223,6 +224,6 @@ func generationPayload(item model.Generation) gin.H {
 		"isAIGC": true,
 		// 审核结论随记录透出，用户能看到自己的生成内容是否通过审核（差异清单 #119）。
 		"moderationStatus": item.ModerationStatus,
-		"createdAt":        formatTime(item.CreatedAt),
+		"createdAt":        httpx.FormatTime(item.CreatedAt),
 	}
 }

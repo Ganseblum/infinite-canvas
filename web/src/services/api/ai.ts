@@ -268,7 +268,7 @@ async function authedFetch(path: string, body: unknown, signal: AbortSignal | un
     const headers = new Headers({ "Content-Type": "application/json", Accept: "text/event-stream" });
     const accessToken = useAuthStore.getState().accessToken;
     if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-    const response = await fetch(`${API_BASE_URL}/api${path}`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1${path}`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),

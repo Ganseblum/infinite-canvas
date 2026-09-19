@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"errors"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/service"
@@ -326,7 +327,7 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 // errRoleHasMembers 表示角色仍有成员，删除被拒。
@@ -422,8 +423,8 @@ func rolePayload(role model.Role, permissions []string, memberCount int64) gin.H
 		"isSystem":    role.IsSystem,
 		"memberCount": memberCount,
 		"permissions": permissions,
-		"createdAt":   formatTime(role.CreatedAt),
-		"updatedAt":   formatTime(role.UpdatedAt),
+		"createdAt":   httpx.FormatTime(role.CreatedAt),
+		"updatedAt":   httpx.FormatTime(role.UpdatedAt),
 	}
 }
 

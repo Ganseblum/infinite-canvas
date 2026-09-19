@@ -1,4 +1,4 @@
-package handler
+package account
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/testutil"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -30,14 +31,14 @@ func seedFreeTrialCatalog(t *testing.T, g *gorm.DB) {
 }
 
 func TestFreeGrantClaimIsIdempotent(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAccountRouter(t, g, cfg)
 	seedFreeTrialCatalog(t, g)
-	user := createUser(t, g, "grant@example.com", "grantuser", "password123", true)
-	token := accessToken(t, cfg, &user)
+	user := testutil.CreateUser(t, g, "grant@example.com", "grantuser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/me/free-grant/claim", token, nil)
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/free-grant/claim", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("首次领取失败: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -49,7 +50,7 @@ func TestFreeGrantClaimIsIdempotent(t *testing.T) {
 		t.Fatalf("首次领取应返回 granted, got %v", first["status"])
 	}
 
-	w = doAuthJSON(r, http.MethodPost, "/api/me/free-grant/claim", token, nil)
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/free-grant/claim", token, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("重复领取应返回既有结论, code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -71,26 +72,26 @@ func TestFreeGrantClaimIsIdempotent(t *testing.T) {
 }
 
 func TestFreeGrantRiskThresholdDenies(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAccountRouter(t, g, cfg)
 	seedFreeTrialCatalog(t, g)
 
-	first := createUser(t, g, "risk-first@example.com", "riskfirst", "password123", true)
-	second := createUser(t, g, "risk-second@example.com", "risksecond", "password123", true)
+	first := testutil.CreateUser(t, g, "risk-first@example.com", "riskfirst", "password123", true)
+	second := testutil.CreateUser(t, g, "risk-second@example.com", "risksecond", "password123", true)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/me/free-grant/claim", accessToken(t, cfg, &first), nil)
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/free-grant/claim", testutil.AccessToken(t, cfg, &first), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("首个账号领取应成功: code=%d body=%s", w.Code, w.Body.String())
 	}
 
 	// 同一 UA/IP 的第二个账号风险分提高，用可配置阈值触发拒绝
 	cfg.FreeGrantRiskThreshold = 30
-	w = doAuthJSON(r, http.MethodPost, "/api/me/free-grant/claim", accessToken(t, cfg, &second), nil)
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/free-grant/claim", testutil.AccessToken(t, cfg, &second), nil)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("风险评分达到阈值应拒绝, got %d body=%s", w.Code, w.Body.String())
 	}
-	if code := errorCode(t, w); code != "FREE_GRANT_UNAVAILABLE" {
+	if code := testutil.ErrorCode(t, w); code != "FREE_GRANT_UNAVAILABLE" {
 		t.Fatalf("风控拒绝应返回 FREE_GRANT_UNAVAILABLE, got %s", code)
 	}
 	var denied model.FreeGrantClaim
@@ -103,26 +104,26 @@ func TestFreeGrantRiskThresholdDenies(t *testing.T) {
 }
 
 func TestFreeGrantDailyBudgetDenies(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.FreeGrantDailyBudgetMicros = 100
 	r := newAccountRouter(t, g, cfg)
 	seedFreeTrialCatalog(t, g)
 
-	first := createUser(t, g, "budget-first@example.com", "budgetfirst", "password123", true)
-	second := createUser(t, g, "budget-second@example.com", "budgetsecond", "password123", true)
+	first := testutil.CreateUser(t, g, "budget-first@example.com", "budgetfirst", "password123", true)
+	second := testutil.CreateUser(t, g, "budget-second@example.com", "budgetsecond", "password123", true)
 
-	w := doAuthJSON(r, http.MethodPost, "/api/me/free-grant/claim", accessToken(t, cfg, &first), nil)
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/free-grant/claim", testutil.AccessToken(t, cfg, &first), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("预算内首个账号领取应成功: code=%d body=%s", w.Code, w.Body.String())
 	}
 
 	// 单次领取消耗固定成本，第二个账号已无当日预算
-	w = doAuthJSON(r, http.MethodPost, "/api/me/free-grant/claim", accessToken(t, cfg, &second), nil)
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/free-grant/claim", testutil.AccessToken(t, cfg, &second), nil)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("预算耗尽应拒绝, got %d body=%s", w.Code, w.Body.String())
 	}
-	if code := errorCode(t, w); code != "FREE_GRANT_UNAVAILABLE" {
+	if code := testutil.ErrorCode(t, w); code != "FREE_GRANT_UNAVAILABLE" {
 		t.Fatalf("预算拒绝应返回 FREE_GRANT_UNAVAILABLE, got %s", code)
 	}
 	var denied model.FreeGrantClaim
@@ -135,12 +136,12 @@ func TestFreeGrantDailyBudgetDenies(t *testing.T) {
 }
 
 func TestFreeGrantClaimConcurrentUniqueConstraint(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	r := newAccountRouter(t, g, cfg)
 	seedFreeTrialCatalog(t, g)
-	user := createUser(t, g, "grant-race@example.com", "grantrace", "password123", true)
-	token := accessToken(t, cfg, &user)
+	user := testutil.CreateUser(t, g, "grant-race@example.com", "grantrace", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	var wg sync.WaitGroup
 	codes := make([]int, 2)
@@ -148,7 +149,7 @@ func TestFreeGrantClaimConcurrentUniqueConstraint(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			codes[i] = doAuthJSON(r, http.MethodPost, "/api/me/free-grant/claim", token, nil).Code
+			codes[i] = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/me/free-grant/claim", token, nil).Code
 		}(i)
 	}
 	wg.Wait()

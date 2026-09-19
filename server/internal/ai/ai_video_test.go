@@ -1,4 +1,4 @@
-package handler
+package ai
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // fakeVideoUpstream 模拟视频任务：创建返回任务 id，查询返回可下载的结果地址。
@@ -67,31 +68,31 @@ func newVideoTaskService(t *testing.T, g *gorm.DB, cfg *config.Config, router *g
 	}
 	upstream := service.NewUpstreamService(g, cipher, service.DefaultUpstreamTimeouts())
 	upstream.SetAllowPrivate(true)
-	media := service.NewMediaWriteService(g, newFakeStorage("local"))
+	media := service.NewMediaWriteService(g, testutil.NewFakeStorage("local"))
 	return service.NewAITaskService(g, upstream, media), ""
 }
 
 func TestVideoTaskLifecycleAndRefund(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 	upstream := fakeVideoUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedVideoModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "video@example.com", "videouser", "password123", true)
+	user := testutil.CreateUser(t, g, "video@example.com", "videouser", "password123", true)
 	seedCredits(t, g, user.ID, 5_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "test-video", "video", map[string]any{"resolution": "480p", "duration": "4", "ratio": "16:9"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/videos/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/videos/generations", token, map[string]any{
 		"model": "test-video", "prompt": "镜头推进", "resolution": "480p", "duration": 4, "ratio": "16:9",
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "video-1",
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("创建视频任务失败: %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	taskID, _ := body["taskId"].(string)
 	if taskID == "" || body["status"] != "pending" {
 		t.Fatalf("任务创建响应不完整: %v", body)
@@ -128,19 +129,19 @@ func TestVideoTaskLifecycleAndRefund(t *testing.T) {
 	}
 
 	// 查询接口返回任务与产物。
-	query := doAuthJSON(r, http.MethodGet, "/api/ai/videos/tasks/"+taskID, token, nil)
+	query := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/ai/videos/tasks/"+taskID, token, nil)
 	if query.Code != http.StatusOK {
 		t.Fatalf("查询任务失败: %d %s", query.Code, query.Body.String())
 	}
-	view := decodeBody(t, query)
+	view := testutil.DecodeBody(t, query)
 	if view["status"] != "succeeded" || view["video"] == nil {
 		t.Fatalf("查询应返回产物: %v", view)
 	}
 }
 
 func TestVideoTaskFailureRefundsOnce(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 	// 上游任务固定失败。
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,19 +151,19 @@ func TestVideoTaskFailureRefundsOnce(t *testing.T) {
 	channel := seedPlatformChannel(t, g, failing.URL, "openai")
 	seedVideoModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "videofail@example.com", "videofailuser", "password123", true)
+	user := testutil.CreateUser(t, g, "videofail@example.com", "videofailuser", "password123", true)
 	seedCredits(t, g, user.ID, 5_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "test-video", "video", map[string]any{"resolution": "480p", "duration": "4"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/videos/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/videos/generations", token, map[string]any{
 		"model": "test-video", "prompt": "会失败", "resolution": "480p", "duration": 4,
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "video-fail-1",
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("创建任务失败: %d %s", w.Code, w.Body.String())
 	}
-	taskID := decodeBody(t, w)["taskId"].(string)
+	taskID := testutil.DecodeBody(t, w)["taskId"].(string)
 	taskUUID, _ := uuid.Parse(taskID)
 	var task model.AITask
 	if err := g.First(&task, "id = ?", taskUUID).Error; err != nil {
@@ -194,10 +195,10 @@ func TestVideoTaskFailureRefundsOnce(t *testing.T) {
 }
 
 func TestChatNonStreamAndRequestConvergence(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
-	upstream := fakeOpenAIUpstream(t)
+	upstream := testutil.FakeOpenAIUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	channelIDs, _ := json.Marshal([]uuid.UUID{channel.ID})
 	textModel := model.ModelCatalog{
@@ -211,19 +212,19 @@ func TestChatNonStreamAndRequestConvergence(t *testing.T) {
 		t.Fatalf("写入文本模型失败: %v", err)
 	}
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "chat2@example.com", "chatuser2", "password123", true)
+	user := testutil.CreateUser(t, g, "chat2@example.com", "chatuser2", "password123", true)
 	seedCredits(t, g, user.ID, 1_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "test-text2", "text", map[string]any{})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/chat/completions", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/chat/completions", token, map[string]any{
 		"model": "test-text2", "messages": []map[string]any{{"role": "user", "content": "你好"}},
 		"stream": false, "quoteToken": quote["quoteToken"], "idempotencyKey": "chat-nonstream-1",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("非流式对话失败: %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	if body["content"] != "你好，世界" {
 		t.Fatalf("内容错误: %v", body)
 	}
@@ -275,35 +276,35 @@ func cryptoForTest(t *testing.T) (*crypto.Cipher, error) {
 }
 
 func TestVideoGenerationRecordCarriesTaskHandle(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.CredentialKey = "0123456789abcdef0123456789abcdef"
 	upstream := fakeVideoUpstream(t)
 	channel := seedPlatformChannel(t, g, upstream.URL, "openai")
 	seedVideoModel(t, g, channel.ID)
 	r, _ := newAITestRouter(t, g, cfg)
-	user := createUser(t, g, "videohandle@example.com", "videohandle", "password123", true)
+	user := testutil.CreateUser(t, g, "videohandle@example.com", "videohandle", "password123", true)
 	seedCredits(t, g, user.ID, 5_000_000)
-	token := accessToken(t, cfg, &user)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	quote := mustQuote(t, r, token, "test-video", "video", map[string]any{"resolution": "480p", "duration": "4"})
-	w := doAuthJSON(r, http.MethodPost, "/api/ai/videos/generations", token, map[string]any{
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/ai/videos/generations", token, map[string]any{
 		"model": "test-video", "prompt": "刷新续跑", "resolution": "480p", "duration": 4,
 		"quoteToken": quote["quoteToken"], "idempotencyKey": "video-handle-1",
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("创建任务失败: %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	taskID := body["taskId"].(string)
 	generationID := body["generationId"].(string)
 
 	// 前端刷新后按生成记录恢复轮询：result.task 必须带 id 与 model。
-	list := doAuthJSON(r, http.MethodGet, "/api/generations?kind=video&status=pending", token, nil)
+	list := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/generations?kind=video&status=pending", token, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("查询待处理生成记录失败: %d %s", list.Code, list.Body.String())
 	}
-	items := decodeItems(t, list)
+	items := testutil.DecodeItems(t, list)
 	if len(items) != 1 || items[0]["id"] != generationID {
 		t.Fatalf("应有一条 pending 生成记录: %v", items)
 	}

@@ -1,4 +1,4 @@
-package handler
+package account
 
 import (
 	"encoding/json"
@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 func TestRegisterVerifyLoginRefreshLogout(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	logs := captureLogs(t)
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	logs := testutil.CaptureLogs(t)
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	_, sess, _ := registerUser(t, r, "alice@example.com", "alice", "password123")
@@ -32,8 +33,8 @@ func TestRegisterVerifyLoginRefreshLogout(t *testing.T) {
 	}
 
 	// 邮箱验证
-	token := lastEmailToken(t, logs)
-	w := doJSON(r, http.MethodPost, "/api/auth/verify-email", map[string]string{"token": token})
+	token := testutil.LastEmailToken(t, logs)
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{"token": token})
 	if w.Code != http.StatusOK {
 		t.Fatalf("验证邮箱失败: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -47,73 +48,73 @@ func TestRegisterVerifyLoginRefreshLogout(t *testing.T) {
 	}
 
 	// 令牌一次性
-	w = doJSON(r, http.MethodPost, "/api/auth/verify-email", map[string]string{"token": token})
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{"token": token})
 	if w.Code != http.StatusGone {
 		t.Fatalf("重复使用验证令牌应返回 410, got %d body=%s", w.Code, w.Body.String())
 	}
 
 	// 登录
-	w = doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "alice@example.com", "password": "password123"})
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/login", map[string]string{"account": "alice@example.com", "password": "password123"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("登录失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	loginCookie := findCookie(w, RefreshCookieName)
+	loginCookie := testutil.FindCookie(w, RefreshCookieName)
 	if loginCookie == nil {
 		t.Fatal("登录未下发 refresh cookie")
 	}
 
 	// 刷新并轮换
-	w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, loginCookie)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, loginCookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("刷新失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	rotated := findCookie(w, RefreshCookieName)
+	rotated := testutil.FindCookie(w, RefreshCookieName)
 	if rotated == nil || rotated.Value == loginCookie.Value {
 		t.Fatal("刷新应轮换 refresh token")
 	}
 
 	// 登出
-	w = doJSON(r, http.MethodPost, "/api/auth/logout", nil, rotated)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/logout", nil, rotated)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("登出失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	if cleared := findCookie(w, RefreshCookieName); cleared == nil || cleared.MaxAge >= 0 {
+	if cleared := testutil.FindCookie(w, RefreshCookieName); cleared == nil || cleared.MaxAge >= 0 {
 		t.Fatal("登出应清除 refresh cookie")
 	}
 
 	// 已登出的令牌不可再用
-	w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, rotated)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, rotated)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("登出后刷新应返回 401, got %d", w.Code)
 	}
 }
 
 func TestRefreshReuseRevokesAllTokens(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	_, sess, c1 := registerUser(t, r, "reuse@example.com", "reuseuser", "password123")
 
-	w := doJSON(r, http.MethodPost, "/api/auth/refresh", nil, c1)
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, c1)
 	if w.Code != http.StatusOK {
 		t.Fatalf("首次刷新失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	c2 := findCookie(w, RefreshCookieName)
+	c2 := testutil.FindCookie(w, RefreshCookieName)
 	if c2 == nil {
 		t.Fatal("刷新未下发新 cookie")
 	}
 
 	// 复用已轮换的旧令牌：真正复用应撤销全部令牌并清除 cookie
-	w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, c1)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, c1)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("复用已撤销令牌应返回 401, got %d", w.Code)
 	}
-	if code := errorCode(t, w); code != "UNAUTHORIZED" {
+	if code := testutil.ErrorCode(t, w); code != "UNAUTHORIZED" {
 		t.Fatalf("复用检测应返回 UNAUTHORIZED, got %s", code)
 	}
-	if cleared := findCookie(w, RefreshCookieName); cleared == nil || cleared.MaxAge >= 0 {
+	if cleared := testutil.FindCookie(w, RefreshCookieName); cleared == nil || cleared.MaxAge >= 0 {
 		t.Fatal("复用检测应下发清 cookie")
 	}
 
@@ -128,30 +129,30 @@ func TestRefreshReuseRevokesAllTokens(t *testing.T) {
 	}
 
 	// 轮换出来的新令牌同样已被撤销
-	w = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, c2)
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, c2)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("全部撤销后刷新应返回 401, got %d", w.Code)
 	}
 }
 
 func TestConcurrentRefreshOnlyOneSucceeds(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	_, _, cookie := registerUser(t, r, "race@example.com", "raceuser", "password123")
 
 	// 保证所有请求都读到轮换前的令牌状态，稳定命中并发竞争失败分支
 	const n = 5
-	refreshReadBarrier(g, n)
+	testutil.RefreshReadBarrier(g, n)
 	responses := make([]*httptest.ResponseRecorder, n)
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			responses[i] = doJSON(r, http.MethodPost, "/api/auth/refresh", nil, cookie)
+			responses[i] = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, cookie)
 		}(i)
 	}
 	wg.Wait()
@@ -167,7 +168,7 @@ func TestConcurrentRefreshOnlyOneSucceeds(t *testing.T) {
 			}
 			winner = i
 		case http.StatusUnauthorized:
-			if code := errorCode(t, w); code != "UNAUTHORIZED" {
+			if code := testutil.ErrorCode(t, w); code != "UNAUTHORIZED" {
 				t.Fatalf("竞争失败应返回 UNAUTHORIZED, got %s", code)
 			}
 		default:
@@ -183,37 +184,37 @@ func TestConcurrentRefreshOnlyOneSucceeds(t *testing.T) {
 		if i == winner {
 			continue
 		}
-		if c := findCookie(w, RefreshCookieName); c != nil {
+		if c := testutil.FindCookie(w, RefreshCookieName); c != nil {
 			t.Fatalf("竞争失败响应不应携带 refresh cookie, got %+v", c)
 		}
 	}
 
 	// 胜者拿到的新 refresh cookie 之后仍能成功刷新（旧实现会误伤胜者会话）
-	rotated := findCookie(responses[winner], RefreshCookieName)
+	rotated := testutil.FindCookie(responses[winner], RefreshCookieName)
 	if rotated == nil || rotated.Value == cookie.Value {
 		t.Fatal("胜者应拿到轮换后的新 refresh cookie")
 	}
-	w := doJSON(r, http.MethodPost, "/api/auth/refresh", nil, rotated)
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/refresh", nil, rotated)
 	if w.Code != http.StatusOK {
 		t.Fatalf("胜者的新 refresh cookie 应可继续刷新, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 
 func TestLoginLocksAfterFiveFailures(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	createUser(t, g, "lock@example.com", "lockuser", "password123", false)
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	testutil.CreateUser(t, g, "lock@example.com", "lockuser", "password123", false)
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	for i := 0; i < 5; i++ {
-		w := doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "lock@example.com", "password": "wrong-password"})
+		w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/login", map[string]string{"account": "lock@example.com", "password": "wrong-password"})
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("第 %d 次失败登录应返回 401, got %d body=%s", i+1, w.Code, w.Body.String())
 		}
 	}
 
-	w := doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "lock@example.com", "password": "password123"})
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/login", map[string]string{"account": "lock@example.com", "password": "password123"})
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("连续 5 次失败后应锁定, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -223,22 +224,22 @@ func TestLoginLocksAfterFiveFailures(t *testing.T) {
 }
 
 func TestLoginSuccessResetsFailureCount(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	createUser(t, g, "reset@example.com", "resetuser", "password123", false)
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	testutil.CreateUser(t, g, "reset@example.com", "resetuser", "password123", false)
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	wrong := func() {
 		t.Helper()
-		w := doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "reset@example.com", "password": "wrong-password"})
+		w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/login", map[string]string{"account": "reset@example.com", "password": "wrong-password"})
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("失败登录应返回 401, got %d", w.Code)
 		}
 	}
 	right := func() {
 		t.Helper()
-		w := doJSON(r, http.MethodPost, "/api/auth/login", map[string]string{"account": "reset@example.com", "password": "password123"})
+		w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/login", map[string]string{"account": "reset@example.com", "password": "password123"})
 		if w.Code != http.StatusOK {
 			t.Fatalf("成功登录应返回 200, got %d body=%s", w.Code, w.Body.String())
 		}
@@ -258,25 +259,25 @@ func TestLoginSuccessResetsFailureCount(t *testing.T) {
 // TestConcurrentEmailVerifyOnlyOneSucceeds 并发验证邮箱：同一令牌只能被消费一次，
 // 竞争失败方返回 410 TOKEN_INVALID，且不影响胜者完成验证。
 func TestConcurrentEmailVerifyOnlyOneSucceeds(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	logs := captureLogs(t)
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	logs := testutil.CaptureLogs(t)
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	_, _, _ = registerUser(t, r, "racetoken@example.com", "racetoken", "password123")
-	token := lastEmailToken(t, logs)
+	token := testutil.LastEmailToken(t, logs)
 
 	// 保证所有请求都读完令牌后再竞争写入
 	const n = 3
-	tableReadBarrier(g, "email_tokens", n)
+	testutil.TableReadBarrier(g, "email_tokens", n)
 	responses := make([]*httptest.ResponseRecorder, n)
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			responses[i] = doJSON(r, http.MethodPost, "/api/auth/verify-email", map[string]string{"token": token})
+			responses[i] = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{"token": token})
 		}(i)
 	}
 	wg.Wait()
@@ -290,7 +291,7 @@ func TestConcurrentEmailVerifyOnlyOneSucceeds(t *testing.T) {
 			}
 			winner = 1
 		case http.StatusGone:
-			if code := errorCode(t, w); code != "TOKEN_INVALID" {
+			if code := testutil.ErrorCode(t, w); code != "TOKEN_INVALID" {
 				t.Fatalf("竞争失败应返回 TOKEN_INVALID, got %s", code)
 			}
 		default:
@@ -311,16 +312,16 @@ func TestConcurrentEmailVerifyOnlyOneSucceeds(t *testing.T) {
 
 // TestEmailTokenTTLByPurpose 重置密码令牌 1 小时、验证邮件 24 小时，邮件文案与之一致。
 func TestEmailTokenTTLByPurpose(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	logs := captureLogs(t)
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	logs := testutil.CaptureLogs(t)
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
-	user := createUser(t, g, "ttl@example.com", "ttluser", "password123", false)
+	user := testutil.CreateUser(t, g, "ttl@example.com", "ttluser", "password123", false)
 
 	// 重置密码令牌 1 小时
-	w := doJSON(r, http.MethodPost, "/api/auth/password/forgot", map[string]string{"email": "ttl@example.com"})
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "ttl@example.com"})
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("找回密码应返回 204, got %d", w.Code)
 	}
@@ -336,7 +337,7 @@ func TestEmailTokenTTLByPurpose(t *testing.T) {
 	}
 
 	// 验证邮件令牌 24 小时
-	w = doAuthJSON(r, http.MethodPost, "/api/auth/verify-email/send", accessToken(t, cfg, &user), nil)
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/auth/verify-email/send", testutil.AccessToken(t, cfg, &user), nil)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("重发验证邮件应返回 204, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -353,13 +354,13 @@ func TestEmailTokenTTLByPurpose(t *testing.T) {
 }
 
 func TestRegisterRateLimitByIP(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	for i := 0; i < 10; i++ {
-		w := doJSON(r, http.MethodPost, "/api/auth/register", map[string]string{
+		w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/register", map[string]string{
 			"email":    fmt.Sprintf("reg%d@example.com", i),
 			"username": fmt.Sprintf("reguser%d", i),
 			"password": "password123",
@@ -369,7 +370,7 @@ func TestRegisterRateLimitByIP(t *testing.T) {
 		}
 	}
 
-	w := doJSON(r, http.MethodPost, "/api/auth/register", map[string]string{
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/register", map[string]string{
 		"email": "reg-limit@example.com", "username": "reglimit", "password": "password123",
 	})
 	if w.Code != http.StatusTooManyRequests {
@@ -381,24 +382,24 @@ func TestRegisterRateLimitByIP(t *testing.T) {
 }
 
 func TestMailRateLimitByEmail(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	// 找回密码：同邮箱 3 次/小时
 	for i := 0; i < 3; i++ {
-		w := doJSON(r, http.MethodPost, "/api/auth/password/forgot", map[string]string{"email": "forgot@example.com"})
+		w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "forgot@example.com"})
 		if w.Code != http.StatusNoContent {
 			t.Fatalf("第 %d 次找回密码应返回 204, got %d", i+1, w.Code)
 		}
 	}
-	w := doJSON(r, http.MethodPost, "/api/auth/password/forgot", map[string]string{"email": "forgot@example.com"})
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "forgot@example.com"})
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("同一邮箱第 4 次找回密码应被限流, got %d", w.Code)
 	}
 	// 不存在的邮箱也一视同仁，且换邮箱不受影响
-	w = doJSON(r, http.MethodPost, "/api/auth/password/forgot", map[string]string{"email": "other@example.com"})
+	w = testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "other@example.com"})
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("换邮箱应可继续发送, got %d", w.Code)
 	}
@@ -406,32 +407,32 @@ func TestMailRateLimitByEmail(t *testing.T) {
 	// 重发验证邮件：同邮箱 3 次/小时
 	_, sess, _ := registerUser(t, r, "verify@example.com", "verifyuser", "password123")
 	for i := 0; i < 3; i++ {
-		w := doAuthJSON(r, http.MethodPost, "/api/auth/verify-email/send", sess.AccessToken, nil)
+		w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/auth/verify-email/send", sess.AccessToken, nil)
 		if w.Code != http.StatusNoContent {
 			t.Fatalf("第 %d 次重发验证邮件应返回 204, got %d body=%s", i+1, w.Code, w.Body.String())
 		}
 	}
-	w = doAuthJSON(r, http.MethodPost, "/api/auth/verify-email/send", sess.AccessToken, nil)
+	w = testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/auth/verify-email/send", sess.AccessToken, nil)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("同一邮箱第 4 次重发验证邮件应被限流, got %d", w.Code)
 	}
 }
 
 func TestMailRateLimitByIP(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	h := NewAuthHandler(g, cfg, testMailer())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	h := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newAuthRouter(t, cfg, h)
 
 	for i := 0; i < 10; i++ {
-		w := doJSON(r, http.MethodPost, "/api/auth/password/forgot", map[string]string{
+		w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{
 			"email": fmt.Sprintf("mail%d@example.com", i),
 		})
 		if w.Code != http.StatusNoContent {
 			t.Fatalf("第 %d 次发信应返回 204, got %d", i+1, w.Code)
 		}
 	}
-	w := doJSON(r, http.MethodPost, "/api/auth/password/forgot", map[string]string{"email": "mail-limit@example.com"})
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "mail-limit@example.com"})
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("同 IP 第 11 次发信应被限流, got %d", w.Code)
 	}

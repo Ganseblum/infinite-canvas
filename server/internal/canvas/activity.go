@@ -1,9 +1,12 @@
-package handler
+package canvas
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -301,6 +304,15 @@ func (h *ActivityHandler) BindInvite(c *gin.Context) {
 // withinInviteDailyBudget 与免费领取共用 FREE_GRANT_DAILY_BUDGET_MICROS：
 // 当日已发出的邀请奖励与免费领取估算成本合并计入，超出则拒绝本次绑定。
 // 统计落库（而非进程内存），重启与多实例口径一致，日界按 UTC+8。
+// randomInviteCode 生成短邀请码，使用 URL 安全字符集。
+func randomInviteCode() string {
+	buffer := make([]byte, 9)
+	if _, err := rand.Read(buffer); err != nil {
+		return strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	}
+	return base64.RawURLEncoding.EncodeToString(buffer)
+}
+
 func (h *ActivityHandler) withinInviteDailyBudget(bindCostMicros int64) bool {
 	if h.cfg.FreeGrantDailyBudgetMicros <= 0 {
 		return false
@@ -308,8 +320,8 @@ func (h *ActivityHandler) withinInviteDailyBudget(bindCostMicros int64) bool {
 	if bindCostMicros <= 0 {
 		return true
 	}
-	now := time.Now().In(statZone)
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, statZone)
+	now := time.Now().In(model.StatZone)
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, model.StatZone)
 	dayEnd := dayStart.Add(24 * time.Hour)
 	var invites int64
 	if err := h.db.Model(&model.UserInvite{}).

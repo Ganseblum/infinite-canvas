@@ -6,11 +6,11 @@ import { useAuthStore } from "@/stores/use-auth-store";
 // 媒体地址就是可直接放进 <img src> 的同源 URL：GET/HEAD 用 ic_media cookie 鉴权，
 // 地址上不带令牌，缓存交给浏览器。
 export function mediaUrl(storageKey?: string) {
-    return storageKey ? `${API_BASE_URL}/api/media/${storageKey}` : "";
+    return storageKey ? `${API_BASE_URL}/api/v1/media/${storageKey}` : "";
 }
 
-// 下载申请响应：url 指向取件地址——免费档/无干净原件为 /api/media/{key}，付费档有干净原件
-// 为 5 分钟有效的签名地址 /api/media-download/{token}；返回哪一档由服务端决定，前端不判档位。
+// 下载申请响应：url 指向取件地址——免费档/无干净原件为 /api/v1/media/{key}，付费档有干净原件
+// 为 5 分钟有效的签名地址 /api/v1/media-download/{token}；返回哪一档由服务端决定，前端不判档位。
 export type MediaDownload = { url: string; expiresAt: string | null };
 
 // 申请下载：先向服务端要一个取件地址，再用 fetchMediaDownload 凭据取件。

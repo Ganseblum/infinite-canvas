@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"crypto/rand"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/service"
 )
@@ -161,8 +162,8 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 			"displayName": admins[i].DisplayName,
 			"status":      admins[i].Status,
 			"roleKey":     authz.SystemRoleKey,
-			"createdAt":   formatTime(admins[i].CreatedAt),
-			"lastLoginAt": formatTimePtr(admins[i].LastLoginAt),
+			"createdAt":   httpx.FormatTime(admins[i].CreatedAt),
+			"lastLoginAt": httpx.FormatTimePtr(admins[i].LastLoginAt),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -264,14 +265,14 @@ func (h *AdminHandler) RemoveAdmin(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 // ===== 审计日志 =====
 
 // ListAuditLogs 分页返回管理操作审计，支持按操作名与目标筛选。
 func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
-	params, ok := parsePageParams(c)
+	params, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
@@ -306,7 +307,7 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 			"reason":        logs[i].Reason,
 			"beforeSummary": json.RawMessage(logs[i].BeforeSummary),
 			"afterSummary":  json.RawMessage(logs[i].AfterSummary),
-			"createdAt":     formatTime(logs[i].CreatedAt),
+			"createdAt":     httpx.FormatTime(logs[i].CreatedAt),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": params.Page, "size": params.Size})

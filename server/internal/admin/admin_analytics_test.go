@@ -1,11 +1,9 @@
-package handler
+package admin
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/model"
-	"github.com/infinite-canvas/server/internal/service"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // seedAIRequest 直接写入一条 AIRequest。statDate 由调用方显式指定，
@@ -47,13 +45,13 @@ func seedAIRequest(t *testing.T, g *gorm.DB, userID uuid.UUID, capability, model
 
 // statDateOf 返回 UTC+8 日界下往前 offsetDays 天的统计日期。
 func statDateOf(offsetDays int) string {
-	return time.Now().In(statZone).AddDate(0, 0, -offsetDays).Format(statDateFormat)
+	return time.Now().In(model.StatZone).AddDate(0, 0, -offsetDays).Format(model.StatDateFormat)
 }
 
 func newUsageAnalyticsRouter(t *testing.T, g *gorm.DB) *gin.Engine {
 	t.Helper()
 	r := gin.New()
-	h := NewAdminHandler(g, testConfig(), newFakeStorage("local"))
+	h := NewAdminHandler(g, testutil.TestConfig(), testutil.NewFakeStorage("local"))
 	r.GET("/api/admin/analytics/usage", h.UsageAnalytics)
 	return r
 }
@@ -96,10 +94,10 @@ func findRow(t *testing.T, rows []map[string]any, key, want string) map[string]a
 }
 
 func TestUsageAnalyticsAggregates(t *testing.T) {
-	g := newTestDB(t)
+	g := testutil.NewTestDB(t)
 	r := newUsageAnalyticsRouter(t, g)
-	userA := createUser(t, g, "usage-a@example.com", "usagea", "password123", true)
-	userB := createUser(t, g, "usage-b@example.com", "usageb", "password123", true)
+	userA := testutil.CreateUser(t, g, "usage-a@example.com", "usagea", "password123", true)
+	userB := testutil.CreateUser(t, g, "usage-b@example.com", "usageb", "password123", true)
 
 	s1, s2, s3 := "session-1", "session-2", "session-3"
 	today := statDateOf(0)
@@ -114,11 +112,11 @@ func TestUsageAnalyticsAggregates(t *testing.T) {
 	seedAIRequest(t, g, userA.ID, "image", "model-old", "succeeded", 900, nil, nil, "", statDateOf(40))
 	seedAIRequest(t, g, userB.ID, "image", "model-legacy", "succeeded", 700, nil, nil, "", "")
 
-	w := doJSON(r, http.MethodGet, "/api/admin/analytics/usage?days=30", nil)
+	w := testutil.DoJSON(r, http.MethodGet, "/api/admin/analytics/usage?days=30", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("读取用量分析失败: %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 
 	summary, ok := body["summary"].(map[string]any)
 	if !ok {
@@ -230,17 +228,17 @@ func TestUsageAnalyticsAggregates(t *testing.T) {
 }
 
 func TestUsageAnalyticsSevenDayWindow(t *testing.T) {
-	g := newTestDB(t)
+	g := testutil.NewTestDB(t)
 	r := newUsageAnalyticsRouter(t, g)
-	user := createUser(t, g, "usage-week@example.com", "usageweek", "password123", true)
+	user := testutil.CreateUser(t, g, "usage-week@example.com", "usageweek", "password123", true)
 	seedAIRequest(t, g, user.ID, "image", "model-a", "succeeded", 100, nil, nil, "", statDateOf(0))
 	seedAIRequest(t, g, user.ID, "image", "model-b", "succeeded", 200, nil, nil, "", statDateOf(10))
 
-	w := doJSON(r, http.MethodGet, "/api/admin/analytics/usage?days=7", nil)
+	w := testutil.DoJSON(r, http.MethodGet, "/api/admin/analytics/usage?days=7", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("读取用量分析失败: %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	summary, _ := body["summary"].(map[string]any)
 	if got := numField(t, summary, "requests"); got != 1 {
 		t.Fatalf("7 天窗口应只含 1 条请求, got %v", summary["requests"])
@@ -255,99 +253,29 @@ func TestUsageAnalyticsSevenDayWindow(t *testing.T) {
 }
 
 func TestUsageAnalyticsRejectsInvalidDays(t *testing.T) {
-	g := newTestDB(t)
+	g := testutil.NewTestDB(t)
 	r := newUsageAnalyticsRouter(t, g)
 	for _, raw := range []string{"8", "abc", "0", "-7"} {
-		w := doJSON(r, http.MethodGet, "/api/admin/analytics/usage?days="+raw, nil)
-		if w.Code != http.StatusBadRequest || errorCode(t, w) != "VALIDATION_FAILED" {
+		w := testutil.DoJSON(r, http.MethodGet, "/api/admin/analytics/usage?days="+raw, nil)
+		if w.Code != http.StatusBadRequest || testutil.ErrorCode(t, w) != "VALIDATION_FAILED" {
 			t.Fatalf("days=%s 应返回 400 VALIDATION_FAILED, got %d %s", raw, w.Code, w.Body.String())
 		}
 	}
 }
 
 func TestUsageAnalyticsByModelTop20(t *testing.T) {
-	g := newTestDB(t)
+	g := testutil.NewTestDB(t)
 	r := newUsageAnalyticsRouter(t, g)
-	user := createUser(t, g, "usage-many@example.com", "usagemany", "password123", true)
+	user := testutil.CreateUser(t, g, "usage-many@example.com", "usagemany", "password123", true)
 	for i := 0; i < 25; i++ {
 		seedAIRequest(t, g, user.ID, "image", fmt.Sprintf("model-%02d", i), "succeeded", 1, nil, nil, "", statDateOf(0))
 	}
-	w := doJSON(r, http.MethodGet, "/api/admin/analytics/usage?days=30", nil)
+	w := testutil.DoJSON(r, http.MethodGet, "/api/admin/analytics/usage?days=30", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("读取用量分析失败: %d %s", w.Code, w.Body.String())
 	}
-	byModel := objArray(t, decodeBody(t, w), "byModel")
+	byModel := objArray(t, testutil.DecodeBody(t, w), "byModel")
 	if len(byModel) != 20 {
 		t.Fatalf("byModel 最多返回 20 条, got %d", len(byModel))
-	}
-}
-
-// TestBeginRequestWritesDimsAndDuplicateKeepsThem 验证分析维度随首次创建写入，
-// 幂等命中既有请求时不得覆盖已有值。
-func TestBeginRequestWritesDimsAndDuplicateKeepsThem(t *testing.T) {
-	g := newTestDB(t)
-	h := NewAIHandler(g, nil, nil, nil, newFakeStorage("local"), "", nil)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/ai/images", nil)
-	user := createUser(t, g, "dims@example.com", "dims", "password123", true)
-	catalogItem := model.ModelCatalog{ID: uuid.New(), Name: "dims-model", Capability: "image", Enabled: true}
-	payload := service.QuotePayload{BillingMode: service.BillingModeCredits, FinalCostMicros: 0}
-
-	if _, _, ok := h.beginRequest(c, user, catalogItem, "image", payload, "dims-key-1", requestDims{
-		SessionID: "  session-abc  ",
-		Params:    map[string]string{"size": "1024x1024"},
-		Spec:      "1024x1024",
-	}); !ok {
-		t.Fatal("首次 beginRequest 应成功")
-	}
-	var first model.AIRequest
-	if err := g.Where("idempotency_key = ?", "dims-key-1").First(&first).Error; err != nil {
-		t.Fatalf("读取请求失败: %v", err)
-	}
-	if first.SessionID == nil || *first.SessionID != "session-abc" {
-		t.Fatalf("会话标识应去空白后写入, got %v", first.SessionID)
-	}
-	if first.ParamSpec != "1024x1024" {
-		t.Fatalf("主规格串应为 1024x1024, got %s", first.ParamSpec)
-	}
-	if len(first.Params) == 0 || !strings.Contains(string(first.Params), "1024x1024") {
-		t.Fatalf("参数快照应包含 size, got %s", string(first.Params))
-	}
-	wantDate := time.Now().In(statZone).Format(statDateFormat)
-	if first.StatDate != wantDate {
-		t.Fatalf("统计日期应为 UTC+8 今日 %s, got %s", wantDate, first.StatDate)
-	}
-
-	if _, _, ok := h.beginRequest(c, user, catalogItem, "image", payload, "dims-key-1", requestDims{
-		SessionID: "session-other",
-		Params:    map[string]string{"size": "512x512"},
-		Spec:      "512x512",
-	}); ok {
-		t.Fatal("重复幂等键不应创建新请求")
-	}
-	var reloaded model.AIRequest
-	if err := g.First(&reloaded, "id = ?", first.ID).Error; err != nil {
-		t.Fatalf("重读请求失败: %v", err)
-	}
-	if reloaded.SessionID == nil || *reloaded.SessionID != "session-abc" {
-		t.Fatalf("重复提交不得覆盖会话标识, got %v", reloaded.SessionID)
-	}
-	if reloaded.ParamSpec != "1024x1024" {
-		t.Fatalf("重复提交不得覆盖主规格串, got %s", reloaded.ParamSpec)
-	}
-}
-
-func TestSessionIDOfSanitizes(t *testing.T) {
-	if sessionIDOf("   ") != nil {
-		t.Fatal("空白会话标识应返回 nil")
-	}
-	long := strings.Repeat("字", 70)
-	got := sessionIDOf(long)
-	if got == nil || len([]rune(*got)) != 64 {
-		t.Fatalf("超长会话标识应按字符截断到 64, got %v", got)
-	}
-	got = sessionIDOf(" s1 ")
-	if got == nil || *got != "s1" {
-		t.Fatalf("会话标识应去首尾空白, got %v", got)
 	}
 }

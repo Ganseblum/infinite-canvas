@@ -1,4 +1,4 @@
-package handler
+package account
 
 import (
 	"crypto/rand"
@@ -27,6 +27,7 @@ import (
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/identity"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // ===== 夹具 =====
@@ -64,18 +65,18 @@ func newOIDCRouter(t *testing.T, g *gorm.DB, cfg *config.Config, oidcH *OIDCHand
 	r := newAuthRouter(t, cfg, authH)
 	secret := []byte(cfg.JWTSecret)
 	active := middleware.RequireActiveUser(identity.NewService(g))
-	oidc := r.Group("/api/oidc", middleware.Auth(secret), active)
+	oidc := r.Group("/api/v1/oidc", middleware.Auth(secret), active)
 	oidc.GET("/authorize", oidcH.Authorize)
-	r.POST("/api/oidc/token", oidcH.Token)
-	r.GET("/api/oidc/userinfo", oidcH.Userinfo)
-	r.GET("/api/oidc/jwks.json", oidcH.JWKS)
+	r.POST("/api/v1/oidc/token", oidcH.Token)
+	r.GET("/api/v1/oidc/userinfo", oidcH.Userinfo)
+	r.GET("/api/v1/oidc/jwks.json", oidcH.JWKS)
 	return r
 }
 
 func createOIDCClient(t *testing.T, g *gorm.DB, redirectURIs []string) (model.OAuthClient, string) {
 	t.Helper()
 	secret := "client-secret-" + uuid.NewString()
-	clientID, err := newOAuthClientID()
+	clientID, err := NewOAuthClientID()
 	if err != nil {
 		t.Fatalf("生成 client_id 失败: %v", err)
 	}
@@ -88,7 +89,7 @@ func createOIDCClient(t *testing.T, g *gorm.DB, redirectURIs []string) (model.OA
 		Product:          model.ProductCanvas,
 		Name:             "测试接入客户端",
 		ClientID:         clientID,
-		ClientSecretHash: hashOAuthClientSecret(secret),
+		ClientSecretHash: HashOAuthClientSecret(secret),
 		RedirectURIs:     datatypes.JSON(raw),
 		Enabled:          true,
 	}
@@ -113,7 +114,7 @@ func doForm(r http.Handler, path string, form url.Values) *httptest.ResponseReco
 }
 
 func authorizeGet(r http.Handler, accessToken string, params url.Values) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/api/oidc/authorize?"+params.Encode(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/authorize?"+params.Encode(), nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -193,17 +194,17 @@ const (
 // TestOIDCFullChain 注册用户 → authorize（PKCE + state）→ 302 取 code → token 换
 // access_token → userinfo → jwks 用公开 n/e 重组公钥验签。
 func TestOIDCFullChain(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	cfg.AppBaseURL = "https://canvas.example.com"
 	oidcH := newOIDCHandlerForTest(t, g, cfg)
-	authH := NewAuthHandler(g, cfg, testMailer())
+	authH := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newOIDCRouter(t, g, cfg, oidcH, authH)
 
 	_, sess, cookie := registerUser(t, r, "oidc@example.com", "oidcuser", "password123")
 
 	// cookie Path 断言：M3 起从 /api/auth 扩为 /api（PLAN D8 直接切换）
-	if cookie.Path != "/api" {
+	if cookie.Path != RefreshCookiePath {
 		t.Fatalf("refresh cookie Path 应为 /api, got %q", cookie.Path)
 	}
 
@@ -237,7 +238,7 @@ func TestOIDCFullChain(t *testing.T) {
 	}
 
 	// token（form 提交）
-	w = doForm(r, "/api/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
+	w = doForm(r, "/api/v1/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
 	if w.Code != http.StatusOK {
 		t.Fatalf("token 换取失败: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -253,11 +254,11 @@ func TestOIDCFullChain(t *testing.T) {
 	}
 
 	// userinfo
-	w = doAuthJSON(r, http.MethodGet, "/api/oidc/userinfo", tok.AccessToken, nil)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/oidc/userinfo", tok.AccessToken, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("userinfo 失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	ui := decodeBody(t, w)
+	ui := testutil.DecodeBody(t, w)
 	if ui["sub"] != sess.User.ID {
 		t.Fatalf("sub 应为用户 id, got %v want %s", ui["sub"], sess.User.ID)
 	}
@@ -269,7 +270,7 @@ func TestOIDCFullChain(t *testing.T) {
 	}
 
 	// jwks：kid 与 token header 一致，并用公开 n/e 重组公钥验签 access_token
-	w = doJSON(r, http.MethodGet, "/api/oidc/jwks.json", nil)
+	w = testutil.DoJSON(r, http.MethodGet, "/api/v1/oidc/jwks.json", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("jwks 失败: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -317,10 +318,10 @@ func TestOIDCFullChain(t *testing.T) {
 // ===== authorize 安全用例 =====
 
 func TestOIDCAuthorizeRejects(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	oidcH := newOIDCHandlerForTest(t, g, cfg)
-	authH := NewAuthHandler(g, cfg, testMailer())
+	authH := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newOIDCRouter(t, g, cfg, oidcH, authH)
 
 	_, sess, _ := registerUser(t, r, "reject@example.com", "rejectuser", "password123")
@@ -356,7 +357,7 @@ func TestOIDCAuthorizeRejects(t *testing.T) {
 		if w.Header().Get("Location") != "" {
 			t.Fatalf("%s: 不应重定向", tc.name)
 		}
-		if code := errorCode(t, w); code != "INVALID_REQUEST" {
+		if code := testutil.ErrorCode(t, w); code != "INVALID_REQUEST" {
 			t.Fatalf("%s: 应返回 INVALID_REQUEST, got %s", tc.name, code)
 		}
 	}
@@ -364,10 +365,10 @@ func TestOIDCAuthorizeRejects(t *testing.T) {
 
 // TestOIDCAuthorizeRequiresLogin 未登录（无 Bearer）访问 authorize 应 401。
 func TestOIDCAuthorizeRequiresLogin(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	oidcH := newOIDCHandlerForTest(t, g, cfg)
-	authH := NewAuthHandler(g, cfg, testMailer())
+	authH := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newOIDCRouter(t, g, cfg, oidcH, authH)
 	client, _ := createOIDCClient(t, g, []string{oidcRedirectURI})
 
@@ -388,10 +389,10 @@ func TestOIDCAuthorizeRequiresLogin(t *testing.T) {
 // ===== token 安全用例 =====
 
 func TestOIDCTokenSecurity(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	oidcH := newOIDCHandlerForTest(t, g, cfg)
-	authH := NewAuthHandler(g, cfg, testMailer())
+	authH := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newOIDCRouter(t, g, cfg, oidcH, authH)
 
 	_, sess, _ := registerUser(t, r, "toksec@example.com", "toksecuser", "password123")
@@ -399,30 +400,30 @@ func TestOIDCTokenSecurity(t *testing.T) {
 
 	// code 一次性消费：第一次成功，第二次拒绝
 	code := authorizeForCode(t, r, sess.AccessToken, client, oidcVerifier)
-	w := doForm(r, "/api/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
+	w := doForm(r, "/api/v1/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
 	if w.Code != http.StatusOK {
 		t.Fatalf("首次换 token 应成功: code=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doForm(r, "/api/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
+	w = doForm(r, "/api/v1/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code 二次使用应拒绝, got %d body=%s", w.Code, w.Body.String())
 	}
-	if got := errorCode(t, w); got != "INVALID_GRANT" {
+	if got := testutil.ErrorCode(t, w); got != "INVALID_GRANT" {
 		t.Fatalf("code 二次使用应返回 INVALID_GRANT, got %s", got)
 	}
 
 	// 错误 client_secret 拒绝
 	code = authorizeForCode(t, r, sess.AccessToken, client, oidcVerifier)
 	form := tokenForm(client, "wrong-secret", code, oidcRedirectURI, oidcVerifier)
-	w = doForm(r, "/api/oidc/token", form)
+	w = doForm(r, "/api/v1/oidc/token", form)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("错误 client_secret 应 401, got %d body=%s", w.Code, w.Body.String())
 	}
-	if got := errorCode(t, w); got != "INVALID_CLIENT" {
+	if got := testutil.ErrorCode(t, w); got != "INVALID_CLIENT" {
 		t.Fatalf("错误 client_secret 应返回 INVALID_CLIENT, got %s", got)
 	}
 	// 认证失败的 code 未被消费，凭正确凭据仍可换取
-	w = doForm(r, "/api/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
+	w = doForm(r, "/api/v1/oidc/token", tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier))
 	if w.Code != http.StatusOK {
 		t.Fatalf("正确凭据应换到 token: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -430,18 +431,18 @@ func TestOIDCTokenSecurity(t *testing.T) {
 	// verifier 不匹配拒绝
 	code = authorizeForCode(t, r, sess.AccessToken, client, oidcVerifier)
 	form = tokenForm(client, secret, code, oidcRedirectURI, "another-verifier-another-verifier-999999")
-	w = doForm(r, "/api/oidc/token", form)
+	w = doForm(r, "/api/v1/oidc/token", form)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("verifier 不匹配应 400, got %d body=%s", w.Code, w.Body.String())
 	}
-	if got := errorCode(t, w); got != "INVALID_GRANT" {
+	if got := testutil.ErrorCode(t, w); got != "INVALID_GRANT" {
 		t.Fatalf("verifier 不匹配应返回 INVALID_GRANT, got %s", got)
 	}
 
 	// redirect_uri 与授权时不一致拒绝
 	code = authorizeForCode(t, r, sess.AccessToken, client, oidcVerifier)
 	form = tokenForm(client, secret, code, "https://app.example.com/other", oidcVerifier)
-	w = doForm(r, "/api/oidc/token", form)
+	w = doForm(r, "/api/v1/oidc/token", form)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("redirect_uri 不一致应 400, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -450,28 +451,28 @@ func TestOIDCTokenSecurity(t *testing.T) {
 	code = authorizeForCode(t, r, sess.AccessToken, client, oidcVerifier)
 	form = tokenForm(client, secret, code, oidcRedirectURI, oidcVerifier)
 	form.Set("grant_type", "password")
-	w = doForm(r, "/api/oidc/token", form)
+	w = doForm(r, "/api/v1/oidc/token", form)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("grant_type=password 应 400, got %d body=%s", w.Code, w.Body.String())
 	}
-	if got := errorCode(t, w); got != "UNSUPPORTED_GRANT_TYPE" {
+	if got := testutil.ErrorCode(t, w); got != "UNSUPPORTED_GRANT_TYPE" {
 		t.Fatalf("应返回 UNSUPPORTED_GRANT_TYPE, got %s", got)
 	}
 }
 
 // TestOIDCTokenAcceptsJSON token 端点按契约同时支持 JSON 提交。
 func TestOIDCTokenAcceptsJSON(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	oidcH := newOIDCHandlerForTest(t, g, cfg)
-	authH := NewAuthHandler(g, cfg, testMailer())
+	authH := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newOIDCRouter(t, g, cfg, oidcH, authH)
 
 	_, sess, _ := registerUser(t, r, "tokjson@example.com", "tokjsonuser", "password123")
 	client, secret := createOIDCClient(t, g, []string{oidcRedirectURI})
 	code := authorizeForCode(t, r, sess.AccessToken, client, oidcVerifier)
 
-	w := doJSON(r, http.MethodPost, "/api/oidc/token", map[string]string{
+	w := testutil.DoJSON(r, http.MethodPost, "/api/v1/oidc/token", map[string]string{
 		"grant_type":    "authorization_code",
 		"client_id":     client.ClientID,
 		"client_secret": secret,
@@ -492,13 +493,13 @@ func TestOIDCTokenAcceptsJSON(t *testing.T) {
 // TestOIDCUserinfoRejectsInvalidTokens 过期 OIDC token 返回 401 TOKEN_EXPIRED；
 // 平台 HS256 会话 access token 不得当 OIDC token 使用（两套凭据不混用）。
 func TestOIDCUserinfoRejectsInvalidTokens(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	oidcH := newOIDCHandlerForTest(t, g, cfg)
-	authH := NewAuthHandler(g, cfg, testMailer())
+	authH := NewAuthHandler(g, cfg, testutil.TestMailer())
 	r := newOIDCRouter(t, g, cfg, oidcH, authH)
 
-	user := createUser(t, g, "expired@example.com", "expireduser", "password123", false)
+	user := testutil.CreateUser(t, g, "expired@example.com", "expireduser", "password123", false)
 	client, _ := createOIDCClient(t, g, []string{oidcRedirectURI})
 
 	// 直接构造过期 JWT（TTL 注入为负）
@@ -506,22 +507,22 @@ func TestOIDCUserinfoRejectsInvalidTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("签发过期 token 失败: %v", err)
 	}
-	w := doAuthJSON(r, http.MethodGet, "/api/oidc/userinfo", expired, nil)
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/oidc/userinfo", expired, nil)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("过期 token 应 401, got %d body=%s", w.Code, w.Body.String())
 	}
-	if got := errorCode(t, w); got != "TOKEN_EXPIRED" {
+	if got := testutil.ErrorCode(t, w); got != "TOKEN_EXPIRED" {
 		t.Fatalf("过期 token 应返回 TOKEN_EXPIRED, got %s", got)
 	}
 
 	// 平台 HS256 access token 不被 userinfo 接受
-	w = doAuthJSON(r, http.MethodGet, "/api/oidc/userinfo", accessToken(t, cfg, &user), nil)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/oidc/userinfo", testutil.AccessToken(t, cfg, &user), nil)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("平台 HS256 token 应 401, got %d", w.Code)
 	}
 
 	// 无 Bearer 应 401
-	w = doJSON(r, http.MethodGet, "/api/oidc/userinfo", nil)
+	w = testutil.DoJSON(r, http.MethodGet, "/api/v1/oidc/userinfo", nil)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("缺少 Bearer 应 401, got %d", w.Code)
 	}
@@ -531,27 +532,27 @@ func TestOIDCUserinfoRejectsInvalidTokens(t *testing.T) {
 
 // TestOIDCKeyConfigFailFast 提供了 PEM 但解析失败时构造即报错（启动 fail-fast）。
 func TestOIDCKeyConfigFailFast(t *testing.T) {
-	g := newTestDB(t)
+	g := testutil.NewTestDB(t)
 	t.Setenv("OIDC_JWKS_PRIVATE_KEY", "not-a-valid-pem")
-	if _, err := NewOIDCHandler(g, testConfig(), identity.NewService(g)); err == nil {
+	if _, err := NewOIDCHandler(g, testutil.TestConfig(), identity.NewService(g)); err == nil {
 		t.Fatal("PEM 解析失败应返回错误（启动即失败）")
 	}
 }
 
 // TestOIDCTempKeyFallback 未配置 OIDC_JWKS_PRIVATE_KEY 时生成临时密钥，jwks 仍可用。
 func TestOIDCTempKeyFallback(t *testing.T) {
-	g := newTestDB(t)
-	h, err := NewOIDCHandler(g, testConfig(), identity.NewService(g))
+	g := testutil.NewTestDB(t)
+	h, err := NewOIDCHandler(g, testutil.TestConfig(), identity.NewService(g))
 	if err != nil {
 		t.Fatalf("未配置密钥时应回退临时密钥: %v", err)
 	}
 	r := gin.New()
-	r.GET("/api/oidc/jwks.json", h.JWKS)
-	w := doJSON(r, http.MethodGet, "/api/oidc/jwks.json", nil)
+	r.GET("/api/v1/oidc/jwks.json", h.JWKS)
+	w := testutil.DoJSON(r, http.MethodGet, "/api/v1/oidc/jwks.json", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("jwks 应可用: code=%d body=%s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	keys, ok := body["keys"].([]any)
 	if !ok || len(keys) != 1 {
 		t.Fatalf("jwks 应含一把密钥: %s", w.Body.String())

@@ -37,7 +37,7 @@ describe("API 客户端刷新单飞", () => {
         let apiCalls = 0;
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            if (url.endsWith("/api/auth/refresh")) {
+            if (url.endsWith("/api/v1/auth/refresh")) {
                 refreshCalls += 1;
                 await holdRefresh();
                 return jsonResponse(session);
@@ -52,7 +52,7 @@ describe("API 客户端刷新单飞", () => {
 
         expect(refreshCalls).toBe(1);
         expect(apiCalls).toBe(6);
-        expect(results.map((result) => result.ok)).toEqual([expect.stringContaining("/api/alpha"), expect.stringContaining("/api/beta"), expect.stringContaining("/api/gamma")]);
+        expect(results.map((result) => result.ok)).toEqual([expect.stringContaining("/api/v1/alpha"), expect.stringContaining("/api/v1/beta"), expect.stringContaining("/api/v1/gamma")]);
         expect(useAuthStore.getState().status).toBe("authenticated");
         expect(useAuthStore.getState().accessToken).toBe("new-token");
     });
@@ -68,7 +68,7 @@ describe("API 客户端刷新单飞", () => {
         let refreshCalls = 0;
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            if (url.endsWith("/api/auth/refresh")) {
+            if (url.endsWith("/api/v1/auth/refresh")) {
                 refreshCalls += 1;
                 await holdRefresh();
                 return jsonResponse({ error: { code: "UNAUTHORIZED", message: "refresh rejected" } }, 401);

@@ -1,4 +1,4 @@
-package main
+package admin
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/infinite-canvas/server/internal/authz"
-	"github.com/infinite-canvas/server/internal/handler"
 	"github.com/infinite-canvas/server/internal/middleware"
 )
 
@@ -62,9 +61,9 @@ func (r *adminRoutes) register(method, path, permission string, h gin.HandlerFun
 	r.specs = append(r.specs, adminRouteSpec{Method: method, Path: path, Permission: permission})
 }
 
-// registerAdminRoutes 注册全部管理路由并返回路由表，调用方必须已经挂好
+// RegisterRoutes 注册全部管理路由并返回路由表，调用方必须已经挂好
 // Auth、RequireActiveUser 与 LoadAdminAccess 三个组级中间件。
-func registerAdminRoutes(g *gin.RouterGroup, h *handler.AdminHandler) []adminRouteSpec {
+func RegisterRoutes(g *gin.RouterGroup, h *AdminHandler) []adminRouteSpec {
 	r := &adminRoutes{group: g}
 
 	r.GET("/me", "", h.Me)

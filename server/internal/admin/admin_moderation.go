@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/service"
@@ -36,11 +37,11 @@ var moderationSorts = map[string]string{
 
 // ListModerationRecords 按阶段、结论、标签、复核状态、用户与时间筛选审核记录。
 func (h *AdminHandler) ListModerationRecords(c *gin.Context) {
-	params, ok := parsePageParams(c)
+	params, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
-	sortColumn, ok := parseSort(c.Query("sort"), moderationSorts, "-createdAt")
+	sortColumn, ok := httpx.ParseSort(c.Query("sort"), moderationSorts, "-createdAt")
 	if !ok {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"sort": "sort 不在白名单内"}))
 		return
@@ -110,8 +111,8 @@ func (h *AdminHandler) GetModerationRecord(c *gin.Context) {
 					"available":   true,
 					"previewUrl":  preview,
 					"previewPath": "/api/admin/moderation/records/" + record.ID.String() + "/preview",
-					"expiresAt":   formatTime(expiresAt),
-					"expiresAtAt": formatTimePtr(record.QuarantineExpiresAt),
+					"expiresAt":   httpx.FormatTime(expiresAt),
+					"expiresAtAt": httpx.FormatTimePtr(record.QuarantineExpiresAt),
 				}
 			}
 		}
@@ -360,7 +361,7 @@ func moderationRecordPayload(record *model.ModerationRecord) gin.H {
 		"reviewRevision":    record.ReviewRevision,
 		"reviewNote":        record.ReviewNote,
 		"compensatedMicros": record.CompensatedMicros,
-		"createdAt":         formatTime(record.CreatedAt),
+		"createdAt":         httpx.FormatTime(record.CreatedAt),
 	}
 	if record.GenerationID != nil {
 		payload["generationId"] = record.GenerationID.String()
@@ -369,10 +370,15 @@ func moderationRecordPayload(record *model.ModerationRecord) gin.H {
 		payload["reviewedBy"] = record.ReviewedBy.String()
 	}
 	if record.ReviewedAt != nil {
-		payload["reviewedAt"] = formatTime(*record.ReviewedAt)
+		payload["reviewedAt"] = httpx.FormatTime(*record.ReviewedAt)
 	}
 	if record.QuarantineExpiresAt != nil {
-		payload["quarantineExpiresAt"] = formatTime(*record.QuarantineExpiresAt)
+		payload["quarantineExpiresAt"] = httpx.FormatTime(*record.QuarantineExpiresAt)
 	}
 	return payload
+}
+
+// randomStorageID 生成新的媒体存储键对象段（与 ai 域生成口径一致）。
+func randomStorageID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")[:21]
 }

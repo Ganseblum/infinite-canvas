@@ -1,4 +1,4 @@
-package handler
+package ai
 
 import (
 	"encoding/base64"
@@ -12,25 +12,26 @@ import (
 
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/storage"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 // 泄漏面①：社区浏览者对已发布作品申请下载必须 404——POST /download 禁走
 // findOwned 的社区放行分支，这是本 feature 最严重的泄漏面。
 func TestDownloadRequestCommunityViewerForbidden(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	fake := newFakeStorage("s3")
-	fake.presignURL = "https://s3.example.com/test-bucket/object?X-Amz-Signature=fake"
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	fake := testutil.NewFakeStorage("s3")
+	fake.PresignURL = "https://s3.example.com/test-bucket/object?X-Amz-Signature=fake"
 	r := newResourceRouter(t, g, cfg, fake)
-	owner := createUser(t, g, "dlpub@example.com", "dlpub", "password123", true)
-	viewer := createUser(t, g, "dlviewer@example.com", "dlviewer", "password123", true)
-	viewerToken := accessToken(t, cfg, &viewer)
+	owner := testutil.CreateUser(t, g, "dlpub@example.com", "dlpub", "password123", true)
+	viewer := testutil.CreateUser(t, g, "dlviewer@example.com", "dlviewer", "password123", true)
+	viewerToken := testutil.AccessToken(t, cfg, &viewer)
 	// 作者付费：一旦社区分支被误放行，浏览者就能借 /download 触达干净原件路径
 	makePaid(t, g, owner)
 
 	key := "image:Pub1"
-	file := seedMediaFile(t, g, owner, key, "image/png", testPNG)
-	fake.objects[file.ObjectPath] = testPNG
+	file := seedMediaFile(t, g, owner, key, "image/png", testutil.TestPNG)
+	fake.Objects[file.ObjectPath] = testutil.TestPNG
 	asset := model.Asset{ID: uuid.New(), UserID: owner.ID, Kind: "image", Title: "作品", Data: datatypes.JSON("{}"), StorageKey: key}
 	if err := g.Create(&asset).Error; err != nil {
 		t.Fatalf("写入素材失败: %v", err)
@@ -40,29 +41,29 @@ func TestDownloadRequestCommunityViewerForbidden(t *testing.T) {
 		t.Fatalf("写入社区作品失败: %v", err)
 	}
 
-	if w := doRaw(r, http.MethodPost, "/api/media/"+key+"/download", nil, "", viewerToken, nil); w.Code != http.StatusNotFound {
+	if w := testutil.DoRaw(r, http.MethodPost, "/api/v1/media/"+key+"/download", nil, "", viewerToken, nil); w.Code != http.StatusNotFound {
 		t.Fatalf("社区浏览者申请下载应 404, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 
 // 泄漏面⑥：严格归属——storageKey 存在但不属于当前用户 → 404（防探测）。
 func TestDownloadRequestStrictOwnership(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	r := newResourceRouter(t, g, cfg, newFakeStorage("s3"))
-	owner := createUser(t, g, "dlown@example.com", "dlown", "password123", true)
-	viewer := createUser(t, g, "dlown2@example.com", "dlown2", "password123", true)
-	ownerToken := accessToken(t, cfg, &owner)
-	viewerToken := accessToken(t, cfg, &viewer)
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r := newResourceRouter(t, g, cfg, testutil.NewFakeStorage("s3"))
+	owner := testutil.CreateUser(t, g, "dlown@example.com", "dlown", "password123", true)
+	viewer := testutil.CreateUser(t, g, "dlown2@example.com", "dlown2", "password123", true)
+	ownerToken := testutil.AccessToken(t, cfg, &owner)
+	viewerToken := testutil.AccessToken(t, cfg, &viewer)
 
-	seedMediaFile(t, g, owner, "image:Owned1", "image/png", testPNG)
+	seedMediaFile(t, g, owner, "image:Owned1", "image/png", testutil.TestPNG)
 
 	// key 属于他人 → 404
-	if w := doRaw(r, http.MethodPost, "/api/media/image:Owned1/download", nil, "", viewerToken, nil); w.Code != http.StatusNotFound {
+	if w := testutil.DoRaw(r, http.MethodPost, "/api/v1/media/image:Owned1/download", nil, "", viewerToken, nil); w.Code != http.StatusNotFound {
 		t.Fatalf("他人 storageKey 申请下载应 404, got %d body=%s", w.Code, w.Body.String())
 	}
 	// 本人但 key 不存在 → 404
-	if w := doRaw(r, http.MethodPost, "/api/media/image:NoSuchKey/download", nil, "", ownerToken, nil); w.Code != http.StatusNotFound {
+	if w := testutil.DoRaw(r, http.MethodPost, "/api/v1/media/image:NoSuchKey/download", nil, "", ownerToken, nil); w.Code != http.StatusNotFound {
 		t.Fatalf("不存在的 storageKey 申请下载应 404, got %d", w.Code)
 	}
 }
@@ -70,23 +71,23 @@ func TestDownloadRequestStrictOwnership(t *testing.T) {
 // 泄漏面⑤：POST /download 两态响应（free → media url + expiresAt null；
 // paid 有 orig → token url + RFC3339），并凭取件链接取回干净原件。
 func TestDownloadRequestTwoStateResponse(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	stor := newLocalStorage(t.TempDir())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	stor := testutil.NewLocalStorage(t.TempDir())
 	r := newResourceRouter(t, g, cfg, stor)
 
 	// 态一：免费档 → 现有下发 URL，expiresAt 为 null
-	freeUser := createUser(t, g, "dlfree@example.com", "dlfree", "password123", true)
-	freeToken := accessToken(t, cfg, &freeUser)
-	if w := doRaw(r, http.MethodPut, "/api/media/image:Dl1", testPNG, "image/png", freeToken, nil); w.Code != http.StatusCreated {
+	freeUser := testutil.CreateUser(t, g, "dlfree@example.com", "dlfree", "password123", true)
+	freeToken := testutil.AccessToken(t, cfg, &freeUser)
+	if w := testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:Dl1", testutil.TestPNG, "image/png", freeToken, nil); w.Code != http.StatusCreated {
 		t.Fatalf("免费档上传失败: %d body=%s", w.Code, w.Body.String())
 	}
-	w := doRaw(r, http.MethodPost, "/api/media/image:Dl1/download", nil, "", freeToken, nil)
+	w := testutil.DoRaw(r, http.MethodPost, "/api/v1/media/image:Dl1/download", nil, "", freeToken, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("免费档申请下载应 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
-	if body["url"] != "/api/media/image:Dl1" {
+	body := testutil.DecodeBody(t, w)
+	if body["url"] != "/api/v1/media/image:Dl1" {
 		t.Fatalf("免费档应返回下发 URL: %v", body["url"])
 	}
 	if v, ok := body["expiresAt"]; !ok || v != nil {
@@ -94,21 +95,21 @@ func TestDownloadRequestTwoStateResponse(t *testing.T) {
 	}
 
 	// 态二：付费且有干净原件 → 取件链接 + RFC3339 到期时间
-	paid := createUser(t, g, "dlpaid@example.com", "dlpaid", "password123", true)
-	paidToken := accessToken(t, cfg, &paid)
+	paid := testutil.CreateUser(t, g, "dlpaid@example.com", "dlpaid", "password123", true)
+	paidToken := testutil.AccessToken(t, cfg, &paid)
 	makePaid(t, g, paid)
-	origBody := testPNG2
-	if w := doRaw(r, http.MethodPut, "/api/media/image:Dl2", testPNG, "image/png", paidToken, nil); w.Code != http.StatusCreated {
+	origBody := testutil.TestPNG2
+	if w := testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:Dl2", testutil.TestPNG, "image/png", paidToken, nil); w.Code != http.StatusCreated {
 		t.Fatalf("付费档上传失败: %d body=%s", w.Code, w.Body.String())
 	}
 	putObject(t, stor, storage.OrigPath(paid.ID.String(), "image:Dl2"), origBody)
-	w = doRaw(r, http.MethodPost, "/api/media/image:Dl2/download", nil, "", paidToken, nil)
+	w = testutil.DoRaw(r, http.MethodPost, "/api/v1/media/image:Dl2/download", nil, "", paidToken, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("付费档申请下载应 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	body = decodeBody(t, w)
+	body = testutil.DecodeBody(t, w)
 	tokenURL, _ := body["url"].(string)
-	if !strings.HasPrefix(tokenURL, "/api/media-download/") {
+	if !strings.HasPrefix(tokenURL, "/api/v1/media-download/") {
 		t.Fatalf("paid+orig 应返回取件链接: %v", body["url"])
 	}
 	exp, err := time.Parse(time.RFC3339, body["expiresAt"].(string))
@@ -120,7 +121,7 @@ func TestDownloadRequestTwoStateResponse(t *testing.T) {
 	}
 
 	// 凭取件链接取回干净原件：嗅探类型 + 附件名 + no-store
-	w = doRaw(r, http.MethodGet, tokenURL, nil, "", paidToken, nil)
+	w = testutil.DoRaw(r, http.MethodGet, tokenURL, nil, "", paidToken, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("取件应 200, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -143,17 +144,17 @@ func TestDownloadRequestTwoStateResponse(t *testing.T) {
 
 // 泄漏面②：token 过期/篡改 sig/篡改 payload/跨用户/坏格式/归属行已删 → 一律 404。
 func TestDownloadTokenValidationChain(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	stor := newLocalStorage(t.TempDir())
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	stor := testutil.NewLocalStorage(t.TempDir())
 	r := newResourceRouter(t, g, cfg, stor)
-	owner := createUser(t, g, "tokowner@example.com", "tokowner", "password123", true)
-	other := createUser(t, g, "tokother@example.com", "tokother", "password123", true)
-	ownerToken := accessToken(t, cfg, &owner)
-	otherToken := accessToken(t, cfg, &other)
+	owner := testutil.CreateUser(t, g, "tokowner@example.com", "tokowner", "password123", true)
+	other := testutil.CreateUser(t, g, "tokother@example.com", "tokother", "password123", true)
+	ownerToken := testutil.AccessToken(t, cfg, &owner)
+	otherToken := testutil.AccessToken(t, cfg, &other)
 	makePaid(t, g, owner)
-	origBody := testPNG2
-	file := seedMediaFile(t, g, owner, "image:Tok1", "image/png", testPNG)
+	origBody := testutil.TestPNG2
+	file := seedMediaFile(t, g, owner, "image:Tok1", "image/png", testutil.TestPNG)
 	putObject(t, stor, storage.OrigPath(owner.ID.String(), "image:Tok1"), origBody)
 
 	secret := []byte(cfg.JWTSecret)
@@ -162,13 +163,13 @@ func TestDownloadTokenValidationChain(t *testing.T) {
 		t.Fatalf("签发令牌失败: %v", err)
 	}
 	// 对照组：合法令牌 + 本人凭据 → 200 回流原件
-	if w := doRaw(r, http.MethodGet, "/api/media-download/"+token, nil, "", ownerToken, nil); w.Code != http.StatusOK {
+	if w := testutil.DoRaw(r, http.MethodGet, "/api/v1/media-download/"+token, nil, "", ownerToken, nil); w.Code != http.StatusOK {
 		t.Fatalf("合法令牌取件应 200, got %d body=%s", w.Code, w.Body.String())
 	}
 
 	notFound := func(name, tok, bearer string) {
 		t.Helper()
-		w := doRaw(r, http.MethodGet, "/api/media-download/"+tok, nil, "", bearer, nil)
+		w := testutil.DoRaw(r, http.MethodGet, "/api/v1/media-download/"+tok, nil, "", bearer, nil)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("%s 应 404, got %d body=%s", name, w.Code, w.Body.String())
 		}

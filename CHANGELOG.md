@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [调整] server 目录按域一步到位重构：`internal/handler` 拆分为 account/canvas/ai/billing/admin 五个域包（管理路由表迁入 admin 包并由路由条数测试锁住），新增 httpx（HTTP 边缘共享件）与 testutil（测试公共件）；各域路由表由域包 `Mount*Routes` 维护、`main.go` 只做依赖注入与组装，对接口行为无影响。
++ [调整] 用户面 API 路径统一加版本前缀 `/api/v1/...`（如 `/api/v1/auth/login`、`/api/v1/canvases`、`/api/v1/media/{key}`），管理面保持 `/api/admin/...` 不变；web/admin 前端统一 client、媒体直链与 AI 流式请求同步更新，`ic_refresh` cookie Path 仍为 `/api` 可覆盖新旧路径。
 + [新增] 平台账号与会员体系一期（PLAN-PLATFORM-ACCOUNT-MEMBERSHIP M1-M3 全量落地）：身份域收敛为 `platform_users`/`sessions` 并建 identity 域统一入口，登录/注销/封禁/媒体令牌行为与切换前完全一致（画布前端零改动）；会员、点数、空间升级为平台级权益——会员一次订阅全产品生效（`membership_plans` + `membership_subscriptions`，订阅到期后 60 天日落宽限）、点数全产品共享余额（`credit_accounts` + 流水带 product 维度，先扣赠送再扣购入）、存储平台共享池（`storage_accounts`/`storage_usage` 分产品记账）；「充值即付费」旧派生废除，付费身份只由订阅表达；点数包与会员档位两表拆分（D5），`/api/orders` 支持购买会员（请求加 `planId`），`paidUntil`/`planId` 等既有键保留、值来源改为订阅。
 + [新增] 管理后台会员管理模块：订阅列表（用户/档位/状态筛选 + 分页）、发放/续期、补偿发放、作废（立即失效并同步存储配额）；users 列表与详情追加会员/存储/产品维度字段；新增 `membership.read`/`membership.write` 权限点。
 + [新增] OIDC Provider（单点登录基础）：`/api/oidc/authorize`（授权码 + 强制 PKCE S256、redirect_uri 精确匹配、code 一次性）、`/api/oidc/token`（RS256 签名 15 分钟、client_secret 恒时比对）、`/api/oidc/userinfo`、`/api/oidc/jwks.json` 四端点与 `oauth_clients` 表；`ic_refresh` cookie Path 扩为 `/api`（仍 host-only + Lax + HttpOnly）；新增 `OIDC_JWKS_PRIVATE_KEY` 配置（未配置时临时密钥，生产必须配置）。

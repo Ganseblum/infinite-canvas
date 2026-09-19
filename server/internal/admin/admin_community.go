@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"log/slog"
@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 )
 
@@ -16,7 +17,7 @@ import (
 
 // ListCommunityWorks 管理端作品列表，可按状态与关键词筛选。
 func (h *AdminHandler) ListCommunityWorks(c *gin.Context) {
-	params, ok := parsePageParams(c)
+	params, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
@@ -25,7 +26,7 @@ func (h *AdminHandler) ListCommunityWorks(c *gin.Context) {
 		query = query.Where("status = ?", status)
 	}
 	if q := c.Query("q"); q != "" {
-		pattern := searchPattern(q)
+		pattern := httpx.SearchPattern(q)
 		query = query.Where("LOWER(title) LIKE ? OR LOWER(description) LIKE ?", pattern, pattern)
 	}
 	if userId := c.Query("userId"); userId != "" {
@@ -96,7 +97,7 @@ func (h *AdminHandler) PatchCommunityWork(c *gin.Context) {
 
 // ListCommunityReports 举报列表，默认只看待处理。
 func (h *AdminHandler) ListCommunityReports(c *gin.Context) {
-	params, ok := parsePageParams(c)
+	params, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
@@ -135,7 +136,7 @@ func (h *AdminHandler) ListCommunityReports(c *gin.Context) {
 			"workTitle": work.Title,
 			"reason":    reports[i].Reason,
 			"status":    reports[i].Status,
-			"createdAt": formatTime(reports[i].CreatedAt),
+			"createdAt": httpx.FormatTime(reports[i].CreatedAt),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": params.Page, "size": params.Size})
@@ -200,7 +201,7 @@ func communityWorkPayload(work *model.CommunityWork) gin.H {
 		"likeCount":   work.LikeCount,
 		"remixCount":  work.RemixCount,
 		"reportCount": work.ReportCount,
-		"createdAt":   formatTime(work.CreatedAt),
+		"createdAt":   httpx.FormatTime(work.CreatedAt),
 	}
 	if work.SourceWorkID != nil {
 		payload["sourceWorkId"] = work.SourceWorkID.String()

@@ -1,27 +1,28 @@
-package handler
+package canvas
 
 import (
 	"net/http"
 	"testing"
 
 	"github.com/infinite-canvas/server/internal/model"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 func createAsset(t *testing.T, r http.Handler, token string, body map[string]any) map[string]any {
 	t.Helper()
-	w := doAuthJSON(r, http.MethodPost, "/api/assets", token, body)
+	w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/assets", token, body)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("创建素材失败: code=%d body=%s", w.Code, w.Body.String())
 	}
-	return decodeBody(t, w)
+	return testutil.DecodeBody(t, w)
 }
 
 func TestAssetCRUDAndSubsetPatch(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	r := newResourceRouter(t, g, cfg, newFakeStorage("local"))
-	user := createUser(t, g, "asset@example.com", "assetuser", "password123", true)
-	token := accessToken(t, cfg, &user)
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r := newResourceRouter(t, g, cfg, testutil.NewFakeStorage("local"))
+	user := testutil.CreateUser(t, g, "asset@example.com", "assetuser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	created := createAsset(t, r, token, map[string]any{
 		"kind":  "text",
@@ -38,40 +39,40 @@ func TestAssetCRUDAndSubsetPatch(t *testing.T) {
 	}
 
 	// 详情
-	w := doAuthJSON(r, http.MethodGet, "/api/assets/"+id, token, nil)
-	if w.Code != http.StatusOK || decodeBody(t, w)["title"] != "会议纪要" {
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets/"+id, token, nil)
+	if w.Code != http.StatusOK || testutil.DecodeBody(t, w)["title"] != "会议纪要" {
 		t.Fatalf("素材详情不符: %d %s", w.Code, w.Body.String())
 	}
 
 	// PATCH 子集：只改标题，标签与 data 不变
-	w = doAuthJSON(r, http.MethodPatch, "/api/assets/"+id, token, map[string]any{"title": "会议纪要 v2"})
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/v1/assets/"+id, token, map[string]any{"title": "会议纪要 v2"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("PATCH 标题失败: %d body=%s", w.Code, w.Body.String())
 	}
-	patched := decodeBody(t, w)
+	patched := testutil.DecodeBody(t, w)
 	if patched["title"] != "会议纪要 v2" || len(patched["tags"].([]any)) != 2 {
 		t.Fatalf("PATCH 不应影响其他字段: %v", patched)
 	}
 
 	// PATCH 标签整体替换
-	w = doAuthJSON(r, http.MethodPatch, "/api/assets/"+id, token, map[string]any{"tags": []string{"归档"}})
-	patched = decodeBody(t, w)
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/v1/assets/"+id, token, map[string]any{"tags": []string{"归档"}})
+	patched = testutil.DecodeBody(t, w)
 	if len(patched["tags"].([]any)) != 1 || patched["tags"].([]any)[0] != "归档" {
 		t.Fatalf("标签应整体替换: %v", patched["tags"])
 	}
 
 	// PATCH data
-	w = doAuthJSON(r, http.MethodPatch, "/api/assets/"+id, token, map[string]any{
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/v1/assets/"+id, token, map[string]any{
 		"data": map[string]any{"content": "换一段正文"},
 	})
-	patched = decodeBody(t, w)
+	patched = testutil.DecodeBody(t, w)
 	if patched["data"].(map[string]any)["content"] != "换一段正文" {
 		t.Fatalf("PATCH data 未生效: %v", patched["data"])
 	}
 
 	// PATCH storageKey 同步镜像进 data.storageKey
-	w = doAuthJSON(r, http.MethodPatch, "/api/assets/"+id, token, map[string]any{"storageKey": "image:NewKey1"})
-	patched = decodeBody(t, w)
+	w = testutil.DoAuthJSON(r, http.MethodPatch, "/api/v1/assets/"+id, token, map[string]any{"storageKey": "image:NewKey1"})
+	patched = testutil.DecodeBody(t, w)
 	if patched["storageKey"] != "image:NewKey1" {
 		t.Fatalf("PATCH storageKey 未生效: %v", patched)
 	}
@@ -80,28 +81,28 @@ func TestAssetCRUDAndSubsetPatch(t *testing.T) {
 	}
 
 	// 空 PATCH → 400
-	if w := doAuthJSON(r, http.MethodPatch, "/api/assets/"+id, token, map[string]any{}); w.Code != http.StatusBadRequest {
+	if w := testutil.DoAuthJSON(r, http.MethodPatch, "/api/v1/assets/"+id, token, map[string]any{}); w.Code != http.StatusBadRequest {
 		t.Fatalf("空 PATCH 应 400, got %d", w.Code)
 	}
 
 	// 删除幂等
-	if w := doAuthJSON(r, http.MethodDelete, "/api/assets/"+id, token, nil); w.Code != http.StatusNoContent {
+	if w := testutil.DoAuthJSON(r, http.MethodDelete, "/api/v1/assets/"+id, token, nil); w.Code != http.StatusNoContent {
 		t.Fatalf("删除素材应 204, got %d", w.Code)
 	}
-	if w := doAuthJSON(r, http.MethodGet, "/api/assets/"+id, token, nil); w.Code != http.StatusNotFound {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets/"+id, token, nil); w.Code != http.StatusNotFound {
 		t.Fatalf("删除后详情应 404, got %d", w.Code)
 	}
-	if w := doAuthJSON(r, http.MethodDelete, "/api/assets/"+id, token, nil); w.Code != http.StatusNoContent {
+	if w := testutil.DoAuthJSON(r, http.MethodDelete, "/api/v1/assets/"+id, token, nil); w.Code != http.StatusNoContent {
 		t.Fatalf("重复删除应仍 204, got %d", w.Code)
 	}
 }
 
 func TestAssetListFiltersTagsFacetsAndSearchScope(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	r := newResourceRouter(t, g, cfg, newFakeStorage("local"))
-	user := createUser(t, g, "assetlist@example.com", "assetlist", "password123", true)
-	token := accessToken(t, cfg, &user)
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r := newResourceRouter(t, g, cfg, testutil.NewFakeStorage("local"))
+	user := testutil.CreateUser(t, g, "assetlist@example.com", "assetlist", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	createAsset(t, r, token, map[string]any{
 		"kind": "text", "title": "预算说明", "tags": []string{"甲", "乙"},
@@ -119,8 +120,8 @@ func TestAssetListFiltersTagsFacetsAndSearchScope(t *testing.T) {
 	})
 
 	// 第一页返回标签全集 facets
-	w := doAuthJSON(r, http.MethodGet, "/api/assets?page=1&size=2", token, nil)
-	body := decodeBody(t, w)
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?page=1&size=2", token, nil)
+	body := testutil.DecodeBody(t, w)
 	tags, ok := body["tags"].([]any)
 	if !ok || len(tags) != 2 {
 		t.Fatalf("第一页应返回标签全集: %v", body["tags"])
@@ -129,72 +130,72 @@ func TestAssetListFiltersTagsFacetsAndSearchScope(t *testing.T) {
 		t.Fatalf("total 不符: %v", body["total"])
 	}
 	// 第二页不再返回 facets
-	w = doAuthJSON(r, http.MethodGet, "/api/assets?page=2&size=2", token, nil)
-	if _, hasTags := decodeBody(t, w)["tags"]; hasTags {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?page=2&size=2", token, nil)
+	if _, hasTags := testutil.DecodeBody(t, w)["tags"]; hasTags {
 		t.Fatal("第二页不应重复返回 tags facets")
 	}
 
 	// kind 筛选
-	w = doAuthJSON(r, http.MethodGet, "/api/assets?kind=image", token, nil)
-	items := decodeItems(t, w)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?kind=image", token, nil)
+	items := testutil.DecodeItems(t, w)
 	if len(items) != 1 || items[0]["title"] != "参考图" {
 		t.Fatalf("kind 筛选不符: %v", items)
 	}
 	// 枚举外 kind → 400
-	if w := doAuthJSON(r, http.MethodGet, "/api/assets?kind=audio", token, nil); w.Code != http.StatusBadRequest {
+	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?kind=audio", token, nil); w.Code != http.StatusBadRequest {
 		t.Fatalf("非法 kind 应 400, got %d", w.Code)
 	}
 
 	// 标签 AND 语义
-	w = doAuthJSON(r, http.MethodGet, "/api/assets?tag=甲&tag=乙", token, nil)
-	items = decodeItems(t, w)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?tag=甲&tag=乙", token, nil)
+	items = testutil.DecodeItems(t, w)
 	if len(items) != 1 || items[0]["title"] != "预算说明" {
 		t.Fatalf("多标签应同时包含: %v", items)
 	}
-	w = doAuthJSON(r, http.MethodGet, "/api/assets?tag=甲", token, nil)
-	if items = decodeItems(t, w); len(items) != 2 {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?tag=甲", token, nil)
+	if items = testutil.DecodeItems(t, w); len(items) != 2 {
 		t.Fatalf("单标签命中数不符: %v", items)
 	}
 
 	// q 只搜 title 与 data.content：正文命中
-	w = doAuthJSON(r, http.MethodGet, "/api/assets?q=财务自由", token, nil)
-	items = decodeItems(t, w)
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?q=财务自由", token, nil)
+	items = testutil.DecodeItems(t, w)
 	if len(items) != 1 || items[0]["title"] != "预算说明" {
 		t.Fatalf("正文搜索未命中: %v", items)
 	}
 	// 搜 title
-	w = doAuthJSON(r, http.MethodGet, "/api/assets?q=参考", token, nil)
-	if items = decodeItems(t, w); len(items) != 1 || items[0]["title"] != "参考图" {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?q=参考", token, nil)
+	if items = testutil.DecodeItems(t, w); len(items) != 1 || items[0]["title"] != "参考图" {
 		t.Fatalf("标题搜索未命中: %v", items)
 	}
 	// 搜 storageKey 片段或 mimeType 不应命中任何媒体素材
 	for _, q := range []string{"Png123", "png", "video/mp4"} {
-		w = doAuthJSON(r, http.MethodGet, "/api/assets?q="+q, token, nil)
-		if items = decodeItems(t, w); len(items) != 0 {
+		w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?q="+q, token, nil)
+		if items = testutil.DecodeItems(t, w); len(items) != 0 {
 			t.Fatalf("关键字 %q 不应命中媒体元数据: %v", q, items)
 		}
 	}
 
 	// 排序白名单与非法参数
-	w = doAuthJSON(r, http.MethodGet, "/api/assets?sort=title", token, nil)
-	if items = decodeItems(t, w); items[0]["title"] != "参考图" {
+	w = testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?sort=title", token, nil)
+	if items = testutil.DecodeItems(t, w); items[0]["title"] != "参考图" {
 		t.Fatalf("按标题排序不符: %v", items)
 	}
-	for _, path := range []string{"/api/assets?sort=bytes", "/api/assets?size=101", "/api/assets?page=0"} {
-		if w := doAuthJSON(r, http.MethodGet, path, token, nil); w.Code != http.StatusBadRequest {
+	for _, path := range []string{"/api/v1/assets?sort=bytes", "/api/v1/assets?size=101", "/api/v1/assets?page=0"} {
+		if w := testutil.DoAuthJSON(r, http.MethodGet, path, token, nil); w.Code != http.StatusBadRequest {
 			t.Fatalf("%s 应 400, got %d", path, w.Code)
 		}
 	}
 }
 
 func TestAssetCrossUserIsolation(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	r := newResourceRouter(t, g, cfg, newFakeStorage("local"))
-	owner := createUser(t, g, "assetowner@example.com", "assetowner", "password123", true)
-	other := createUser(t, g, "assetother@example.com", "assetother", "password123", true)
-	ownerToken := accessToken(t, cfg, &owner)
-	otherToken := accessToken(t, cfg, &other)
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r := newResourceRouter(t, g, cfg, testutil.NewFakeStorage("local"))
+	owner := testutil.CreateUser(t, g, "assetowner@example.com", "assetowner", "password123", true)
+	other := testutil.CreateUser(t, g, "assetother@example.com", "assetother", "password123", true)
+	ownerToken := testutil.AccessToken(t, cfg, &owner)
+	otherToken := testutil.AccessToken(t, cfg, &other)
 
 	created := createAsset(t, r, ownerToken, map[string]any{
 		"kind": "text", "title": "私有", "data": map[string]any{"content": "x"},
@@ -209,7 +210,7 @@ func TestAssetCrossUserIsolation(t *testing.T) {
 		{http.MethodPatch, map[string]any{"title": "偷改"}},
 		{http.MethodDelete, nil},
 	} {
-		w := doAuthJSON(r, tc.method, "/api/assets/"+id, otherToken, tc.body)
+		w := testutil.DoAuthJSON(r, tc.method, "/api/v1/assets/"+id, otherToken, tc.body)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("跨用户 %s 应 404, got %d body=%s", tc.method, w.Code, w.Body.String())
 		}
@@ -223,21 +224,21 @@ func TestAssetCrossUserIsolation(t *testing.T) {
 	if otherAsset["id"] == "" {
 		t.Fatal("创建失败")
 	}
-	w := doAuthJSON(r, http.MethodGet, "/api/assets?page=1", ownerToken, nil)
-	if tags, ok := decodeBody(t, w)["tags"].([]any); !ok || len(tags) != 0 {
+	w := testutil.DoAuthJSON(r, http.MethodGet, "/api/v1/assets?page=1", ownerToken, nil)
+	if tags, ok := testutil.DecodeBody(t, w)["tags"].([]any); !ok || len(tags) != 0 {
 		t.Fatalf("facets 不应包含其他用户的标签: %v", w.Body.String())
 	}
-	if items := decodeItems(t, w); len(items) != 1 {
+	if items := testutil.DecodeItems(t, w); len(items) != 1 {
 		t.Fatalf("列表不应包含其他用户的素材: %v", items)
 	}
 }
 
 func TestAssetValidation(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	r := newResourceRouter(t, g, cfg, newFakeStorage("local"))
-	user := createUser(t, g, "assetvalid@example.com", "assetvalid", "password123", true)
-	token := accessToken(t, cfg, &user)
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r := newResourceRouter(t, g, cfg, testutil.NewFakeStorage("local"))
+	user := testutil.CreateUser(t, g, "assetvalid@example.com", "assetvalid", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	cases := []map[string]any{
 		{"kind": "audio", "title": "x", "data": map[string]any{}},
@@ -247,11 +248,11 @@ func TestAssetValidation(t *testing.T) {
 		{"kind": "text", "title": "x", "tags": []string{"  "}, "data": map[string]any{}},
 	}
 	for i, body := range cases {
-		w := doAuthJSON(r, http.MethodPost, "/api/assets", token, body)
+		w := testutil.DoAuthJSON(r, http.MethodPost, "/api/v1/assets", token, body)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("非法素材 #%d 应 400, got %d body=%s", i, w.Code, w.Body.String())
 		}
-		if code := errorCode(t, w); code != "VALIDATION_FAILED" {
+		if code := testutil.ErrorCode(t, w); code != "VALIDATION_FAILED" {
 			t.Fatalf("非法素材 #%d 错误码应为 VALIDATION_FAILED, got %s", i, code)
 		}
 	}

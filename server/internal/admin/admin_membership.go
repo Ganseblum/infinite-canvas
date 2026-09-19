@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"errors"
@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 )
 
@@ -32,17 +33,17 @@ func membershipSubscriptionPayload(sub model.MembershipSubscription, userEmail, 
 		"planId":       sub.PlanID,
 		"planName":     planName,
 		"status":       sub.Status,
-		"startedAt":    formatTime(sub.StartedAt),
-		"periodEnd":    formatTime(sub.PeriodEnd),
+		"startedAt":    httpx.FormatTime(sub.StartedAt),
+		"periodEnd":    httpx.FormatTime(sub.PeriodEnd),
 		"sourceRef":    sub.SourceRef,
-		"createdAt":    formatTime(sub.CreatedAt),
+		"createdAt":    httpx.FormatTime(sub.CreatedAt),
 	}
 }
 
 // ListSubscriptions 分页列出会员订阅：userId/planId 精确筛选，status 只允许 active|ended。
 // 用户邮箱/用户名与档位名通过 LEFT JOIN 一次带出，不逐行回查。
 func (h *AdminHandler) ListSubscriptions(c *gin.Context) {
-	params, ok := parsePageParams(c)
+	params, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
@@ -250,8 +251,8 @@ func (h *AdminHandler) RevokeSubscription(c *gin.Context) {
 		}
 		return h.audit.Record(tx, actorID, "membership.revoke", "membership_subscription", subID.String(),
 			c.GetString("request_id"), reason,
-			gin.H{"status": before.Status, "periodEnd": formatTime(before.PeriodEnd)},
-			gin.H{"status": "ended", "periodEnd": formatTime(now)})
+			gin.H{"status": before.Status, "periodEnd": httpx.FormatTime(before.PeriodEnd)},
+			gin.H{"status": "ended", "periodEnd": httpx.FormatTime(now)})
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		errs.Abort(c, errs.ErrNotFound)

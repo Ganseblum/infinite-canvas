@@ -1,4 +1,4 @@
-package handler
+package ai
 
 import (
 	"context"
@@ -10,15 +10,16 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/platform/membership"
 	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
+	"github.com/infinite-canvas/server/internal/testutil"
 )
 
 func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
 	root := t.TempDir()
-	r := newResourceRouter(t, g, cfg, newLocalStorage(root))
-	user := createUser(t, g, "quota@example.com", "quotauser", "password123", true)
-	token := accessToken(t, cfg, &user)
+	r := newResourceRouter(t, g, cfg, testutil.NewLocalStorage(root))
+	user := testutil.CreateUser(t, g, "quota@example.com", "quotauser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	// 把免费档的存储上限调小，便于触达 507：改档位后按 SyncQuota 把配额回写账户行。
 	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("storage_bytes", 40).Error; err != nil {
@@ -27,23 +28,23 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	if err := membership.NewService(g).SyncQuota(context.Background(), user.ID); err != nil {
 		t.Fatalf("回写配额失败: %v", err)
 	}
-	w := doRaw(r, http.MethodPut, "/api/media/image:Quota1", testPNG, "image/png", token, nil)
+	w := testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:Quota1", testutil.TestPNG, "image/png", token, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("首次上传失败: code=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doRaw(r, http.MethodPut, "/api/media/image:Quota2", testPNG, "image/png", token, nil)
-	if w.Code != http.StatusInsufficientStorage || errorCode(t, w) != "STORAGE_QUOTA_EXCEEDED" {
+	w = testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:Quota2", testutil.TestPNG, "image/png", token, nil)
+	if w.Code != http.StatusInsufficientStorage || testutil.ErrorCode(t, w) != "STORAGE_QUOTA_EXCEEDED" {
 		t.Fatalf("超额上传应 507 STORAGE_QUOTA_EXCEEDED, got %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	errObj, _ := body["error"].(map[string]any)
 	if errObj["limit"] != float64(40) || errObj["used"] != float64(66) {
 		t.Fatalf("507 响应应带 used 与 limit: %v", body)
 	}
 
 	// 覆盖上传只按增量计数，且删除后计数回退。
-	w = doRaw(r, http.MethodPut, "/api/media/image:Quota1", testPNG2, "image/png", token, nil)
+	w = testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:Quota1", testutil.TestPNG2, "image/png", token, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("覆盖上传失败: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -55,7 +56,7 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 	if used != 34 {
 		t.Fatalf("覆盖上传后用量应为 5, got %d", used)
 	}
-	w = doRaw(r, http.MethodDelete, "/api/media/image:Quota1", nil, "", token, nil)
+	w = testutil.DoRaw(r, http.MethodDelete, "/api/v1/media/image:Quota1", nil, "", token, nil)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("删除失败: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -69,11 +70,11 @@ func TestMediaUploadQuotaCountsAndRejects(t *testing.T) {
 }
 
 func TestMediaUploadReadOnlyReturns403(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	r := newResourceRouter(t, g, cfg, newLocalStorage(t.TempDir()))
-	user := createUser(t, g, "readonly@example.com", "readonlyuser", "password123", true)
-	token := accessToken(t, cfg, &user)
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r := newResourceRouter(t, g, cfg, testutil.NewLocalStorage(t.TempDir()))
+	user := testutil.CreateUser(t, g, "readonly@example.com", "readonlyuser", "password123", true)
+	token := testutil.AccessToken(t, cfg, &user)
 
 	if err := g.Model(&model.MembershipPlan{}).Where("id = ?", "free").Update("storage_bytes", 4).Error; err != nil {
 		t.Fatalf("调整档位失败: %v", err)
@@ -83,12 +84,12 @@ func TestMediaUploadReadOnlyReturns403(t *testing.T) {
 		Updates(map[string]any{"quota_bytes": 4, "used_bytes": 100}).Error; err != nil {
 		t.Fatalf("写入用量失败: %v", err)
 	}
-	w := doRaw(r, http.MethodPut, "/api/media/image:ReadOnly1", testPNG, "image/png", token, nil)
+	w := testutil.DoRaw(r, http.MethodPut, "/api/v1/media/image:ReadOnly1", testutil.TestPNG, "image/png", token, nil)
 	// READ_ONLY 是 403：与 402「没余额」分开，前端才能区分该充值还是该清理。
-	if w.Code != http.StatusForbidden || errorCode(t, w) != "READ_ONLY" {
+	if w.Code != http.StatusForbidden || testutil.ErrorCode(t, w) != "READ_ONLY" {
 		t.Fatalf("只读态上传应 403 READ_ONLY, got %d %s", w.Code, w.Body.String())
 	}
-	body := decodeBody(t, w)
+	body := testutil.DecodeBody(t, w)
 	errObj, _ := body["error"].(map[string]any)
 	if errObj["planId"] != "free" {
 		t.Fatalf("READ_ONLY 响应应带当前档位: %v", body)
@@ -96,10 +97,10 @@ func TestMediaUploadReadOnlyReturns403(t *testing.T) {
 }
 
 func TestAdminRecalculateStorageHealsCounter(t *testing.T) {
-	g := newTestDB(t)
-	cfg := testConfig()
-	r := newResourceRouter(t, g, cfg, newLocalStorage(t.TempDir()))
-	user := createUser(t, g, "heal@example.com", "healuser", "password123", true)
+	g := testutil.NewTestDB(t)
+	cfg := testutil.TestConfig()
+	r := newResourceRouter(t, g, cfg, testutil.NewLocalStorage(t.TempDir()))
+	user := testutil.CreateUser(t, g, "heal@example.com", "healuser", "password123", true)
 
 	file := model.MediaFile{
 		ID: uuid.New(), UserID: user.ID, StorageKey: "image:Heal1", ObjectPath: "path",

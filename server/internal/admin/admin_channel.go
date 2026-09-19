@@ -1,4 +1,4 @@
-package handler
+package admin
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/service"
 )
@@ -41,8 +42,8 @@ func channelPayload(channel *model.PlatformChannel) gin.H {
 		"priority":  channel.Priority,
 		"enabled":   channel.Enabled,
 		"hasKey":    len(channel.Payload) > 0,
-		"createdAt": formatTime(channel.CreatedAt),
-		"updatedAt": formatTime(channel.UpdatedAt),
+		"createdAt": httpx.FormatTime(channel.CreatedAt),
+		"updatedAt": httpx.FormatTime(channel.UpdatedAt),
 	}
 }
 
@@ -207,7 +208,7 @@ func (h *AdminHandler) DeleteChannel(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 // RetryRefunds 重试所有退还失败的生成请求。

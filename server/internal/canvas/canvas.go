@@ -1,4 +1,4 @@
-package handler
+package canvas
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/errs"
+	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
 )
 
@@ -46,15 +47,15 @@ type canvasPatchReq struct {
 }
 
 func (h *CanvasHandler) List(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
-	page, ok := parsePageParams(c)
+	page, ok := httpx.ParsePageParams(c)
 	if !ok {
 		return
 	}
-	order, ok := parseSort(c.Query("sort"), canvasSortColumns, "-updatedAt")
+	order, ok := httpx.ParseSort(c.Query("sort"), canvasSortColumns, "-updatedAt")
 	if !ok {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"sort": "sort 不在白名单内"}))
 		return
@@ -64,7 +65,7 @@ func (h *CanvasHandler) List(c *gin.Context) {
 	apply := func(db *gorm.DB) *gorm.DB {
 		db = db.Where("user_id = ?", uid)
 		if search != "" {
-			db = db.Where("LOWER(title) LIKE ?", searchPattern(search))
+			db = db.Where("LOWER(title) LIKE ?", httpx.SearchPattern(search))
 		}
 		return db
 	}
@@ -97,7 +98,7 @@ func (h *CanvasHandler) List(c *gin.Context) {
 }
 
 func (h *CanvasHandler) Create(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -133,7 +134,7 @@ func (h *CanvasHandler) Create(c *gin.Context) {
 }
 
 func (h *CanvasHandler) Get(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -145,7 +146,7 @@ func (h *CanvasHandler) Get(c *gin.Context) {
 }
 
 func (h *CanvasHandler) Update(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -202,12 +203,12 @@ func (h *CanvasHandler) Update(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"revision":  req.Revision + 1,
-		"updatedAt": formatTime(now),
+		"updatedAt": httpx.FormatTime(now),
 	})
 }
 
 func (h *CanvasHandler) Patch(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -250,19 +251,19 @@ func (h *CanvasHandler) Patch(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"id":        current.ID.String(),
 			"title":     current.Title,
-			"updatedAt": formatTime(current.UpdatedAt),
+			"updatedAt": httpx.FormatTime(current.UpdatedAt),
 		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"id":        id.String(),
 		"title":     *req.Title,
-		"updatedAt": formatTime(now),
+		"updatedAt": httpx.FormatTime(now),
 	})
 }
 
 func (h *CanvasHandler) Delete(c *gin.Context) {
-	uid, ok := currentUserID(c)
+	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
 		return
 	}
@@ -288,7 +289,7 @@ func (h *CanvasHandler) Delete(c *gin.Context) {
 		errs.Abort(c, errs.ErrInternal)
 		return
 	}
-	noContent(c)
+	httpx.NoContent(c)
 }
 
 func (h *CanvasHandler) findOwned(c *gin.Context, uid uuid.UUID) (*model.Canvas, bool) {
@@ -362,7 +363,7 @@ func analyzeCanvasData(c *gin.Context, raw json.RawMessage) (datatypes.JSON, int
 				}
 			}
 		}
-		if storageKeyRe.MatchString(key) {
+		if model.StorageKeyRe.MatchString(key) {
 			cover = key
 			break
 		}
@@ -377,7 +378,7 @@ func canvasSummary(cv model.Canvas) gin.H {
 		"nodeCount":       cv.NodeCount,
 		"connectionCount": cv.ConnectionCount,
 		"coverKey":        cv.CoverKey,
-		"updatedAt":       formatTime(cv.UpdatedAt),
+		"updatedAt":       httpx.FormatTime(cv.UpdatedAt),
 	}
 }
 
@@ -385,6 +386,10 @@ func canvasDetail(cv model.Canvas) gin.H {
 	payload := canvasSummary(cv)
 	payload["data"] = cv.Data
 	payload["revision"] = cv.Revision
-	payload["createdAt"] = formatTime(cv.CreatedAt)
+	payload["createdAt"] = httpx.FormatTime(cv.CreatedAt)
 	return payload
 }
+
+// maxCanvasDataBytes 是画布 data 的字节上限（第一期约定「建议 2 MB」）。
+// 反代已限 2m，这里再兜一层，直连 8080 的请求同样会被拦住。
+const maxCanvasDataBytes = 2 * 1024 * 1024
