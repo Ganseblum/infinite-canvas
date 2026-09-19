@@ -44,6 +44,10 @@ const (
 	PermMembershipWrite      = "membership.write"
 	PermSSORead              = "sso.read"
 	PermSSOWrite             = "sso.write"
+	PermFeedbackRead         = "feedback.read"
+	PermFeedbackWrite        = "feedback.write"
+	PermBlogRead             = "blog.read"
+	PermBlogWrite            = "blog.write"
 )
 
 // PermissionDef 是一个权限点在代码里的定义。
@@ -70,6 +74,8 @@ var moduleLabels = map[string]string{
 	"audit":      "审计日志",
 	"membership": "会员管理",
 	"sso":        "单点登录",
+	"feedback":   "反馈工单",
+	"blog":       "博客",
 }
 
 // registry 是权限点注册表，按模块与 Sort 升序排列。修改这里必须同步更新金标测试。
@@ -102,6 +108,10 @@ var registry = []PermissionDef{
 	{Key: PermMembershipWrite, Module: "membership", Name: "管理会员权益", Description: "发放、续期、补偿与作废会员订阅", Sort: 250},
 	{Key: PermSSORead, Module: "sso", Name: "查看 OAuth 接入", Description: "查看 OIDC 客户端接入配置", Sort: 260},
 	{Key: PermSSOWrite, Module: "sso", Name: "管理 OAuth 接入", Description: "新增、修改、停用 OIDC 客户端与密钥", Sort: 270},
+	{Key: PermFeedbackRead, Module: "feedback", Name: "查看反馈工单", Description: "查看用户反馈工单与生成结果点赞点踩反馈", Sort: 280},
+	{Key: PermFeedbackWrite, Module: "feedback", Name: "处理反馈工单", Description: "回复工单、更新工单状态", Sort: 290},
+	{Key: PermBlogRead, Module: "blog", Name: "查看博客", Description: "查看博客文章、栏目与评论列表", Sort: 300},
+	{Key: PermBlogWrite, Module: "blog", Name: "管理博客", Description: "新建、编辑、发布、删除文章与栏目，处理评论", Sort: 310},
 }
 
 var registryIndex = func() map[string]PermissionDef {

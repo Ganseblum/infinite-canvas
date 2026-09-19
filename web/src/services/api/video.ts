@@ -13,8 +13,10 @@ type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: 
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
-export type VideoGenerationResult = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
-export type VideoGenerationTask = { id: string; model: string };
+export type VideoGenerationResult = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number; generationId?: string };
+// 任务携带 generationId：创建响应下发一次，轮询视图每次都带，用于结果卡点赞点踩。
+export type VideoGenerationTask = { id: string; model: string; generationId?: string };
+
 export type VideoGenerationTaskState = { status: "pending"; pollAfterMs?: number } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationResult> {
@@ -79,19 +81,19 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             signal: options?.signal,
         });
     }
-    return { id: response.taskId, model };
+    return { id: response.taskId, model, generationId: response.generationId };
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     void config;
     const response = await getVideoTask(task.id, options?.signal);
-    return toTaskState(response.status, response.video, response.error, response.pollAfterMs);
+    return toTaskState(response.status, response.video, response.error, response.pollAfterMs, task.generationId);
 }
 
-function toTaskState(status: VideoTaskStatus, video: { storageKey: string; bytes: number; mimeType: string } | undefined, error: { code: string; message: string } | undefined, pollAfterMs: number): VideoGenerationTaskState {
+function toTaskState(status: VideoTaskStatus, video: { storageKey: string; bytes: number; mimeType: string } | undefined, error: { code: string; message: string } | undefined, pollAfterMs: number, generationId?: string): VideoGenerationTaskState {
     if (status === "succeeded") {
         if (!video?.storageKey) throw videoTaskFailed(apiText("noPlayableVideo"));
-        return { status: "completed", result: { url: mediaUrl(video.storageKey), storageKey: video.storageKey, bytes: video.bytes, mimeType: video.mimeType } };
+        return { status: "completed", result: { url: mediaUrl(video.storageKey), storageKey: video.storageKey, bytes: video.bytes, mimeType: video.mimeType, generationId } };
     }
     if (status === "failed") return { status: "failed", error: error?.message || apiText("videoGenerationFailed") };
     return { status: "pending", pollAfterMs };

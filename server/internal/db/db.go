@@ -109,6 +109,14 @@ func Migrate(gormDB *gorm.DB) error {
 		&model.Permission{},
 		&model.RolePermission{},
 		&model.OAuthClient{},
+		&model.FeedbackTicket{},
+		&model.FeedbackTicketReply{},
+		&model.GenerationFeedback{},
+		&model.BlogTopic{},
+		&model.BlogPost{},
+		&model.BlogComment{},
+		&model.BlogReaction{},
+		&model.BlogBookmark{},
 	)
 }
 

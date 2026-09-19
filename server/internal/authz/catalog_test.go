@@ -9,6 +9,8 @@ import (
 // 注册表里删除、改名或交换含义都会让本测试失败：权限 key 一旦分配出去就是线上数据。
 var goldenPermissionKeys = []string{
 	"audit.read",
+	"blog.read",
+	"blog.write",
 	"channels.read",
 	"channels.write",
 	"community.read",
@@ -36,6 +38,8 @@ var goldenPermissionKeys = []string{
 	"membership.write",
 	"sso.read",
 	"sso.write",
+	"feedback.read",
+	"feedback.write",
 }
 
 func TestRegistryMatchesGoldenKeys(t *testing.T) {
@@ -69,6 +73,8 @@ func TestRegistryCoversEveryPermissionConstant(t *testing.T) {
 		PermAuditRead,
 		PermMembershipRead, PermMembershipWrite,
 		PermSSORead, PermSSOWrite,
+		PermFeedbackRead, PermFeedbackWrite,
+		PermBlogRead, PermBlogWrite,
 	}
 	for _, key := range constants {
 		if !IsKnown(key) {
@@ -97,8 +103,8 @@ func TestRegistryDefinitionIsComplete(t *testing.T) {
 			t.Fatalf("权限点 %s 的模块 %s 缺少展示名", def.Key, def.Module)
 		}
 	}
-	if len(registry) != 28 {
-		t.Fatalf("权限点总数应为 28, got %d", len(registry))
+	if len(registry) != 32 {
+		t.Fatalf("权限点总数应为 32, got %d", len(registry))
 	}
 	if IsKnown("stats.unknown") || IsKnown("") {
 		t.Fatalf("未注册的 key 不允许通过 IsKnown")

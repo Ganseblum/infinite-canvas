@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/infinite-canvas/server/internal/authz"
+	"github.com/infinite-canvas/server/internal/blog"
 	"github.com/infinite-canvas/server/internal/middleware"
 )
 
@@ -41,6 +42,10 @@ func (r *adminRoutes) PATCH(path, permission string, h gin.HandlerFunc) {
 
 func (r *adminRoutes) DELETE(path, permission string, h gin.HandlerFunc) {
 	r.register("DELETE", path, permission, h)
+}
+
+func (r *adminRoutes) PUT(path, permission string, h gin.HandlerFunc) {
+	r.register("PUT", path, permission, h)
 }
 
 func (r *adminRoutes) register(method, path, permission string, h gin.HandlerFunc) {
@@ -136,9 +141,39 @@ func RegisterRoutes(g *gin.RouterGroup, h *AdminHandler) []adminRouteSpec {
 	r.GET("/permissions", authz.PermRolesRead, h.ListPermissions)
 
 	r.GET("/audit-logs", authz.PermAuditRead, h.ListAuditLogs)
+	// ===== 博客管理（内容域 handler 在 internal/blog，路由表仍由 admin 包统一注册）=====
+	blogHandler := h.blog
+	if blogHandler == nil {
+		blogHandler = blog.NewAdminHandler(h.db, nil)
+	}
+	r.GET("/blog/posts", authz.PermBlogRead, blogHandler.ListPosts)
+	r.GET("/blog/posts/:id", authz.PermBlogRead, blogHandler.GetPost)
+	r.POST("/blog/posts", authz.PermBlogWrite, blogHandler.CreatePost)
+	r.PUT("/blog/posts/:id", authz.PermBlogWrite, blogHandler.UpdatePost)
+	r.POST("/blog/posts/:id/publish", authz.PermBlogWrite, blogHandler.PublishPost)
+	r.POST("/blog/posts/:id/unpublish", authz.PermBlogWrite, blogHandler.UnpublishPost)
+	r.DELETE("/blog/posts/:id", authz.PermBlogWrite, blogHandler.DeletePost)
+	r.GET("/blog/topics", authz.PermBlogRead, blogHandler.ListTopics)
+	r.POST("/blog/topics", authz.PermBlogWrite, blogHandler.CreateTopic)
+	r.PUT("/blog/topics/:id", authz.PermBlogWrite, blogHandler.UpdateTopic)
+	r.DELETE("/blog/topics/:id", authz.PermBlogWrite, blogHandler.DeleteTopic)
+	r.POST("/blog/preview", authz.PermBlogWrite, blogHandler.Preview)
+	r.GET("/blog/comments", authz.PermBlogRead, blogHandler.ListComments)
+	r.POST("/blog/comments/:id/hide", authz.PermBlogWrite, blogHandler.HideComment)
+	r.POST("/blog/comments/:id/restore", authz.PermBlogWrite, blogHandler.RestoreComment)
+	r.DELETE("/blog/comments/:id", authz.PermBlogWrite, blogHandler.DeleteComment)
+	r.PUT("/blog/comments/:id/pinned", authz.PermBlogWrite, blogHandler.PinComment)
+
 	r.GET("/community/works", authz.PermCommunityRead, h.ListCommunityWorks)
 	r.PATCH("/community/works/:id", authz.PermCommunityWrite, h.PatchCommunityWork)
 	r.GET("/community/reports", authz.PermCommunityRead, h.ListCommunityReports)
 	r.PATCH("/community/reports/:id", authz.PermCommunityWrite, h.PatchCommunityReport)
+
+	// ===== 反馈工单 =====
+	r.GET("/feedback/tickets", authz.PermFeedbackRead, h.ListFeedbackTickets)
+	r.GET("/feedback/tickets/:id", authz.PermFeedbackRead, h.GetFeedbackTicket)
+	r.POST("/feedback/tickets/:id/replies", authz.PermFeedbackWrite, h.ReplyFeedbackTicket)
+	r.PATCH("/feedback/tickets/:id/status", authz.PermFeedbackWrite, h.UpdateFeedbackTicketStatus)
+	r.GET("/feedback/generations", authz.PermFeedbackRead, h.ListGenerationFeedbacks)
 	return r.specs
 }

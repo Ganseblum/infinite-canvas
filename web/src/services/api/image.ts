@@ -25,6 +25,8 @@ export type GeneratedImage = {
     height: number;
     bytes: number;
     mimeType: string;
+    // 所属生成记录 id：生成结果点赞点踩定位用（工作台结果卡）。
+    generationId?: string;
 };
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
@@ -110,7 +112,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             signal: options?.signal,
         }),
     );
-    return response.images.map(toGeneratedImage);
+    return response.images.map((image) => ({ ...toGeneratedImage(image), generationId: response.generationId }));
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<GeneratedImage[]> {
@@ -135,7 +137,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             signal: options?.signal,
         }),
     );
-    return response.images.map(toGeneratedImage);
+    return response.images.map((image) => ({ ...toGeneratedImage(image), generationId: response.generationId }));
 }
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {

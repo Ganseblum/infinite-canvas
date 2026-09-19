@@ -17,6 +17,8 @@ import { useAddAsset } from "@/hooks/use-asset-library";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
 import { useMediaDownload } from "@/hooks/use-media-download";
+import { GenerationRating, type GenerationRatingValue } from "@/components/generation-rating";
+import { deleteGenerationFeedback, setGenerationFeedback } from "@/services/api/feedback";
 import { mediaUrl } from "@/services/api/media";
 import type { GenerationItem } from "@/services/data/types";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -39,6 +41,7 @@ type GeneratedVideo = {
     height: number;
     bytes: number;
     mimeType: string;
+    generationId?: string;
 };
 
 type GenerationResult = {
@@ -75,6 +78,23 @@ export default function VideoPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const { download: downloadMedia, isDownloading } = useMediaDownload();
+    const [ratings, setRatings] = useState<Record<string, 1 | -1 | undefined>>({});
+    const rateGeneration = async (id: string, rating: GenerationRatingValue, meta?: { labels?: string; note?: string }) => {
+        if (!id) return;
+        try {
+            if (rating === null) await deleteGenerationFeedback(id);
+            else if (rating === 1 || rating === -1) await setGenerationFeedback(id, { rating, labels: meta?.labels, note: meta?.note });
+            else return;
+            setRatings((prev) => {
+                const next = { ...prev };
+                if (rating === null) delete next[id];
+                else next[id] = rating;
+                return next;
+            });
+        } catch (error) {
+            message.error(getApiErrorMessage(error));
+        }
+    };
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
@@ -339,6 +359,7 @@ export default function VideoPage() {
                 height: stored.height || 720,
                 bytes: stored.bytes,
                 mimeType: stored.mimeType,
+                generationId: stored.generationId || log.task?.generationId,
             };
             setResults((value) => upsertResult(value, { id: log.id, status: "success", video: nextVideo }));
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
@@ -498,7 +519,7 @@ export default function VideoPage() {
                             <div className="grid gap-4">
                                 {results.map((result) =>
                                     result.status === "success" && result.video ? (
-                                        <ResultVideoCard key={result.id} video={result.video} downloading={isDownloading(result.video.storageKey)} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
+                                        <ResultVideoCard key={result.id} video={result.video} downloading={isDownloading(result.video.storageKey)} rating={ratings[result.video.generationId ?? ""]} onRate={(rating, meta) => void rateGeneration(result.video!.generationId ?? "", rating, meta)} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} />
                                     ) : (
@@ -571,18 +592,19 @@ function GenerationSettings({ config, model, updateConfig }: { config: AiConfig;
     );
 }
 
-function ResultVideoCard({ video, downloading, onDownload, onSaveAsset }: { video: GeneratedVideo; downloading: boolean; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
+function ResultVideoCard({ video, downloading, rating, onRate, onDownload, onSaveAsset }: { video: GeneratedVideo; downloading: boolean; rating: GenerationRatingValue; onRate: (rating: GenerationRatingValue, meta?: { labels?: string; note?: string }) => void; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
     const { t } = useTranslation();
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
             <video src={video.url} controls className="aspect-video w-full bg-black object-contain" />
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
-                <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
                         {video.width}x{video.height}
                     </span>
                     <span>{formatBytes(video.bytes)}</span>
                     <span>{formatDuration(video.durationMs)}</span>
+                    <GenerationRating generationId={video.generationId} value={rating} onChange={onRate} />
                 </div>
                 <div className="flex shrink-0 gap-1">
                     <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(video)}>
@@ -828,7 +850,7 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
 function toGenerationLog(item: GenerationItem): GenerationLog {
     const result = (item.result || {}) as Partial<Pick<GenerationLog, "title" | "time" | "references" | "size" | "resolution" | "seconds" | "video" | "task" | "error">>;
     const config = (item.config || {}) as Partial<GenerationLogConfig>;
-    const video = result.video ? { ...result.video, url: mediaUrl(result.video.storageKey) || result.video.url } : undefined;
+    const video = result.video ? { ...result.video, url: mediaUrl(result.video.storageKey) || result.video.url, generationId: result.video.generationId || item.id } : undefined;
     const references = (result.references || []).map((item) => ({ ...item, dataUrl: mediaUrl(item.storageKey) || item.dataUrl }));
     return {
         id: item.id,

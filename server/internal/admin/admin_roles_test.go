@@ -124,17 +124,17 @@ func TestCustomRoleOnlyGrantsAssignedRoutes(t *testing.T) {
 	testutil.PromoteAdmin(t, g, &admin)
 	adminToken := testutil.AccessToken(t, cfg, &admin)
 
-	createRole(t, r, adminToken, "support", "客服")
+	createRole(t, r, adminToken, "helper", "客服")
 	operator := testutil.CreateUser(t, g, "rbac-support@example.com", "rbacsupport", "password123", true)
 	operatorToken := testutil.AccessToken(t, cfg, &operator)
-	assignRole(t, r, adminToken, operator.ID.String(), "support")
+	assignRole(t, r, adminToken, operator.ID.String(), "helper")
 
 	// 角色还没有任何权限：管理接口一律 403。
 	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("空权限角色访问用户列表应 403, got %d %s", w.Code, w.Body.String())
 	}
 
-	grantPermissions(t, r, adminToken, "support", []string{authz.PermUsersRead})
+	grantPermissions(t, r, adminToken, "helper", []string{authz.PermUsersRead})
 	if w := testutil.DoAuthJSON(r, http.MethodGet, "/api/admin/users", operatorToken, nil); w.Code != http.StatusOK {
 		t.Fatalf("已授予 users.read 应放行, got %d %s", w.Code, w.Body.String())
 	}
@@ -149,7 +149,7 @@ func TestCustomRoleOnlyGrantsAssignedRoutes(t *testing.T) {
 	}
 
 	// 追加授权后同一条 access token 立刻生效（权限每请求查库，不读 JWT claim）。
-	grantPermissions(t, r, adminToken, "support", []string{authz.PermUsersRead, authz.PermUsersCredits})
+	grantPermissions(t, r, adminToken, "helper", []string{authz.PermUsersRead, authz.PermUsersCredits})
 	if w := testutil.DoAuthJSON(r, http.MethodPost, "/api/admin/users/"+target.ID.String()+"/credits", operatorToken, creditBody); w.Code != http.StatusOK {
 		t.Fatalf("授予 users.credits 后应立即放行, got %d %s", w.Code, w.Body.String())
 	}

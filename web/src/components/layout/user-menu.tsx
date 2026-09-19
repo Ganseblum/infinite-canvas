@@ -1,6 +1,6 @@
 import { App, Avatar, Badge, Dropdown } from "antd";
 import type { MenuProps } from "antd";
-import { CreditCard, LogOut, MailWarning, Settings2, UserRound } from "lucide-react";
+import { CreditCard, LogOut, MailWarning, MessageSquareHeart, Settings2, UserRound } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
@@ -38,6 +38,7 @@ export function UserMenu() {
     const handleMenuClick = async (key: string) => {
         if (key === "profile") navigate("/profile");
         else if (key === "billing") navigate("/billing");
+        else if (key === "feedback") navigate("/feedback");
         else if (key === "logout") await logout();
         else if (key === "verify") {
             try {
@@ -72,6 +73,7 @@ export function UserMenu() {
               ]),
         { key: "profile", icon: <UserRound className="size-4" />, label: t("userMenu.profile") },
         { key: "billing", icon: <CreditCard className="size-4" />, label: t("userMenu.billing") },
+        { key: "feedback", icon: <MessageSquareHeart className="size-4" />, label: t("userMenu.feedback") },
         ...(user.role === "admin" && adminConsoleUrl
             ? [
                   {

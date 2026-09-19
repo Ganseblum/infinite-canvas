@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/infinite-canvas/server/internal/account"
@@ -20,6 +21,7 @@ import (
 	"github.com/infinite-canvas/server/internal/ai"
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/billing"
+	"github.com/infinite-canvas/server/internal/blog"
 	"github.com/infinite-canvas/server/internal/canvas"
 	"github.com/infinite-canvas/server/internal/config"
 	"github.com/infinite-canvas/server/internal/crypto"
@@ -238,6 +240,21 @@ func main() {
 	communityHandler := canvas.NewCommunityHandler(gormDB, siteSettings)
 	activityHandler := canvas.NewActivityHandler(gormDB, siteSettings, grantService, cfg)
 
+	// 博客产品域：公共内容读与互动在 /api/v1/blog，管理面经 admin 包注册（blog.read/write）。
+	blogRevalidator := blog.NewRevalidator(cfg.BlogRevalidateURL, cfg.BlogRevalidateSecret)
+	blogPublic := blog.NewPublicHandler(gormDB)
+	if moderationService.Enabled() {
+		blogPublic.SetTextChecker(func(ctx context.Context, userID uuid.UUID, text string) (bool, error) {
+			verdict, err := moderationService.Check(ctx, userID, moderation.StagePrompt, moderation.ContentText, text, nil, "")
+			if err != nil {
+				return false, err
+			}
+			return verdict.Decision == moderation.DecisionPassed, nil
+		})
+	}
+	blogAdmin := blog.NewAdminHandler(gormDB, blogRevalidator)
+	adminHandler.SetBlog(blogAdmin)
+
 	// M3 OIDC Provider（PLAN T09）：签名密钥从 OIDC_JWKS_PRIVATE_KEY（PEM PKCS#8）读取，
 	// 配置了但解析失败直接退出（fail-fast）；未配置时生成临时密钥并告警——重启后旧 token 失效，
 	// 生产环境必须显式配置。
@@ -288,6 +305,8 @@ func main() {
 	// token 无会话只能按 IP 键；authorize 浏览器直跳场景同样按 IP 拦截刷码。
 	oidcAuthLimiter := middleware.NewLimiter(10*time.Minute, 20)
 	oidcTokenLimiter := middleware.NewLimiter(10*time.Minute, 20)
+	// 反馈工单提交限流：10 次/小时/用户，与社区发布同量级，防刷工单队列。
+	feedbackLimiter := middleware.NewLimiter(time.Hour, 10)
 
 	api := router.Group("/api/v1")
 
@@ -349,6 +368,24 @@ func main() {
 		community.POST("/works/:id/report", communityHandler.Report)
 		community.GET("/users/:id", communityHandler.UserProfile)
 	}
+
+	// 反馈工单：登录用户提交与查看自己的工单；处理端在 /api/admin/feedback。
+	feedbackHandler := canvas.NewFeedbackHandler(gormDB)
+	feedback := api.Group("/feedback", middleware.Auth(secret), active, passwordGate)
+	{
+		feedback.POST("", middleware.RateLimit(feedbackLimiter, func(c *gin.Context) string { return "feedback:" + c.GetString("user_id") }), feedbackHandler.Create)
+		feedback.GET("", feedbackHandler.List)
+		feedback.GET("/:id", feedbackHandler.Get)
+		feedback.POST("/:id/replies", feedbackHandler.Reply)
+		feedback.POST("/:id/close", feedbackHandler.Close)
+	}
+
+	// 博客：内容读与评论列表公开（前台 Next 服务端内网拉取 + 游客），
+	// 发评/点赞/收藏需登录。发评限流 2 次/分钟 ≈ 30 秒一条（口径待确认）。
+	commentLimiter := middleware.NewLimiter(time.Minute, 2)
+	blogPublic.SetCommentLimiter(commentLimiter)
+	blog.MountContentRoutes(api.Group("/blog"), blogPublic)
+	blog.MountInteractionRoutes(api.Group("/blog", middleware.Auth(secret), active, passwordGate), blogPublic)
 
 	// 运营活动：签到与邀请返利只进赠送桶。
 	activity := api.Group("/activity", middleware.Auth(secret), active, passwordGate)

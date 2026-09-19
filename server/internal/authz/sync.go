@@ -11,9 +11,13 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 )
 
+// SupportRoleKey 是客服系统角色的标识：绑定反馈工单权限，由管理员在用户管理里任命。
+// 它是系统角色（不可删除），权限固定为反馈工单模块；需要更细的客服权限时另建自定义角色。
+const SupportRoleKey = "support"
+
 // Sync 是启动期的幂等同步，必须在 AutoMigrate 之后、EnsureAdmin 之前调用：
 //
-//  1. 保证系统角色 admin 存在且 is_system=true（显示名可被人工修改，不覆盖）；
+//  1. 保证系统角色 admin 与 support 存在且 is_system=true（显示名可被人工修改，不覆盖）；
 //  2. 把代码注册表投影到 permissions 表：新增插入、显示名/模块/排序更新，
 //     代码中已消失的 key 只置 deprecated_at，绝不删除；
 //  3. 处理改名逃生门 retiredKeys：旧 key 的角色分配幂等复制到新 key 后标废弃；
@@ -26,6 +30,9 @@ func Sync(db *gorm.DB) error {
 		return err
 	}
 	if err := syncPermissions(db); err != nil {
+		return err
+	}
+	if err := ensureSupportRole(db); err != nil {
 		return err
 	}
 	if err := applyRetiredAliases(db, retiredKeys); err != nil {
@@ -56,6 +63,45 @@ func ensureSystemRole(db *gorm.DB) error {
 	if !role.IsSystem {
 		if err := db.Model(&model.Role{}).Where("role_key = ?", SystemRoleKey).Update("is_system", true).Error; err != nil {
 			return fmt.Errorf("修复系统角色标记失败: %w", err)
+		}
+	}
+	return nil
+}
+
+// ensureSupportRole 保证客服系统角色存在，并幂等绑定反馈工单权限点。
+// 显示名由人工维护，这里只在缺失时写入默认值；权限绑定按 (role_key, permission_key)
+// 幂等补齐，人工解绑会在下次启动被补回（客服权限固定，与系统角色语义一致）。
+func ensureSupportRole(db *gorm.DB) error {
+	var role model.Role
+	err := db.First(&role, "role_key = ?", SupportRoleKey).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		now := time.Now()
+		role = model.Role{
+			Key:         SupportRoleKey,
+			Name:        "客服",
+			Description: "系统角色，处理用户反馈工单，不可删除",
+			IsSystem:    true,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := db.Create(&role).Error; err != nil {
+			return fmt.Errorf("创建客服系统角色失败: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("读取客服系统角色失败: %w", err)
+	}
+	if !role.IsSystem {
+		if err := db.Model(&model.Role{}).Where("role_key = ?", SupportRoleKey).Update("is_system", true).Error; err != nil {
+			return fmt.Errorf("修复客服系统角色标记失败: %w", err)
+		}
+	}
+	for _, key := range []string{PermFeedbackRead, PermFeedbackWrite} {
+		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.RolePermission{
+			RoleKey:       SupportRoleKey,
+			PermissionKey: key,
+			CreatedAt:     time.Now(),
+		}).Error; err != nil {
+			return fmt.Errorf("绑定客服权限 %s 失败: %w", key, err)
 		}
 	}
 	return nil

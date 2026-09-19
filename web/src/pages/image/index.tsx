@@ -26,6 +26,8 @@ import { useAddAsset } from "@/hooks/use-asset-library";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteGeneration, listGenerations } from "@/services/api/generations";
 import { useMediaDownload } from "@/hooks/use-media-download";
+import { GenerationRating, type GenerationRatingValue } from "@/components/generation-rating";
+import { deleteGenerationFeedback, setGenerationFeedback } from "@/services/api/feedback";
 import { getMediaBlob, mediaUrl } from "@/services/api/media";
 import { getCommunityWork } from "@/services/api/community";
 import type { GenerationItem } from "@/services/data/types";
@@ -42,6 +44,7 @@ type GeneratedImage = {
     height: number;
     bytes: number;
     mimeType?: string;
+    generationId?: string;
 };
 
 type GenerationResult = {
@@ -81,6 +84,23 @@ export default function ImagePage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const { download: downloadMedia, isDownloading } = useMediaDownload();
+    const [ratings, setRatings] = useState<Record<string, 1 | -1 | undefined>>({});
+    const rateGeneration = async (id: string, rating: GenerationRatingValue, meta?: { labels?: string; note?: string }) => {
+        if (!id) return;
+        try {
+            if (rating === null) await deleteGenerationFeedback(id);
+            else if (rating === 1 || rating === -1) await setGenerationFeedback(id, { rating, labels: meta?.labels, note: meta?.note });
+            else return;
+            setRatings((prev) => {
+                const next = { ...prev };
+                if (rating === null) delete next[id];
+                else next[id] = rating;
+                return next;
+            });
+        } catch (error) {
+            message.error(getApiErrorMessage(error));
+        }
+    };
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const config = useConfigStore((state) => state.config);
@@ -521,7 +541,7 @@ export default function ImagePage() {
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
-                                        <ResultImageCard key={result.id} image={result.image} index={index} downloading={isDownloading(result.image.storageKey)} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                        <ResultImageCard key={result.id} image={result.image} index={index} downloading={isDownloading(result.image.storageKey)} rating={ratings[result.image.generationId ?? ""]} onRate={(rating, meta) => void rateGeneration(result.image!.generationId ?? "", rating, meta)} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} />
                                     ) : (
@@ -598,6 +618,8 @@ function ResultImageCard({
     image,
     index,
     downloading,
+    rating,
+    onRate,
     onEdit,
     onDownload,
     onSaveAsset,
@@ -605,6 +627,8 @@ function ResultImageCard({
     image: GeneratedImage;
     index: number;
     downloading: boolean;
+    rating: GenerationRatingValue;
+    onRate: (rating: GenerationRatingValue, meta?: { labels?: string; note?: string }) => void;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
@@ -614,12 +638,13 @@ function ResultImageCard({
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
             <Image src={image.dataUrl} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square object-cover" />
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
-                <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
+                <div className="flex min-w-0 items-center gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
                         {image.width}x{image.height}
                     </span>
                     <span>{formatBytes(image.bytes)}</span>
                     <span>{formatDuration(image.durationMs)}</span>
+                    <GenerationRating generationId={image.generationId} value={rating} onChange={onRate} />
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
                     <Tooltip title={t("common.addToAssets")}>
@@ -841,7 +866,7 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
 function toGenerationLog(item: GenerationItem): GenerationLog {
     const result = (item.result || {}) as Partial<Pick<GenerationLog, "title" | "time" | "references" | "successCount" | "failCount" | "imageCount" | "size" | "quality" | "images">>;
     const config = (item.config || {}) as Partial<GenerationLogConfig>;
-    const images = (result.images || []).map((image) => ({ ...image, dataUrl: mediaUrl(image.storageKey) || image.dataUrl }));
+    const images = (result.images || []).map((image) => ({ ...image, dataUrl: mediaUrl(image.storageKey) || image.dataUrl, generationId: image.generationId || item.id }));
     const references = (result.references || []).map((item) => ({ ...item, dataUrl: mediaUrl(item.storageKey) || item.dataUrl }));
     return {
         id: item.id,

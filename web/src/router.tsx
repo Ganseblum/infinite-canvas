@@ -13,6 +13,7 @@ import BillingPage from "@/pages/billing";
 import CanvasPage from "@/pages/canvas";
 import CanvasProjectPage from "@/pages/canvas/project";
 import ConfigPage from "@/pages/config";
+import FeedbackPage from "@/pages/feedback";
 import HomePage from "@/pages/home";
 import ImagePage from "@/pages/image";
 import LoginPage from "@/pages/login";
@@ -96,6 +97,7 @@ export const router = createBrowserRouter([
                     { path: "/canvas", element: <CanvasPage /> },
                     { path: "/canvas/:id", element: <CanvasProjectPage /> },
                     { path: "/config", element: <ConfigPage /> },
+                    { path: "/feedback", element: <FeedbackPage /> },
                     { path: "/pricing", element: <PricingPage /> },
                     { path: "/profile", element: <ProfilePage /> },
                     { path: "/billing", element: <BillingPage /> },

@@ -21,9 +21,13 @@ func MountAssetRoutes(g *gin.RouterGroup, h *AssetHandler) {
 	g.DELETE("/:id", h.Delete)
 }
 
-// MountGenerationRoutes 注册生成记录三条路由，鉴权等中间件由调用方挂在分组上。
+// MountGenerationRoutes 注册生成记录三条路由与生成反馈三条路由，鉴权等中间件由调用方挂在分组上。
 func MountGenerationRoutes(g *gin.RouterGroup, h *GenerationHandler) {
 	g.GET("", h.List)
 	g.GET("/:id", h.Get)
 	g.DELETE("/:id", h.Delete)
+	// 生成结果点赞点踩：同一 (用户, 生成记录) 一条反馈，重复提交覆盖。
+	g.PUT("/:id/feedback", h.SetGenerationFeedback)
+	g.GET("/:id/feedback", h.GetGenerationFeedback)
+	g.DELETE("/:id/feedback", h.DeleteGenerationFeedback)
 }
