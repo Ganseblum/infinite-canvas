@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/errs"
 	"github.com/infinite-canvas/server/internal/httpx"
 	"github.com/infinite-canvas/server/internal/model"
@@ -214,7 +215,8 @@ func loadCommentAuthors(db *gorm.DB, userIDs []uuid.UUID) (map[uuid.UUID]comment
 		}
 		out[u.ID] = commentAuthor{
 			ID: u.ID.String(), Name: name, AvatarURL: u.AvatarURL,
-			IsAdmin: u.RoleKey != nil && *u.RoleKey == "admin",
+			// 与 RBAC 目录同一常量，避免角色字面量漂移。
+			IsAdmin: u.RoleKey != nil && *u.RoleKey == authz.SystemRoleKey,
 		}
 	}
 	return out, nil
@@ -458,6 +460,7 @@ func (h *PublicHandler) React(c *gin.Context) {
 }
 
 // Unreact 取消点赞：未点赞时幂等返回。
+// 与 React 不同，取消不校验目标存在性：目标已删时删除零行同样算已取消。
 func (h *PublicHandler) Unreact(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -485,6 +488,8 @@ type reactionTarget struct {
 	postID     uuid.UUID // comment 目标时冗余记录所属文章，便于计数
 }
 
+// bindReactionTarget 解析点赞目标参数：targetType 走模型白名单，
+// targetId 必须是合法 UUID，否则 400。
 func bindReactionTarget(c *gin.Context) (reactionTarget, bool) {
 	var req struct {
 		TargetType string `json:"targetType"`
@@ -634,6 +639,7 @@ func (h *PublicHandler) ListBookmarks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"posts": items, "total": total, "page": params.Page, "size": params.Size})
 }
 
+// publishedPostBySlug 按 slug 取已发布文章；未发布与不存在一律 404，不预告存在性。
 func (h *PublicHandler) publishedPostBySlug(c *gin.Context) (model.BlogPost, bool) {
 	var post model.BlogPost
 	if err := h.db.First(&post, "slug = ? AND status = ?",
