@@ -1,3 +1,4 @@
+// OpenAI 兼容 TTS 可用音色表，value 即请求里的 voice 参数。
 export const audioVoiceOptions = [
     { value: "alloy", label: "Alloy" },
     { value: "ash", label: "Ash" },
@@ -14,6 +15,7 @@ export const audioVoiceOptions = [
     { value: "cedar", label: "Cedar" },
 ];
 
+// 音频导出格式表，value 即请求里的 format 参数。
 export const audioFormatOptions = [
     { value: "mp3", label: "MP3" },
     { value: "wav", label: "WAV" },
@@ -23,6 +25,7 @@ export const audioFormatOptions = [
     { value: "pcm", label: "PCM" },
 ];
 
+// 取值不在表内时回落默认值，保证发到服务端的参数永远合法。
 export function normalizeAudioVoiceValue(value: string) {
     return audioVoiceOptions.some((item) => item.value === value) ? value : "alloy";
 }
@@ -31,6 +34,7 @@ export function normalizeAudioFormatValue(value: string) {
     return audioFormatOptions.some((item) => item.value === value) ? value : "mp3";
 }
 
+// 语速合法区间 0.25–4，保留两位小数；非法输入回落 1。
 export function normalizeAudioSpeedValue(value: string) {
     const speed = Number(value);
     if (!Number.isFinite(speed)) return "1";

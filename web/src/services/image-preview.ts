@@ -17,6 +17,7 @@ const previewListeners = new Set<() => void>();
 let previewRevision = 0;
 let previewQueue: Promise<unknown> = Promise.resolve();
 
+/** 取某张画布图片的本地预览 Blob URL；未生成过返回 undefined。 */
 export function previewUrlFor(storageKey?: string) {
     return storageKey ? previewUrls.get(storageKey) : undefined;
 }
@@ -33,6 +34,7 @@ export function getImagePreviewRevision() {
     return previewRevision;
 }
 
+/** 检查内存/本地缓存里的预览，没有则排队回源生成；立即返回值可能为 undefined，生成后经订阅通知。 */
 export async function ensureImagePreview(storageKey?: string) {
     if (!storageKey) return undefined;
     const cached = previewUrls.get(storageKey);

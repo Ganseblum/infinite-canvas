@@ -4,6 +4,7 @@ export const metadata = {
   alternates: { canonical: "/about" },
 };
 
+/** 关于页（/about）：纯静态内容，无数据请求；SEO 元信息由静态 metadata 提供。 */
 export default function AboutPage() {
   return (
     <main id="view-about">

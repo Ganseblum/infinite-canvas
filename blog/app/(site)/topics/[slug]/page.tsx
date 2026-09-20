@@ -5,6 +5,7 @@ import { fetchPostList, fetchTopics, REVALIDATE_FALLBACK } from "@/lib/blog-api"
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ page?: string }> };
 
+// 逐页 head；栏目不存在只给占位标题，真正的 404 由页面本体负责。
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const topics = await fetchTopics().catch(() => null);
@@ -17,6 +18,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+/**
+ * 栏目详情页（/topics/[slug]）：该栏目文章分页列表 + 其他栏目索引。
+ * 栏目列表拉取失败或 slug 不存在时转 404；文章列表失败降级为空列表，
+ * 页头栏目信息仍可渲染（topics 已在前一步拿到）。
+ */
 export default async function TopicPage({ params, searchParams }: Props) {
   const { slug } = await params;
   const { page: pageParam } = await searchParams;

@@ -11,12 +11,20 @@ import { useAgentStore, type AgentChatItem } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 type ScopeFilter = "all" | AgentSkillScope;
+// 技能草稿的来源：从当前会话内容归纳，或从画布内容归纳。
 type SkillDraftSource = "conversation" | "canvas";
+// 编辑器状态：新建（可带草稿初值）或编辑（携带服务端详情与乐观锁 revision）。
 type SkillEditor = { mode: "create"; values?: SkillFormValues } | { mode: "edit"; detail: AgentSkillDetail };
 type SkillFormValues = { name: string; description: string; instructions: string; displayName?: string; shortDescription?: string; defaultPrompt?: string };
 
+// 技能标识只允许小写字母数字与中划线，中划线不能连续或出现在首尾。
 const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * 技能管理页：技能列表（搜索/来源筛选/启停/选用）与新建/编辑/删除流程。
+ * 新建支持从会话或画布让 Codex 生成草稿，也可手动空白创建；
+ * 所有写操作都经 connectionIsCurrent 校验，防止请求返回时已切换连接导致状态错乱。
+ */
 export function AgentSkillsView({ clientId }: { clientId: string }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -50,6 +58,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
     const [createMenuOpen, setCreateMenuOpen] = useState(false);
     const [busySkill, setBusySkill] = useState("");
     const [errorsOpen, setErrorsOpen] = useState(false);
+    // 持有删除确认弹窗实例：断线时需要主动 destroy，避免确认后作用于已失效的连接。
     const confirmRef = useRef<{ destroy: () => void } | null>(null);
     const [form] = Form.useForm<SkillFormValues>();
     const endpoint = url.trim().replace(/\/$/, "");
@@ -64,15 +73,19 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
     const editorValues = editor?.mode === "edit" ? skillFormValues(editor.detail) : editor?.values;
 
     const refresh = (forceReload = true) => loadSkills(endpoint, token, forceReload);
+    // 异步结果的时效校验：connectionRevision 在每次重连后递增，配合当前地址/token 判断
+    // 请求发出时的连接是否仍然有效，失效则丢弃结果且不弹提示。
     const connectionIsCurrent = (revision: number) => {
         const agent = useAgentStore.getState();
         const skillsState = useAgentSkillStore.getState();
         return skillsState.connectionRevision === revision && agent.connected && agent.url.trim().replace(/\/$/, "") === endpoint && agent.token === token;
     };
     useEffect(() => {
+        // 服务端生成的技能草稿到达后自动打开新建弹窗；已打开时不覆盖用户正在编辑的内容。
         if (draft) setEditor((current) => current || { mode: "create", values: draftFormValues(draft) });
     }, [draft]);
     useEffect(() => {
+        // 断线后关闭所有弹窗/确认框并复位表单，避免基于失效连接继续操作。
         if (connected) return;
         confirmRef.current?.destroy();
         confirmRef.current = null;
@@ -84,10 +97,12 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         setErrorsOpen(false);
         form.resetFields();
     }, [connected, form]);
+    /** 选用技能：写入技能 store 并切回聊天页，由输入框以 `/` mention 形式生效。 */
     const useSkill = (skill: AgentSkillSummary) => {
         selectSkill(skill);
         setAgentState({ activeTab: "chat" });
     };
+    /** 让 Codex 从会话/画布生成技能草稿；画布来源需先同步一次画布快照。 */
     const generateDraft = async (source: SkillDraftSource) => {
         const agent = useAgentStore.getState();
         if (agent.sending || agent.waiting) return message.warning(t("agent.skillManager.codexBusy"));
@@ -97,6 +112,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         const connectionRevision = useAgentSkillStore.getState().connectionRevision;
         setGeneratingSource(source);
         try {
+            // 画布草稿依赖最新快照：生成前强制上报一次画布状态，失败直接终止。
             if (source === "canvas") {
                 const synced = await postState(endpoint, token, clientId, agent.canvasContext?.snapshot || null);
                 if (!synced) throw new Error(t("agent.skillManager.syncFailed"));
@@ -119,6 +135,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
             if (connectionIsCurrent(connectionRevision)) setGeneratingSource(null);
         }
     };
+    /** 打开编辑弹窗：先拉取服务端技能详情（含乐观锁 revision）；外部技能只读不可编辑。 */
     const openEdit = async (skill: AgentSkillSummary) => {
         if (!skill.managed || busySkill || useAgentSkillStore.getState().generatingSource) return;
         const connectionRevision = useAgentSkillStore.getState().connectionRevision;
@@ -134,12 +151,14 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
             if (connectionIsCurrent(connectionRevision)) setBusySkill("");
         }
     };
+    /** 保存技能（新建或更新）：校验表单、确保 defaultPrompt 引用了技能本身，成功后关闭弹窗并刷新列表。 */
     const saveSkill = async () => {
         if (!editor) return;
         let values: SkillFormValues;
         try {
             values = await form.validateFields();
         } catch {
+            // 校验失败时展开高级折叠区（错误可能藏在里面）并滚动到第一个出错字段。
             const firstError = form.getFieldsError().find((field) => field.errors.length);
             if (firstError?.name.some((name) => name === "shortDescription" || name === "defaultPrompt")) setAdvancedOpen(true);
             if (firstError) requestAnimationFrame(() => form.scrollToField(firstError.name, { block: "center" }));
@@ -147,6 +166,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         }
         const name = editor.mode === "edit" ? editor.detail.name : values.name.trim();
         const skillInterface = compactInterface(values);
+        // defaultPrompt 会被原样发给模型，必须包含 $技能名 引用，否则模型不知道这是技能入口。
         if (skillInterface?.defaultPrompt && !mentionsSkill(skillInterface.defaultPrompt, name)) {
             form.setFields([{ name: "defaultPrompt", errors: [t("agent.skillManager.defaultPromptMention", { name })] }]);
             setAdvancedOpen(true);
@@ -159,6 +179,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         try {
             const input = { description: values.description.trim(), instructions: values.instructions.trim(), interface: skillInterface || null };
             if (editor.mode === "create") await createCodexSkill(endpoint, token, { name, ...input });
+            // 更新带 expectedRevision 乐观锁：服务端内容已被他端修改时请求会失败。
             else await updateCodexSkill(endpoint, token, name, { ...input, expectedRevision: editor.detail.revision });
             if (!connectionIsCurrent(connectionRevision)) return;
             setDraft(null);
@@ -173,6 +194,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
             if (connectionIsCurrent(connectionRevision)) setSaving(false);
         }
     };
+    /** 删除技能：先拉详情拿最新 revision 再删除（乐观锁），删除的是当前选用技能时清空选用。 */
     const confirmDelete = (skill: AgentSkillSummary) => {
         const connectionRevision = useAgentSkillStore.getState().connectionRevision;
         confirmRef.current = modal.confirm({
@@ -207,6 +229,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
             },
         });
     };
+    /** 启停技能：停用当前选用技能时同步清空选用，避免聊天里引用已停用的技能。 */
     const toggleEnabled = async (skill: AgentSkillSummary, enabled: boolean) => {
         const connectionRevision = useAgentSkillStore.getState().connectionRevision;
         if (!connectionIsCurrent(connectionRevision)) return;
@@ -223,6 +246,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         }
     };
     const codexBusy = sending || waiting;
+    // 「新建技能」菜单：会话/画布生成项的禁用态与说明文案随当前状态动态切换。
     const createMenu: MenuProps = {
         items: [
             {
@@ -414,6 +438,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
     );
 }
 
+/** 服务端技能详情 → 表单初值（interface 可选字段缺省为 undefined）。 */
 function skillFormValues(detail: AgentSkillDetail): SkillFormValues {
     return {
         name: detail.name,
@@ -425,6 +450,7 @@ function skillFormValues(detail: AgentSkillDetail): SkillFormValues {
     };
 }
 
+/** Codex 生成的技能草稿 → 新建表单初值。 */
 function draftFormValues(draft: AgentSkillDraft): SkillFormValues {
     return {
         name: draft.name,
@@ -436,10 +462,12 @@ function draftFormValues(draft: AgentSkillDraft): SkillFormValues {
     };
 }
 
+/** 判断当前线程是否存在已归属到 turn 的用户消息（即至少完成过一轮对话，可供草稿生成取材）。 */
 function hasSettledConversation(messages: AgentChatItem[], threadId: string) {
     return Boolean(threadId && messages.some((item) => item.role === "user" && item.threadId === threadId && item.turnId));
 }
 
+/** 汇总表单里的可选展示字段；三者全空返回 undefined，服务端按无 interface 处理。 */
 function compactInterface(values: SkillFormValues): AgentSkillInterface | undefined {
     const skillInterface = {
         displayName: values.displayName?.trim() || undefined,
@@ -449,6 +477,7 @@ function compactInterface(values: SkillFormValues): AgentSkillInterface | undefi
     return Object.values(skillInterface).some(Boolean) ? skillInterface : undefined;
 }
 
+/** defaultPrompt 是否包含对技能的引用（$name 后不能紧跟标识符字符或 :路径，防止误匹配同类名前缀）。 */
 function mentionsSkill(prompt: string, name: string) {
     return new RegExp(`\\$${name}(?![A-Za-z0-9_-]|:[A-Za-z0-9_-])`).test(prompt);
 }

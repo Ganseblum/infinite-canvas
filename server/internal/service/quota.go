@@ -84,6 +84,7 @@ func (s *QuotaService) ExpiringMedia(ctx context.Context, userID uuid.UUID, rete
 // CountGenerationsToday 统计今日生成条数（仅用于展示，不参与拦截）。
 func (s *QuotaService) CountGenerationsToday(ctx context.Context, userID uuid.UUID) (int64, error) {
 	var count int64
+	// 按 UTC 日界取当日零点，仅作展示口径。
 	start := time.Now().UTC().Truncate(24 * time.Hour)
 	err := s.db.WithContext(ctx).Model(&model.Generation{}).
 		Where("user_id = ? AND created_at >= ?", userID, start).Count(&count).Error

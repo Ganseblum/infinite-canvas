@@ -25,6 +25,7 @@ function injectCSS(css: string, key?: string) {
     return () => style.remove();
 }
 
+/** 取全局唯一的插件运行时（并挂到 window.InfiniteCanvasRuntime），插件经它复用宿主 React 与事件总线。 */
 export function getPluginRuntime(): PluginRuntime {
     if (!runtime) {
         runtime = {

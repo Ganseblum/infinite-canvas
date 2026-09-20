@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
 import { readImageMeta } from "@/lib/image-utils";
 
+/** 归一化裁剪框：x/y/width/height 均为 0~1 相对原图的比例，缩放平移预览不受影响。 */
 export type CanvasImageCropRect = {
     x: number;
     y: number;
@@ -14,11 +15,18 @@ export type CanvasImageCropRect = {
 };
 
 type DragMode = "move" | "resize";
+/** 八个方向的缩放手柄。 */
 type ResizeHandle = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
 
 const handles: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-const minSize = 0.06;
+const minSize = 0.06; // 裁剪框最小边长（相对原图），避免缩成一个点。
 const defaultCrop = { x: 0.12, y: 0.12, width: 0.76, height: 0.76 };
+
+/**
+ * 图片裁剪弹窗：拖动裁剪框整体移动，八向手柄缩放；
+ * 支持比例锁定（自由/当前比例/原图/1:1/4:3/16:9/9:16），
+ * 确认后把归一化裁剪框回传给父层换算成像素。
+ */
 export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (crop: CanvasImageCropRect) => void }) {
     const { t } = useTranslation();
     const [crop, setCrop] = useState<CanvasImageCropRect>(defaultCrop);
@@ -48,6 +56,7 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
         return () => dragAbortRef.current?.abort();
     }, [open]);
 
+    // 拖拽用 AbortController 管理 window 级监听，弹窗关闭或重拖时统一 abort。
     const startDrag = (mode: DragMode, event: ReactPointerEvent, handle?: ResizeHandle) => {
         const box = boxRef.current?.getBoundingClientRect();
         if (!box) return;
@@ -82,6 +91,7 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
                                 <img src={dataUrl} alt="" className="block h-full w-full object-contain opacity-90" draggable={false} />
                             </div>
                             <CropMask crop={crop} />
+                            {/* 裁剪框：三分线辅助构图，8 个手柄各自接管缩放拖拽。 */}
                             <div className="absolute cursor-move border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,.3),0_0_28px_rgba(0,0,0,.28)]" style={cropStyle(crop)} onPointerDown={(event) => startDrag("move", event)}>
                                 <div className="pointer-events-none absolute inset-x-0 top-1/3 border-t border-white/50" />
                                 <div className="pointer-events-none absolute inset-x-0 top-2/3 border-t border-white/50" />
@@ -158,6 +168,7 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
     );
 }
 
+/** 裁剪框外的四块半透明遮罩，突出选区。 */
 function CropMask({ crop }: { crop: CanvasImageCropRect }) {
     return (
         <>
@@ -169,10 +180,12 @@ function CropMask({ crop }: { crop: CanvasImageCropRect }) {
     );
 }
 
+/** 整体平移裁剪框，限制在图片范围内。 */
 function moveCrop(crop: CanvasImageCropRect, dx: number, dy: number): CanvasImageCropRect {
     return { ...crop, x: clamp(crop.x + dx, 0, 1 - crop.width), y: clamp(crop.y + dy, 0, 1 - crop.height) };
 }
 
+/** 按手柄方向缩放裁剪框；锁定比例时以拖动量更大的轴为准，并把结果夹回图片与最小尺寸内。 */
 function resizeCrop(crop: CanvasImageCropRect, dx: number, dy: number, handle: ResizeHandle, aspectRatio: number | null, box: DOMRect): CanvasImageCropRect {
     let next = { ...crop };
     if (handle.includes("e")) next.width = crop.width + dx;
@@ -186,6 +199,7 @@ function resizeCrop(crop: CanvasImageCropRect, dx: number, dy: number, handle: R
         next.height = crop.height - dy;
     }
     if (aspectRatio) {
+        // aspectRatio 是真实宽高比，乘 box.height/box.width 换算成归一化坐标下的比例。
         const normalizedRatio = aspectRatio * (box.height / box.width);
         const horizontalOnly = (handle.includes("e") || handle.includes("w")) && !handle.includes("n") && !handle.includes("s");
         const useWidth = horizontalOnly || (handle.length > 1 && Math.abs(dx * box.width) >= Math.abs(dy * box.height));
@@ -215,6 +229,7 @@ function resizeCrop(crop: CanvasImageCropRect, dx: number, dy: number, handle: R
     return next;
 }
 
+/** 把比例档位解析成宽高比：free=null，fixed=当前比例，original=原图，其余按 "w:h" 解析。 */
 function resolveRatio(preset: string, image: { width: number; height: number } | null, fixedRatio: number | null) {
     if (preset === "free" || !image) return null;
     if (preset === "fixed") return fixedRatio;
@@ -223,6 +238,7 @@ function resolveRatio(preset: string, image: { width: number; height: number } |
     return width > 0 && height > 0 ? width / height : null;
 }
 
+/** 切换比例档位后把现有裁剪框等比收缩到新比例，居中放置。 */
 function fitCropToRatio(crop: CanvasImageCropRect, ratio: number, image: { width: number; height: number }): CanvasImageCropRect {
     const normalizedRatio = ratio * (image.height / image.width);
     let width = crop.width;
@@ -251,6 +267,7 @@ function cropStyle(crop: CanvasImageCropRect) {
     return { left: `${crop.x * 100}%`, top: `${crop.y * 100}%`, width: `${crop.width * 100}%`, height: `${crop.height * 100}%` };
 }
 
+/** 手柄的定位样式与对应方向光标。 */
 function handleStyle(handle: ResizeHandle) {
     const top = handle.includes("n") ? "-6px" : handle.includes("s") ? "calc(100% - 6px)" : "calc(50% - 6px)";
     const left = handle.includes("w") ? "-6px" : handle.includes("e") ? "calc(100% - 6px)" : "calc(50% - 6px)";
@@ -261,6 +278,7 @@ function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
 }
 
+/** 宽高比化简成最简整数比（如 1920x1080 → 16:9）。 */
 function formatRatio(width: number, height: number) {
     const divisor = gcd(width, height);
     return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;

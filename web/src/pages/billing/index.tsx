@@ -15,12 +15,19 @@ import { OrderHistory } from "./components/order-history";
 import { PackageGrid } from "./components/package-grid";
 import { PaymentModal } from "./components/payment-modal";
 
+/**
+ * 从限流错误里提取 Retry-After 秒数（向上取整）。
+ * @returns 可用于倒计时的秒数；非限流错误或取值非法时返回 null
+ */
 function retryAfterSeconds(error: unknown): number | null {
     if (!(error instanceof ApiError)) return null;
     const seconds = error.retryAfter;
     return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null;
 }
 
+/** 充值页入口：点数余额概览 + 套餐下单 + 订单历史。
+ * 下单成功打开支付弹窗；被限流时进入秒级倒计时，期间禁用全部购买按钮。
+ */
 export default function BillingPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -42,9 +49,11 @@ export default function BillingPage() {
         queryKey: ["credits", userId],
         queryFn: ({ signal }) => getCredits(signal),
         enabled: authenticated,
+        // 支付完成切回本页时自动刷新余额，避免看到下单前的旧值。
         refetchOnWindowFocus: true,
     });
 
+    // 限流倒计时：每秒递减到 0，期间购买按钮保持禁用。
     useEffect(() => {
         if (rateLimitSeconds <= 0) return;
         const timer = window.setTimeout(() => setRateLimitSeconds((value) => Math.max(0, value - 1)), 1000);
@@ -58,6 +67,7 @@ export default function BillingPage() {
             await queryClient.invalidateQueries({ queryKey: ["orders", userId] });
         },
         onError: (error) => {
+            // 命中下单限流时不弹错误，改为页面顶部倒计时提示。
             const seconds = retryAfterSeconds(error);
             if (seconds) {
                 setRateLimitSeconds(seconds);

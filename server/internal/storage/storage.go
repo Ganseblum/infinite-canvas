@@ -1,3 +1,6 @@
+// Package storage 媒体对象存储抽象：Storage 接口配 local 与 s3 两种驱动。
+// 对象路径统一为「{用户 id}/{类型段}/{对象 id}」（干净原件为 {用户 id}/orig/{id}），
+// handler 负责把服务端生成的 storageKey 组装成路径，驱动只按路径读写。
 package storage
 
 import (

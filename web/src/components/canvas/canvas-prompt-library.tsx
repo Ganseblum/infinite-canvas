@@ -7,6 +7,7 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+/** 提示词库入口按钮：点击打开提示词选择弹窗，选中后把提示词文本回传 onSelect。 */
 export function CanvasPromptLibrary({ onSelect }: { onSelect: (prompt: string) => void }) {
     const { t } = useTranslation();
     const [open, setOpen] = useState(false);

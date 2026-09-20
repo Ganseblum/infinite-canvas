@@ -9,9 +9,13 @@ export type AgentAttachment = { id: string; name: string; type: string; size: nu
 export type AgentMessageAttachment = Pick<AgentAttachment, "id" | "name" | "url"> & Partial<Pick<AgentAttachment, "type" | "size" | "width" | "height" | "dataUrl">>;
 export type AgentCanvasReference = Pick<CanvasResourceReference, "nodeId" | "label" | "title" | "kind" | "previewUrl" | "text">;
 export type AgentSkillReference = { name: string; path: string; displayName?: string };
+/** 面板里一条聊天消息：按 threadId/turnId/itemId 归属，流式期间用 streamId 关联增量。 */
 export type AgentChatItem = { id: string; itemId?: string; clientMessageId?: string; threadId?: string; turnId?: string; role: AgentChatRole; title?: string; text: string; meta?: string; detail?: unknown; attachments?: AgentMessageAttachment[]; canvasReferences?: AgentCanvasReference[]; skill?: AgentSkillReference; streamId?: string; activityItems?: Record<string, string> };
+/** 面板右侧日志里的一条事件记录。 */
 export type AgentEventLog = { id: string; time: string; title: string; text: string; raw?: unknown };
+/** Agent 发起的工具调用，等待用户在面板里确认；input 可携带画布 ops。 */
 export type AgentPendingToolCall = { requestId: string; name: string; input?: { ops?: CanvasAgentOp[]; path?: string } & Record<string, unknown> };
+/** 权限模式：request 逐次询问 / automatic 自动放行 / full 全量放行。 */
 export type AgentPermissionMode = "request" | "automatic" | "full";
 export type AgentReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type AgentModel = {
@@ -23,11 +27,14 @@ export type AgentModel = {
     isDefault?: boolean;
 };
 export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline";
+/** 待用户裁决的审批请求（命令执行、网络访问等），deciding 记录已点击的决定以便置灰。 */
 export type AgentPendingApproval = { requestId: string; method: string; threadId?: string; turnId?: string; itemId?: string; reason?: string; command?: unknown; cwd?: string; grantRoot?: string; networkApprovalContext?: unknown; permissions?: unknown; deciding?: AgentApprovalDecision };
+/** 注入给 Agent 的画布上下文：快照 + 应用/回滚 ops 的句柄，供 Agent 读写画布。 */
 export type AgentCanvasContext = { snapshot: CanvasAgentSnapshot; applyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot; undoOps: () => CanvasAgentSnapshot | null; canUndo: boolean };
 export type AgentThreadSummary = { id: string; preview: string; name?: string | null; cwd?: string; status?: string; source?: unknown; createdAt?: number; updatedAt?: number };
 export type AgentTokenUsage = { input: number; cached: number; output: number };
 export type AgentBootstrapStatus = { key: string; text: string; detail: string; status: "running" | "ready" | "error" };
+/** 与 Agent 侧服务的一条会话连接状态；revision 递增用于识别重连。 */
 export type AgentConversationState = {
     revision: number;
     conversationId: string;
@@ -39,7 +46,9 @@ export type AgentConversationState = {
 };
 export type AgentPanelTab = "chat" | "setup" | "history" | "skills" | "log";
 
+// SSE 建连超时：超时后由连接层标记失败并提示用户。
 const CONNECT_TIMEOUT_MS = 6000;
+// 模块级持有的 EventSource 引用，断开时由 disconnectAgent 统一关闭。
 let agentSource: EventSource | null = null;
 let connectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -93,8 +102,14 @@ type AgentStore = {
     clearEventLogs: () => void;
 };
 
+// 面板收起动效时长：closePanel 延迟等动画播完再复位 panelClosing。
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 
+/**
+ * 本地 Agent 面板 store：管面板开合、SSE 连接配置（url/token）、会话消息、
+ * 线程列表、工具审批与技能/权限选择。连接参数与部分偏好直接存 localStorage
+ * （canvas-agent-* 键），消息与线程不持久化（历史由 Agent 侧服务保管）。
+ */
 export const useAgentStore = create<AgentStore>((set, get) => ({
     width: typeof window === "undefined" ? 440 : Number(localStorage.getItem("canvas-agent-panel-width")) || 440,
     panelOpen: false,
@@ -161,6 +176,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         set({ url: endpoint, token, enabled: true, silentConnect: silent, fragmentBootstrap: false, activity: i18n.t("agent.status.connecting"), connectError: "" });
     },
     disconnectAgent: (patch = {}) => {
+        // 关闭 SSE 与超时定时器后统一复位连接态；patch 允许调用方附带额外清理（如切换连接地址）。
         agentSource?.close();
         agentSource = null;
         if (connectTimer) clearTimeout(connectTimer);

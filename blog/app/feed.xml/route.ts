@@ -4,6 +4,7 @@ import { fetchPostList } from "@/lib/blog-api";
 // 路由本身不缓存（每次生成），数据层带标签缓存 + 兜底过期。
 export const dynamic = "force-dynamic";
 
+/** XML 特殊字符转义，防止标题/摘要里的 &、< 破坏 RSS 结构。 */
 function escapeXml(s: string) {
   return s
     .replaceAll("&", "&amp;")
@@ -16,6 +17,7 @@ function escapeXml(s: string) {
 export async function GET() {
   const site = (process.env.BLOG_SITE_URL ?? "http://localhost:3101").replace(/\/$/, "");
   const list = await fetchPostList({ page: 1 }).catch(() => null);
+  // RSS 只输出最近 20 篇，完整历史靠站点与 sitemap
   const posts = list?.posts.slice(0, 20) ?? [];
 
   const items: string[] = [];

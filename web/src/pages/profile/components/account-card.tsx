@@ -6,6 +6,9 @@ import { useNavigate } from "react-router-dom";
 
 import type { MeResponse } from "@/services/api/account";
 
+/** 个人中心左侧账号卡片：头像、昵称邮箱、套餐与付费到期时间，以及充值入口。
+ * @param me GET /me 返回的用户与点数信息
+ */
 export function AccountCard({ me }: { me: MeResponse }) {
     const { t } = useTranslation();
     const navigate = useNavigate();

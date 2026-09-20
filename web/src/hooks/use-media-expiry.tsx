@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useMeQuery } from "@/pages/profile/use-me";
 import type { MeResponse } from "@/services/api/account";
 
+/** 把到期时间格式化成相对文案：2 天以上按天、1 小时以上按小时、其余按分钟。 */
 export function formatMediaExpiryTime(target: Dayjs, t: TFunction): string {
     const minutes = Math.max(1, target.diff(dayjs(), "minute"));
     if (minutes >= 48 * 60) return t("profile.usage.expiryDays", { count: Math.ceil(minutes / (24 * 60)) });

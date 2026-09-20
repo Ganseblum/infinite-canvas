@@ -8,20 +8,31 @@ import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
+/** @ 提及状态：@ 起始位置与查询词。 */
 type MentionState = {
     start: number;
     query: string;
 };
 
+/**
+ * 文本域（textarea）扩展 props。
+ * 在原生 textarea 之上叠加 @ 引用能力：候选菜单、高亮层、整块删除引用标签。
+ */
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> & {
-    value: string;
-    references: CanvasResourceReference[];
+    value: string; // 纯文本值，引用以 label 形式内联。
+    references: CanvasResourceReference[]; // @ 可引用的资源候选。
     onChange: (value: string) => void;
-    onSubmit?: () => void;
-    containerClassName?: string;
-    highlightLabels?: boolean;
+    onSubmit?: () => void; // 非 IME 合成的回车提交。
+    containerClassName?: string; // 外层容器的额外类名。
+    highlightLabels?: boolean; // 是否渲染引用标签高亮层。
 };
 
+/**
+ * 节点文本编辑 textarea（forwardRef 暴露内部元素）。
+ * 高亮实现：textarea 文字透明，底层同布局的 overlay 渲染高亮后的文本；
+ * 支持 @ 唤起候选菜单（按光标像素位置定位，处理画布缩放）、
+ * Backspace/Delete 整块删除引用标签、Enter 提交。
+ */
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea({ value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, ...props }, forwardedRef) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -38,6 +49,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     }, [mention, references]);
     const activeLabels = useMemo(() => (highlightLabels ? Array.from(new Set(references.filter((item) => item.active).map((item) => item.label))).sort((a, b) => b.length - a.length) : []), [highlightLabels, references]);
 
+    // onChange 后下一帧恢复焦点与光标：受控组件 re-render 会重置选区位置。
     const updateValue = (next: string, selectionStart?: number) => {
         onChange(next);
         if (typeof selectionStart !== "number") return;
@@ -52,6 +64,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         setActiveIndex(0);
     };
 
+    // 光标前以 @（且前面是行首或空白）结尾时唤起候选菜单。
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
         const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
@@ -79,6 +92,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         overlayRef.current.scrollLeft = textareaRef.current.scrollLeft;
     };
 
+    // 选中态下关闭高亮层：overlay 与选区高亮叠加会互相遮挡。
     const updateSelectionState = () => {
         const textarea = textareaRef.current;
         setHasSelection(Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd));
@@ -91,6 +105,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         caretColor: style?.color || theme.node.text,
         cursor: "text",
         // The highlight layer covers the textarea when showOverlay is active, so keep the textarea above it to preserve the native caret.
+        // 高亮层会盖在 textarea 上方，把 textarea 抬到 zIndex 1 以保留原生光标。
         ...(showOverlay ? { position: "relative", zIndex: 1, background: "transparent", backgroundColor: "transparent" } : {}),
     } as CSSProperties;
     const menu = mention && candidates.length && textareaRef.current ? <MentionMenu textarea={textareaRef.current} caretIndex={mention.start} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null;
@@ -141,6 +156,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     if ((event.key === "Backspace" || event.key === "Delete") && !mention) {
                         const el = textareaRef.current;
                         if (el && el.selectionStart === el.selectionEnd) {
+                            // 无选区时尝试整块删除相邻的引用标签。
                             const result = deleteAdjacentLabel(value, el.selectionStart, event.key === "Backspace" ? "backward" : "forward", activeLabels);
                             if (result) {
                                 event.preventDefault();
@@ -194,6 +210,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     );
 });
 
+/** 高亮层：把 value 里的引用标签渲染成蓝色徽标，与 textarea 文本逐像素重叠。 */
 function MentionHighlightText({ value, labels, placeholder }: { value: string; labels: string[]; placeholder: boolean }) {
     if (placeholder) return <span className="opacity-45">{value}</span>;
     if (!labels.length) return <>{value}</>;
@@ -213,6 +230,10 @@ function MentionHighlightText({ value, labels, placeholder }: { value: string; l
     );
 }
 
+/**
+ * @ 提及候选菜单：portal 到 body，锚定到 @ 处光标的像素位置。
+ * textarea 可能被画布缩放：rect 是缩放后坐标，mirror 测量是布局坐标，统一乘 scale 换算。
+ */
 function MentionMenu({ textarea, caretIndex, references, activeIndex, theme, onSelect }: { textarea: HTMLTextAreaElement; caretIndex: number; references: CanvasResourceReference[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (reference: CanvasResourceReference) => void }) {
     const selectedRef = useRef(false);
     const rect = textarea.getBoundingClientRect();
@@ -236,6 +257,7 @@ function MentionMenu({ textarea, caretIndex, references, activeIndex, theme, onS
         event.stopPropagation();
     };
     const selectReference = (reference: CanvasResourceReference) => {
+        // onPointerDown 与 onClick 都会触发选择，标记防止重复插入。
         if (selectedRef.current) return;
         selectedRef.current = true;
         onSelect(reference);
@@ -279,6 +301,7 @@ function MentionMenu({ textarea, caretIndex, references, activeIndex, theme, onS
     );
 }
 
+/** 引用候选行的小预览：图片缩略图 / 视频首帧 / 类型图标。 */
 function ReferencePreview({ reference }: { reference: CanvasResourceReference }) {
     if (reference.kind === "image" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-9 rounded-md object-cover" />;
     if (reference.kind === "video" && reference.previewUrl) return <video src={reference.previewUrl} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" />;
@@ -296,8 +319,10 @@ function clamp(value: number, min: number, max: number) {
 }
 
 // Mirror the textarea layout in a div to measure the caret at index in unscaled layout coordinates.
+// 镜像 textarea 布局所需的样式属性，用于在隐藏 div 中测量光标位置。
 const MIRROR_STYLE_PROPS = ["boxSizing", "width", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "fontStyle", "fontVariant", "fontWeight", "fontStretch", "fontSize", "lineHeight", "fontFamily", "textAlign", "textIndent", "letterSpacing", "wordSpacing", "tabSize", "textTransform"] as const;
 
+/** 用隐藏镜像 div 测量 index 处光标的布局坐标（未缩放）。 */
 function getCaretPoint(textarea: HTMLTextAreaElement, index: number) {
     const computed = window.getComputedStyle(textarea);
     const mirror = document.createElement("div");
@@ -325,6 +350,8 @@ function escapeRegExp(value: string) {
 
 // A plain textarea cannot represent atomic tokens, so delete a complete reference label at once.
 // Labels must be ordered by descending length so longer labels match first.
+// 纯 textarea 无法表达原子块，退格/删除时一次删掉完整的引用标签；
+// labels 必须按长度降序传入，保证长标签优先命中。
 function deleteAdjacentLabel(value: string, caret: number, direction: "backward" | "forward", labels: string[]): { value: string; caret: number } | null {
     if (direction === "backward") {
         const before = value.slice(0, caret);

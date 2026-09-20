@@ -6,9 +6,11 @@ import { authFetch } from "@/lib/auth-client";
 
 // 点赞 / 收藏操作栏：走同域代理 /api/v1/blog/*（cookie 落 blog 子域）。
 // 未登录（401）时提示登录；重复点击幂等，服务端按主键去重。
+// 计数初值来自文章详情接口；liked/marked 的个人状态详情接口不含，
+// 首次交互前一律按未选中渲染，以服务端返回值纠正。
 type Props = {
-  postId: string;
-  postSlug: string;
+  postId: string; // 点赞目标（reactions 端点按 id 定位）
+  postSlug: string; // 收藏与登录回跳按 slug 定位
   likeCount: number;
   bookmarkCount: number;
 };
@@ -42,6 +44,7 @@ export default function InteractionBar({ postId, postSlug, likeCount, bookmarkCo
     }
   };
 
+  // 收藏走文章维度的 PUT 开关端点，与点赞的 reactions 端点不同
   const toggleBookmark = async () => {
     const out = await call(marked ? "DELETE" : "PUT", `posts/${postSlug}/bookmark`);
     if (out) {

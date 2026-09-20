@@ -11,8 +11,10 @@ import { useAuthStore } from "@/stores/use-auth-store";
 
 import { ModelCard } from "./components/model-card";
 
+// 顶部能力筛选的可选项；「all」表示不过滤。
 const FILTERS: Array<ModelCapability | "all"> = ["all", "image", "video", "text", "audio"];
 
+/** 模型广场页入口：按能力筛选展示模型目录卡片，并跟踪最近的调价时间自动刷新。 */
 export default function ModelsPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
@@ -29,6 +31,7 @@ export default function ModelsPage() {
     const models = modelsQuery.data?.items ?? [];
     const refetch = modelsQuery.refetch;
 
+    // 找出全部模型里最近的未来调价时间点，用于安排一次自动刷新。
     const nextPricingChangeAt = useMemo(() => {
         const now = Date.now();
         const times = models
@@ -39,6 +42,7 @@ export default function ModelsPage() {
         return times.length ? Math.min(...times) : null;
     }, [models]);
 
+    // 调价时刻过后 1 秒刷新列表；delay 下限 1 秒，防止本机时钟略慢导致负延迟立即触发。
     useEffect(() => {
         if (!nextPricingChangeAt) return;
         const delay = Math.max(1000, nextPricingChangeAt - Date.now() + 1000);

@@ -7,6 +7,11 @@ import { getApiErrorMessage } from "@/lib/api-error";
 import { deleteCanvas } from "@/services/api/canvas";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 
+/**
+ * 批量删除画布项目确认弹窗：由 UI store 的 deleteProjectIds 驱动显隐。
+ * 删除用 Promise.allSettled 并发执行，任一失败提示错误但其余仍生效，
+ * 完成后从选中列表移除并刷新项目列表缓存。
+ */
 export function CanvasDeleteProjectsDialog() {
     const { t } = useTranslation();
     const { message } = App.useApp();

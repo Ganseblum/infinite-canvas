@@ -1,3 +1,7 @@
+/**
+ * 画布图片本地处理工具：裁剪/切分/透视/放大都在 canvas 上同步完成，
+ * 输入输出均为 data URL。crop/split 的坐标以 0–1 相对值传入，按图片实际尺寸换算。
+ */
 export type ImageCropRect = {
     x: number;
     y: number;
@@ -5,6 +9,7 @@ export type ImageCropRect = {
     height: number;
 };
 
+/** 伪 3D 视角参数：水平角 ±60、俯仰角 ±45、机距 0–10、是否广角。 */
 export type ImageAngleTransform = {
     horizontalAngle: number;
     pitchAngle: number;
@@ -14,6 +19,7 @@ export type ImageAngleTransform = {
 
 export type ImageUpscaleAlgorithm = "nearest" | "bilinear" | "high";
 
+// 放大档位上限：长边 4096，避免 canvas 尺寸超限导致输出空白。
 export const MAX_UPSCALE_LONG_EDGE = 4096;
 
 export type ImageUpscaleParams = {
@@ -34,6 +40,7 @@ export type ImageSplitPiece = {
     dataUrl: string;
 };
 
+/** 裁剪：crop 为 0–1 相对矩形；未传时取正中最大的正方形（头像/封面常用）。 */
 export async function cropDataUrl(dataUrl: string, crop?: ImageCropRect) {
     const image = await loadImage(dataUrl);
     if (crop) {
@@ -45,6 +52,10 @@ export async function cropDataUrl(dataUrl: string, crop?: ImageCropRect) {
     return drawCrop(image, sx, sy, size, size);
 }
 
+/**
+ * 切分图片：lines 传 0–1 的相对切割线；未传时按 rows/columns 均分。
+ * @returns 按行优先排列的分块，row/column 为分块下标。
+ */
 export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): Promise<ImageSplitPiece[]> {
     const image = await loadImage(dataUrl);
     const xCuts = buildSplitCuts(params.verticalLines, image.width, Math.max(1, Math.floor(params.columns)));
@@ -69,6 +80,8 @@ function buildSplitCuts(lines: number[] | undefined, size: number, count: number
     return [0, ...lines.map((line) => Math.round(line * size)).filter((line) => line > 0 && line < size).sort((a, b) => a - b), size];
 }
 
+// 伪 3D 变换：没有真正的投影，只是「缩放 + 斜切 + 径向暗角」的近似；
+// 系数为调出的视觉经验值（角度归一后乘各自幅度），边缘 padding 防止内容溢出画布。
 export async function transformAngleDataUrl(dataUrl: string, params: ImageAngleTransform) {
     const image = await loadImage(dataUrl);
     const canvas = document.createElement("canvas");
@@ -132,6 +145,7 @@ function drawCrop(image: HTMLImageElement, sx: number, sy: number, sw: number, s
     return canvas.toDataURL("image/png");
 }
 
+// 高质量算法用「倍增渐进放大」：每次只放大 2 倍，比一步到位明显减少锯齿。
 function drawStepUpscale(image: HTMLImageElement, width: number, height: number) {
     let source: CanvasImageSource = image;
     let sourceWidth = image.width;

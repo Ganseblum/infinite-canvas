@@ -33,6 +33,7 @@ type createOrderReq struct {
 	Provider  string `json:"provider"`
 }
 
+// Create 下单并返回渠道支付参数：packageId（点数包）与 planId（会员档位）二选一。
 func (h *OrderHandler) Create(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -85,6 +86,7 @@ func (h *OrderHandler) Create(c *gin.Context) {
 	})
 }
 
+// List 游标分页返回当前用户订单，可按 status 筛选。
 func (h *OrderHandler) List(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -116,6 +118,7 @@ func (h *OrderHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, payload)
 }
 
+// Get 返回当前用户的一条订单详情。
 func (h *OrderHandler) Get(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -139,6 +142,7 @@ func (h *OrderHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"order": OrderPayload(order)})
 }
 
+// Cancel 取消当前用户的未支付订单；已支付订单返回 409 ORDER_ALREADY_PAID。
 func (h *OrderHandler) Cancel(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -165,6 +169,7 @@ func (h *OrderHandler) Cancel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"order": OrderPayload(order)})
 }
 
+// OrderPayload 是订单对外 JSON 形状；providerOrderId 仅在渠道侧已生成单号时输出。
 func OrderPayload(order *model.Order) gin.H {
 	payload := gin.H{
 		"id":              order.ID.String(),
@@ -196,6 +201,8 @@ func NewPaymentHandler(db *gorm.DB, registry *service.PaymentRegistry) *PaymentH
 	return &PaymentHandler{registry: registry, orders: service.NewOrderService(db, registry)}
 }
 
+// Webhook 各渠道回调统一入口：公开路由、不鉴权但必先验签，验签与落账失败都返回
+// 非成功响应，让渠道按自身策略重试。
 func (h *PaymentHandler) Webhook(c *gin.Context) {
 	providerName := c.Param("provider")
 	provider, ok := h.registry.Get(providerName)

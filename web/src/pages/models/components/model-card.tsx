@@ -9,6 +9,7 @@ import type { CatalogModel, ModelCapability, ModelPriceDiscount } from "@/servic
 
 import { formatConstraintValue, formatPriceParams } from "../model-format";
 
+// 各能力对应的「去使用」跳转路由：文本与音频能力统一进画布。
 const CAPABILITY_ROUTES: Record<ModelCapability, string> = {
     image: "/image",
     video: "/video",
@@ -16,10 +17,14 @@ const CAPABILITY_ROUTES: Record<ModelCapability, string> = {
     audio: "/canvas",
 };
 
+/** 单个模型卡片：名称、能力标签、约束选项、当前价格（含折扣）与跳转入口。
+ * @param model 目录接口返回的模型详情
+ */
 export function ModelCard({ model }: { model: CatalogModel }) {
     const { t } = useTranslation();
     const navigate = useNavigate();
 
+    // 约束键、质量档、特性 id 的展示名映射，文案取自 i18n，缺失时回退原始值。
     const constraintLabels: Record<string, string> = {
         size: t("models.constraintLabels.size"),
         ratio: t("models.constraintLabels.ratio"),
@@ -59,6 +64,7 @@ export function ModelCard({ model }: { model: CatalogModel }) {
     if (constraints?.n?.max) constraintEntries.push({ label: constraintLabels.n, values: [t("models.countValue", { count: constraints.n.max })] });
     if (constraints?.features?.length) constraintEntries.push({ label: constraintLabels.features, values: constraints.features.map((feature) => featureLabels[feature] ?? feature) });
 
+    // 价格条目：优先使用带折扣的 effectivePrices，接口未下发时回退 creditCost 的静态价。
     const priceEntries = useMemo(() => {
         if (model.effectivePrices?.length) {
             return model.effectivePrices.map((price) => ({
@@ -76,6 +82,7 @@ export function ModelCard({ model }: { model: CatalogModel }) {
         }));
     }, [model]);
 
+    // 折扣按「名称 + 结束时间」去重，避免多条价格重复展示同一折扣标签。
     const discounts = useMemo(() => {
         const unique = new Map<string, ModelPriceDiscount>();
         priceEntries.forEach((entry) => {

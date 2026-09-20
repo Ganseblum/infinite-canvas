@@ -5,6 +5,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 // 失效对应缓存标签与路径，后台改完前台秒级生效。
 // 兜底：回调失败时页面缓存按 revalidate 常量自动过期。
 export async function POST(request: Request) {
+  // 未配置密钥时直接拒绝，避免再验证端点在无鉴权状态下裸奔
   const secret = process.env.REVALIDATE_SECRET ?? "";
   if (!secret || request.headers.get("X-Revalidate-Secret") !== secret) {
     return NextResponse.json({ error: "invalid secret" }, { status: 401 });

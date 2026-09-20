@@ -1,6 +1,10 @@
+/** 画布配色主题名（跟随全局明暗主题）。 */
 export type CanvasColorTheme = "light" | "dark";
+/** 画布背景纹理：点阵 / 网格线 / 纯白。 */
 export type CanvasBackgroundMode = "dots" | "lines" | "blank";
 
+// 画布专属主题色板：节点/工具栏/选区颜色集中在此定义，组件不得硬编码明暗色值。
+// toolbar.activeBg 只用于「选中态」高亮，不作普通按钮底色。
 export const canvasThemes = {
     light: {
         canvas: {
@@ -60,4 +64,5 @@ export const canvasThemes = {
     },
 } as const;
 
+/** 按主题名取出的画布配色对象（canvas/node/toolbar 三组）。 */
 export type CanvasTheme = (typeof canvasThemes)[CanvasColorTheme];

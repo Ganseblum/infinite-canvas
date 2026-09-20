@@ -18,6 +18,7 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 )
 
+// generationKinds 与 generationStatuses 是列表过滤参数白名单。
 var generationKinds = map[string]struct{}{"image": {}, "video": {}}
 var generationStatuses = map[string]struct{}{"pending": {}, "success": {}, "failed": {}}
 
@@ -33,6 +34,8 @@ type GenerationHandler struct {
 
 func NewGenerationHandler(db *gorm.DB) *GenerationHandler { return &GenerationHandler{db: db} }
 
+// List 生成记录游标分页列表：固定按 created_at DESC + id DESC 排序，
+// 响应多取一条探测 nextCursor。status=pending 是特例，见下方分支注释。
 func (h *GenerationHandler) List(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -182,6 +185,8 @@ func encodeGenerationCursor(createdAt time.Time, id uuid.UUID) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
+// decodeGenerationCursor 解析列表游标，与 encodeGenerationCursor 配对；
+// 格式非法返回错误，由调用方映射为 400。
 func decodeGenerationCursor(cursor string) (time.Time, uuid.UUID, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {

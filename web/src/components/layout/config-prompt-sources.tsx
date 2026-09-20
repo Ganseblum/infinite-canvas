@@ -10,8 +10,13 @@ import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/s
 import { PROMPT_SOURCE_INTERVALS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
+/** 各提示词源抓取状态（条数/最近成功时间/错误）的查询缓存键，刷新源后需手动失效。 */
 const STATUS_QUERY_KEY = ["prompt-source-statuses"];
 
+/**
+ * 设置中的「提示词源」页签：管理远程提示词源的增删改、启停、手动/定时抓取，
+ * 展示每个源的健康状态。源的启停与保存只改本地 store，抓取后才更新状态查询。
+ */
 export function ConfigPromptSources() {
     const { message, modal } = App.useApp();
     const { i18n, t } = useTranslation();
@@ -157,6 +162,7 @@ function formatTime(value: string, locale?: string) {
     return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+// 抓取间隔数值 → 文案 key；未登记的值按「关闭」展示。
 function intervalKey(value: number) {
     if (value === 30) return "minutes30";
     if (value === 60) return "hour1";

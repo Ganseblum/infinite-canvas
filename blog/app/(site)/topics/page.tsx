@@ -6,6 +6,10 @@ export const metadata = {
   alternates: { canonical: "/topics" },
 };
 
+/**
+ * 栏目索引页（/topics）：全部栏目卡片。
+ * 列表拉取失败静默渲染为空（「还没有栏目」空态仅在加载成功且确实为空时出现）。
+ */
 export default async function TopicsIndexPage() {
   const topics = await fetchTopics().catch(() => null);
   return (

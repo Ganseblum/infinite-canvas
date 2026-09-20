@@ -8,6 +8,7 @@ import { getApiErrorMessage } from "@/lib/api-error";
 import { mediaUrl } from "@/services/api/media";
 import { getCommunityUser } from "@/services/api/community";
 
+/** 社区用户主页入口：用户资料、作品/获赞统计与其公开作品网格。 */
 export default function CommunityUserPage() {
     const { t } = useTranslation();
     const params = useParams();
@@ -16,6 +17,7 @@ export default function CommunityUserPage() {
     const profileQuery = useQuery({
         queryKey: ["community", "user", userId],
         queryFn: ({ signal }) => getCommunityUser(userId, signal),
+        // 路由参数缺失时不发请求，直接落在空态。
         enabled: !!userId,
     });
 

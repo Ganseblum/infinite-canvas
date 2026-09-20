@@ -9,8 +9,10 @@ let loadSequence = 0;
 type AgentSkillStore = {
     skills: AgentSkillSummary[];
     selectedSkill: AgentSkillSummary | null;
+    // 选中态版本号：跨异步操作判断「这次清理是否还作数」的乐观锁。
     selectionRevision: number;
     connectionRevision: number;
+    // 由技能自动填入的提示词；用于区分「用户自己写的」与「技能带进来的」输入。
     autoPrompt: string;
     draft: AgentSkillDraft | null;
     generatingSource: "conversation" | "canvas" | null;
@@ -25,6 +27,11 @@ type AgentSkillStore = {
     reset: () => void;
 };
 
+/**
+ * Agent 技能面板 store：管技能列表、选中态、草稿与生成来源，
+ * Agent 面板的技能页读写；选中态与 Agent 输入框提示词双向联动。
+ * 不持久化；loadSequence 用于丢弃过期请求的响应。
+ */
 export const useAgentSkillStore = create<AgentSkillStore>((set, get) => ({
     skills: [],
     selectedSkill: null,
@@ -37,6 +44,7 @@ export const useAgentSkillStore = create<AgentSkillStore>((set, get) => ({
     loaded: false,
     errors: [],
     loadSkills: async (endpoint, token, forceReload = false) => {
+        // 递增序号标记本次请求；响应回来时序号已变说明有更新的请求，直接丢弃。
         const sequence = ++loadSequence;
         set({ loading: true });
         try {
@@ -94,6 +102,8 @@ export const useAgentSkillStore = create<AgentSkillStore>((set, get) => ({
     },
 }));
 
+// 只替换「确实由技能填入」的提示词：用户已改过输入时（prompt ≠ autoPrompt）不覆盖，
+// fillEmpty 允许在输入框为空时填入默认提示。
 function replaceAutoPrompt(previous: string, next: string, fillEmpty: boolean) {
     const agent = useAgentStore.getState();
     const ownsPrompt = Boolean(previous && agent.prompt === previous);

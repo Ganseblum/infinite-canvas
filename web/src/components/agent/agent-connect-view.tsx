@@ -6,9 +6,14 @@ import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 
+// 旧版接入方式（codex 插件 / MCP 注册）的卸载命令：引导页展示并支持一键复制。
 const AGENT_PLUGIN_REMOVE_COMMAND = "codex plugin remove infinite-canvas";
 const AGENT_MCP_REMOVE_COMMAND = "codex mcp remove infinite-canvas";
 
+/**
+ * 连接设置页：展示本地 Agent 的安装引导步骤、旧版接入清理提示与连接状态，
+ * 并提供地址 / token 输入与连接开关；连接的实际建立逻辑在 LocalAgentPanel 中。
+ */
 export function AgentConnectView({
     theme,
     url,
@@ -41,6 +46,7 @@ export function AgentConnectView({
         copyToClipboard(command);
         message.success(t("agent.connect.commandCopied"));
     };
+    // 旧版 codex 插件 / MCP 注册的清理提示块，插在第一步引导文案之后。
     const codexPluginReminder = (
         <div className="rounded-lg border px-3 py-2.5 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
             <div className="font-medium" style={{ color: theme.node.text }}>

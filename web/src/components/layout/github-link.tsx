@@ -7,6 +7,7 @@ type GitHubLinkProps = {
     style?: React.CSSProperties;
 };
 
+/** 顶部导航用的 GitHub 仓库入口图标链接。 */
 export function GitHubLink({ className, style }: GitHubLinkProps) {
     return (
         <a

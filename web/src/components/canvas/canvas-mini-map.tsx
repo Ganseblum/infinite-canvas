@@ -5,6 +5,11 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 
+/**
+ * 画布小地图：把所有节点缩略渲染到左下角 240x160 的面板上，
+ * 高亮当前视口矩形；点击/拖动可把视口中心跳到对应世界坐标。
+ * 世界 → 小地图的映射由 worldBounds + scale + offset 决定，节点变化时自动适配。
+ */
 export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { nodes: CanvasNodeData[]; viewport: ViewportTransform; viewportSize: { width: number; height: number }; onViewportChange: (viewport: ViewportTransform) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const containerRef = useRef<HTMLDivElement>(null);
@@ -12,6 +17,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
     const width = 240;
     const height = 160;
 
+    // 计算世界包围盒（四周留 500px 余量）、适配缩放与居中偏移；无节点时给默认视野。
     const { worldBounds, scale, offset } = useMemo(() => {
         if (!nodes.length) {
             return { worldBounds: { x: -500, y: -500, w: 1000, h: 1000 }, scale: 0.16, offset: { x: 40, y: 0 } };
@@ -34,6 +40,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
         maxX += 500;
         maxY += 500;
 
+        // 取宽高比例中较小者，保证包围盒完整落入小地图。
         const boundsWidth = maxX - minX;
         const boundsHeight = maxY - minY;
         const nextScale = Math.min(width / boundsWidth, height / boundsHeight);
@@ -47,6 +54,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
         };
     }, [nodes]);
 
+    // 世界坐标 → 小地图像素坐标。
     const toMinimap = useCallback(
         (worldX: number, worldY: number) => {
             return {
@@ -57,6 +65,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
         [offset.x, offset.y, scale, worldBounds.x, worldBounds.y],
     );
 
+    // 小地图像素坐标 → 世界坐标。
     const toWorld = useCallback(
         (minimapX: number, minimapY: number) => {
             return {
@@ -67,6 +76,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
         [offset.x, offset.y, scale, worldBounds.x, worldBounds.y],
     );
 
+    // 当前视口在世界坐标系中的矩形（由视口位移/缩放反推），再映射到小地图。
     const viewportRect = useMemo(() => {
         const vx = -viewport.x / viewport.k;
         const vy = -viewport.y / viewport.k;
@@ -78,11 +88,13 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
         return {
             x: p1.x,
             y: p1.y,
+            // 最小 4px：缩得很远时矩形不至于看不见。
             w: Math.max(p2.x - p1.x, 4),
             h: Math.max(p2.y - p1.y, 4),
         };
     }, [toMinimap, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
 
+    // 把点击/拖动的位置设为视口中心（保持当前缩放 k 不变）。
     const updateViewportFromEvent = (event: React.PointerEvent) => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -102,6 +114,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
                 className="relative h-full w-full cursor-crosshair"
                 onPointerDown={(event) => {
                     event.preventDefault();
+                    // 捕获指针，按下即可连续拖动视口。
                     event.currentTarget.setPointerCapture(event.pointerId);
                     setIsDragging(true);
                     updateViewportFromEvent(event);
@@ -114,6 +127,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
             >
                 {nodes.map((node) => {
                     const pos = toMinimap(node.position.x, node.position.y);
+                    // 颜色优先用节点定义声明的 minimapColor（插件节点可自定义）。
                     const color = getNodeDefinition(node.type)?.minimapColor || theme.node.muted;
                     return (
                         <div
@@ -122,6 +136,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
                             style={{
                                 left: pos.x,
                                 top: pos.y,
+                                // 最小 2px：极小节点在小地图上仍可见。
                                 width: Math.max(node.width * scale, 2),
                                 height: Math.max(node.height * scale, 2),
                                 backgroundColor: color,
@@ -130,6 +145,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
                         />
                     );
                 })}
+                {/* 当前视口高亮矩形（不可点击，穿透事件）。 */}
                 <div className="pointer-events-none absolute border" style={{ left: viewportRect.x, top: viewportRect.y, width: viewportRect.w, height: viewportRect.h, borderColor: theme.node.activeStroke, background: `${theme.node.activeStroke}18` }} />
             </div>
         </div>

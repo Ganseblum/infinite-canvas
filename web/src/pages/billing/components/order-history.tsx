@@ -10,6 +10,7 @@ import type { CreditPackage } from "@/services/api/credits";
 import { cancelOrder, listOrders, type Order, type OrderStatus } from "@/services/api/orders";
 import { useAuthStore } from "@/stores/use-auth-store";
 
+// 订单状态到 antd Tag 语义色的映射。
 const STATUS_COLORS: Record<string, string> = {
     pending: "processing",
     paid: "success",
@@ -17,8 +18,12 @@ const STATUS_COLORS: Record<string, string> = {
     refunded: "default",
 };
 
+// 顶部分段筛选的可选状态；已退款订单较少见，不在筛选入口单列。
 const STATUS_FILTERS: Array<OrderStatus | "all"> = ["all", "pending", "paid", "failed"];
 
+/** 订单列表的单行展示：套餐名、状态标签、支付渠道、下单时间与到账点数；
+ * 仅 pending 订单提供取消入口。
+ */
 function OrderRow({ order, packageName, onCancel, canceling }: { order: Order; packageName?: string; onCancel: (id: string) => void; canceling: boolean }) {
     const { t } = useTranslation();
     const label = t(`billing.orderStatus.${order.status}`);
@@ -51,6 +56,9 @@ function OrderRow({ order, packageName, onCancel, canceling }: { order: Order; p
     );
 }
 
+/** 充值订单历史区块：按状态筛选 + 游标分页加载，支持取消未支付订单。
+ * @param packageMap 套餐 id 到套餐的映射，用于把行内的 packageId 翻译成名称
+ */
 export function OrderHistory({ packageMap }: { packageMap: Map<string, CreditPackage> }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -76,12 +84,14 @@ export function OrderHistory({ packageMap }: { packageMap: Map<string, CreditPac
         },
         onError: async (error) => {
             message.error(getApiErrorMessage(error));
+            // 取消失败可能是订单状态已在服务端变化（如已被支付），重新拉取对齐真实状态。
             await queryClient.invalidateQueries({ queryKey: ["orders", userId] });
         },
     });
 
     const orders = ordersQuery.data?.pages.flatMap((page) => page.items) ?? [];
 
+    // 未登录时不渲染订单区块（页面顶部已有登录引导）。
     if (status === "unauthenticated") return null;
 
     return (

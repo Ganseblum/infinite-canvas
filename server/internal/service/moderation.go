@@ -43,6 +43,8 @@ type cachedVerdict struct {
 	expiresAt time.Time
 }
 
+// ModerationConfig 是审核服务启动配置；fail mode 取 allow 时服务故障放行，
+// 其余取值一律按拒绝处理。
 type ModerationConfig struct {
 	Enabled  bool
 	FailMode string
@@ -395,6 +397,7 @@ func (s *ModerationService) Stats(ctx context.Context) (ModerationStats, error) 
 		stats.RejectedRate = float64(stats.Rejected) / float64(stats.Total)
 		stats.ErrorRate = float64(stats.Errors) / float64(stats.Total)
 	}
+	// 标签分布与改判率只基于最近 500 条被拒记录估算，避免全表扫描。
 	var records []model.ModerationRecord
 	s.db.WithContext(ctx).Model(&model.ModerationRecord{}).Where("decision = ?", moderation.DecisionRejected).Limit(500).Find(&records)
 	var approved int64

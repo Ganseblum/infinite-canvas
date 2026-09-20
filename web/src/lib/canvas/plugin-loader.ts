@@ -4,6 +4,10 @@ import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin
 import type { CanvasPlugin } from "@/types/canvas-plugin";
 import i18n from "@/i18n";
 
+/**
+ * 插件加载器：安装/启停/卸载插件并激活其节点定义。
+ * 远程源经 Blob URL 动态 import；本地插件每次启用都重新拉取，避免缓存陈旧。
+ */
 const cleanups = new Map<string, () => void>();
 
 // A remote plugin may export CanvasPlugin directly or a factory that receives runtime and returns CanvasPlugin.
@@ -28,6 +32,7 @@ function assertPlugin(plugin: unknown): asserts plugin is CanvasPlugin {
     if (!value.id || !Array.isArray(value.nodes) || !value.nodes.length) throw new Error(i18n.t("canvas.pluginErrors.missingFields"));
 }
 
+/** 激活插件：注册节点、注入样式并执行 setup；清理函数集中保存供禁用时调用。 */
 export function activatePlugin(plugin: CanvasPlugin) {
     registerNodeDefinitions(plugin.nodes, plugin.id);
     const runtime = getPluginRuntime();
@@ -39,6 +44,7 @@ export function activatePlugin(plugin: CanvasPlugin) {
     if (disposers.length) cleanups.set(plugin.id, () => disposers.forEach((dispose) => dispose()));
 }
 
+/** 停用插件：执行清理、注销其全部节点定义（保留安装记录）。 */
 export function deactivatePlugin(pluginId: string) {
     cleanups.get(pluginId)?.();
     cleanups.delete(pluginId);
@@ -84,6 +90,7 @@ export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean
     activatePlugin(plugin);
 }
 
+/** 卸载插件：先停用再删除持久化记录。 */
 export function uninstallPlugin(id: string) {
     deactivatePlugin(id);
     usePluginStore.getState().remove(id);
@@ -92,6 +99,7 @@ export function uninstallPlugin(id: string) {
 let loaded = false;
 
 // Load installed and enabled plugins at application startup.
+/** 应用启动时加载插件：先读持久化与本地清单，再激活所有 enabled 记录，最后拉取开发插件。 */
 export async function ensurePluginsLoaded() {
     if (loaded) return;
     loaded = true;

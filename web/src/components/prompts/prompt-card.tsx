@@ -5,6 +5,19 @@ import { useTranslation } from "react-i18next";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 
+/**
+ * 提示词卡片：封面 + 标题 + 描述/标签 + 底部操作按钮。
+ * compact 模式用于选择弹窗（正方形封面、隐藏描述/标签/操作区，点击即选中）；
+ * 常规模式用于提示词库页面（4:3 封面、展示元信息与复制按钮）。
+ * @param item        提示词数据
+ * @param onOpen      点击卡片主体（封面/内容区）时的回调
+ * @param onCopy      底部主操作按钮（默认「复制」）的回调
+ * @param actionLabel 自定义主操作文案，缺省用「复制」
+ * @param actionIcon  主操作按钮图标
+ * @param actionType  主操作按钮类型：text 或 primary（primary 时占满整行）
+ * @param extraAction 追加在主操作按钮之后的额外动作区
+ * @param compact     是否为弹窗内的紧凑模式
+ */
 export function PromptCard({
     item,
     onOpen,

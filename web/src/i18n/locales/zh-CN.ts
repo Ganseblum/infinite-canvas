@@ -1,3 +1,4 @@
+// 中文语言包（默认语言）：key 与 en-US.ts 一一对应，对称性由 locales.test.ts 保证。
 export default {
     meta: {
         title: "优刻",

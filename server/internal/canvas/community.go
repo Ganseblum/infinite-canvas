@@ -35,6 +35,7 @@ func NewCommunityHandler(db *gorm.DB, settings *service.SiteSettingService) *Com
 	return &CommunityHandler{db: db, settings: settings}
 }
 
+// enabled 社区开关；站点配置未注入时默认放开。
 func (h *CommunityHandler) enabled() bool {
 	if h.settings == nil {
 		return true
@@ -395,6 +396,8 @@ func (h *CommunityHandler) UserProfile(c *gin.Context) {
 	})
 }
 
+// queryHot 热门榜：默认回看 168 小时（一周）内发布的作品，按点赞数取前 50；
+// hours 可由查询参数调整，非法时回退默认值。
 func (h *CommunityHandler) queryHot(c *gin.Context) ([]model.CommunityWork, error) {
 	hours, _ := strconv.Atoi(c.DefaultQuery("hours", "168"))
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
@@ -404,6 +407,8 @@ func (h *CommunityHandler) queryHot(c *gin.Context) ([]model.CommunityWork, erro
 	return works, err
 }
 
+// loadWork 按 id 取已发布作品；不存在或非 published 一律 404。
+// 是否校验源素材仍存在由调用方决定（公开详情要校验，管理/删除入口不校验）。
 func (h *CommunityHandler) loadWork(c *gin.Context) (*model.CommunityWork, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

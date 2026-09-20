@@ -1,3 +1,6 @@
+// Package billing 是点数与订单面：余额与流水查询、点数包与会员档位展示、
+// 下单、订单查询取消与支付回调入口。扣点、落账等写路径在 platform/billing
+// 与 service 层，本包 handler 只做参数校验、错误映射与响应拼装。
 package billing
 
 import (
@@ -28,6 +31,7 @@ func NewCreditHandler(db *gorm.DB, registry *service.PaymentRegistry) *CreditHan
 	return &CreditHandler{db: db, credits: billing.NewService(db, model.ProductCanvas), registry: registry}
 }
 
+// GetBalance 返回余额摘要（购买/赠送分桶）与最近 5 条流水；无账本行按零余额处理。
 func (h *CreditHandler) GetBalance(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -56,6 +60,7 @@ func (h *CreditHandler) GetBalance(c *gin.Context) {
 	})
 }
 
+// ListTransactions 游标分页返回点数流水，可按 type 筛选。
 func (h *CreditHandler) ListTransactions(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {

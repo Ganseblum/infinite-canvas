@@ -1,8 +1,14 @@
 import { create } from "zustand";
 
+/**
+ * 画布列表页 UI store：管项目重命名、多选集合与待删除集合，
+ * 仅内存态（刷新即失），列表页与批量操作组件读写。
+ */
 type CanvasUiStore = {
+    // 正在重命名的项目 id 与标题草稿；null 表示无重命名进行中。
     editingProjectId: string | null;
     editingProjectTitle: string;
+    // 跨页累积的选中项目集合，用于批量删除。
     selectedProjectIds: string[];
     deleteProjectIds: string[];
     startEditingProject: (id: string, title: string) => void;

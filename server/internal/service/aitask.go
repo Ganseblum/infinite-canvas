@@ -61,6 +61,8 @@ func (s *AITaskService) SetWatermark(wm videoWatermarker, enabled func() bool) {
 // SetModeration 注入审核服务：视频产物在落正式存储前先过帧审核。
 func (s *AITaskService) SetModeration(moderation *ModerationService) { s.moderation = moderation }
 
+// maxPollFailures 是连续轮询失败阈值：连续 5 次拿不到上游状态才判任务失败，
+// 避免上游偶发抖动误杀进行中的任务。
 const maxPollFailures = 5
 
 // RecoverPending 在服务启动时把非终态任务重新挂上轮询。
@@ -75,6 +77,7 @@ func (s *AITaskService) RecoverPending(ctx context.Context) (int, error) {
 // PollPendingOnce 轮询一轮所有非终态任务，返回本轮处理的数量。
 func (s *AITaskService) PollPendingOnce(ctx context.Context, now time.Time) (int, error) {
 	var tasks []model.AITask
+	// 每轮最多处理 100 条，控制单轮耗时，剩余任务下一轮继续。
 	if err := s.db.WithContext(ctx).Where("status = ?", "pending").Limit(100).Find(&tasks).Error; err != nil {
 		return 0, err
 	}
@@ -130,6 +133,8 @@ func (s *AITaskService) PollTask(ctx context.Context, task *model.AITask, now ti
 	}
 }
 
+// succeedTask 收敛成功任务：产物先过审核与水印，再落正式存储，
+// 最后在同一事务里收敛任务、生成记录与请求状态；任何一步失败都走 failTask 退款。
 func (s *AITaskService) succeedTask(ctx context.Context, task *model.AITask, state provider.VideoState, now time.Time) error {
 	if state.Video == nil {
 		return s.failTask(ctx, task, "上游未返回视频")

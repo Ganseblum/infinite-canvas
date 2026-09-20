@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import { AppConfigPanel } from "@/components/layout/app-config-modal";
 
+/** 配置页入口：独立页面上复用全局的应用配置面板组件。 */
 export default function ConfigPage() {
     const { t } = useTranslation();
 

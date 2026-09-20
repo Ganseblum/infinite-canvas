@@ -13,15 +13,25 @@ import { forgotPassword, sendVerifyEmail } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+/** 登录页的两个主标签页。 */
 type TabKey = "login" | "register";
+/** 登录表单取值：account 兼容邮箱或用户名。 */
 type LoginValues = { account: string; password: string };
+/** 注册表单取值：agree 为条款与隐私同意勾选。 */
 type RegisterValues = { email: string; username: string; password: string; confirmPassword: string; agree: boolean };
 
+/** 把服务端返回的字段级校验错误铺回表单对应输入框。
+ * @param form 目标表单实例
+ * @param fields 字段名到错误文案的映射
+ */
 function applyFieldErrors(form: FormInstance, fields?: Record<string, string>) {
     if (!fields) return;
     form.setFields(Object.entries(fields).map(([name, message]) => ({ name, errors: [message] })));
 }
 
+/** 登录/注册页入口：左侧品牌区（仅桌面端）+ 右侧登录、注册、忘记密码三种视图切换。
+ * 注册成功停留在「验证邮件已发送」页；字段级错误尽量回填到对应输入框。
+ */
 export default function LoginPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -35,6 +45,7 @@ export default function LoginPage() {
     const [tab, setTab] = useState<TabKey>("login");
     const [submitting, setSubmitting] = useState(false);
     const [registerSent, setRegisterSent] = useState(false);
+    // 忘记密码视图可由其它页面通过路由 state（{ forgot: true }）直接唤起。
     const [forgotOpen, setForgotOpen] = useState(Boolean((location.state as { forgot?: boolean } | null)?.forgot));
     const [forgotSent, setForgotSent] = useState(false);
     const [loginError, setLoginError] = useState("");
@@ -56,6 +67,7 @@ export default function LoginPage() {
             await login(values.account.trim(), values.password);
             message.success(t("auth.login.success"));
         } catch (error) {
+            // 校验失败回填字段错误；凭据错误定位到密码框；其余走表单顶部 Alert。
             if (error instanceof ApiError && error.code === "VALIDATION_FAILED" && error.fields) {
                 applyFieldErrors(loginForm, error.fields);
             } else if (error instanceof ApiError && error.code === "INVALID_CREDENTIALS") {
@@ -76,6 +88,7 @@ export default function LoginPage() {
             setRegisterSent(true);
             message.success(t("auth.register.success"));
         } catch (error) {
+            // 邮箱/用户名被占用定位到对应输入框，其余走表单顶部 Alert。
             if (error instanceof ApiError && error.code === "VALIDATION_FAILED" && error.fields) {
                 applyFieldErrors(registerForm, error.fields);
             } else if (error instanceof ApiError && error.code === "EMAIL_TAKEN") {
@@ -266,6 +279,7 @@ export default function LoginPage() {
                                         label={t("auth.register.password")}
                                         rules={[
                                             { required: true, message: t("auth.validation.passwordRequired") },
+                                            // 与服务端一致按字节长度校验，避免多字节密码提交后才报错。
                                             { validator: (_, value: string) => (!value || isPasswordByteLengthValid(value) ? Promise.resolve() : Promise.reject(new Error(t("auth.validation.password")))) },
                                         ]}
                                     >
@@ -274,6 +288,7 @@ export default function LoginPage() {
                                     <Form.Item
                                         name="confirmPassword"
                                         label={t("auth.register.confirm")}
+                                        // 依赖 password 字段，密码变更时联动重新校验两次输入是否一致。
                                         dependencies={["password"]}
                                         rules={[
                                             { required: true, message: t("auth.validation.confirmRequired") },

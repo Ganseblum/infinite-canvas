@@ -304,6 +304,8 @@ func matchETag(header, etag string) bool {
 	return false
 }
 
+// Put 处理媒体上传（PUT /:storageKey）：类型与配额预检 → 文件头嗅探 → 写对象 →
+// 事务内写媒体行与存储计数。重复 key 是覆盖语义；开启审核时改走隔离区（quarantineUpload）。
 func (h *MediaHandler) Put(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -493,6 +495,7 @@ func (h *MediaHandler) Put(c *gin.Context) {
 	})
 }
 
+// Delete 硬删除媒体对象与媒体行，同一事务回退存储计数；key 不存在也返回 204（幂等）。
 func (h *MediaHandler) Delete(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {

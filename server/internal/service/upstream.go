@@ -33,6 +33,7 @@ type UpstreamTimeouts struct {
 	VideoTask      time.Duration
 }
 
+// DefaultUpstreamTimeouts 返回各能力的默认超时配置。
 func DefaultUpstreamTimeouts() UpstreamTimeouts {
 	return UpstreamTimeouts{
 		ImageConnect:   10 * time.Second,
@@ -186,6 +187,7 @@ func (s *UpstreamService) Download(ctx context.Context, rawURL string, maxBytes 
 	}
 	limit := maxBytes
 	if limit <= 0 {
+		// 未指定上限时的兜底：512MB，防止异常响应把内存读爆。
 		limit = 512 << 20
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))

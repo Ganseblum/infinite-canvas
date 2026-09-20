@@ -13,11 +13,12 @@ import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
+/** 节点悬浮工具条的 props；onKeep/onLeave 由父层控制悬停保持，避免移入工具条时抖动。 */
 type CanvasNodeHoverToolbarProps = {
-    node: CanvasNodeData | null;
-    viewport: ViewportTransform;
-    onKeep: (nodeId: string) => void;
-    onLeave: () => void;
+    node: CanvasNodeData | null; // 悬停的节点，null 时不渲染。
+    viewport: ViewportTransform; // 视口变换，用于把节点坐标换算成屏幕位置。
+    onKeep: (nodeId: string) => void; // 鼠标进入节点/工具条：保持工具条显示。
+    onLeave: () => void; // 鼠标离开节点和工具条。
     onInfo: (node: CanvasNodeData) => void;
     onDecreaseFont: (node: CanvasNodeData) => void;
     onIncreaseFont: (node: CanvasNodeData) => void;
@@ -38,9 +39,10 @@ type CanvasNodeHoverToolbarProps = {
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
     onUngroup?: (node: CanvasNodeData) => void;
-    extraTools?: CanvasNodeToolbarItem[];
+    extraTools?: CanvasNodeToolbarItem[]; // 插件注入的扩展工具。
 };
 
+/** 工具条按钮的统一描述。 */
 type ToolbarTool = {
     id: string;
     title: string;
@@ -51,6 +53,11 @@ type ToolbarTool = {
     danger?: boolean;
 };
 
+/**
+ * 节点悬浮工具条：跟随节点顶部显示快捷操作。
+ * 图片节点支持用户自定义快捷工具集（localStorage 持久化），其余节点展示全部动作；
+ * 定位按视口变换换算，悬停保持由 onKeep/onLeave 控制，避免移入工具条时闪烁。
+ */
 export function CanvasNodeHoverToolbar({
     node,
     viewport,
@@ -87,6 +94,7 @@ export function CanvasNodeHoverToolbar({
     const { t } = useTranslation();
     const copyText = useCopyText();
 
+    // 读取用户自定义的图片快捷工具配置；损坏数据直接清除回退默认。
     useEffect(() => {
         try {
             const stored = window.localStorage.getItem(IMAGE_QUICK_TOOLS_STORAGE_KEY);
@@ -100,6 +108,7 @@ export function CanvasNodeHoverToolbar({
         }
     }, []);
 
+    // 切换节点时关闭工具条设置弹窗，避免上个节点的草稿串到新节点。
     useEffect(() => {
         setImageToolSettingsOpen(false);
     }, [node?.id]);
@@ -117,7 +126,9 @@ export function CanvasNodeHoverToolbar({
     const hasAudio = isAudio && Boolean(node.metadata?.content);
     const isText = node.type === CanvasNodeType.Text;
     const isConfig = node.type === CanvasNodeType.Config;
+    // 失败可重试：视频任务未出片时不显示重试（要先查询任务）。
     const canRetry = node.metadata?.status === "error" && !(isVideo && Boolean(node.metadata?.videoTaskId) && !hasVideo);
+    // 视频任务已提交但还没出片：显示「查询任务」而不是重试。
     const canQueryVideoTask = isVideo && Boolean(node.metadata?.videoTaskId) && !hasVideo && node.metadata?.status !== "loading";
     const quickImageToolIdSet = new Set(quickImageToolIds);
     const copyImagePrompt = (target: CanvasNodeData) => {
@@ -157,7 +168,9 @@ export function CanvasNodeHoverToolbar({
         ...(isAudio ? [{ id: "uploadAudio", title: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), label: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), icon: <Music2 className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
     ];
+    // 图片节点按用户配置的快捷工具集过滤；其它节点展示全部动作 + 插件扩展工具。
     const toolbarTools = hasImage ? [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
+    // 设置弹窗里可勾选的全部工具（排除重试：它只在失败态出现，不适合常驻）。
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
 
     const closeImageToolSettings = () => {
@@ -174,6 +187,7 @@ export function CanvasNodeHoverToolbar({
         });
     };
 
+    // 保存快捷工具配置：更新组件状态并写入 localStorage。
     const saveImageToolSettings = () => {
         const config = { ids: draftImageToolIds, showLabels: draftShowImageToolLabels };
         setQuickImageToolIds(config.ids);
@@ -184,6 +198,7 @@ export function CanvasNodeHoverToolbar({
 
     return (
         <>
+            {/* 工具条本体：left/top 由节点位置 + 视口变换换算，整体上移贴在节点上方。 */}
             <div
                 className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
                 style={{ left, top }}
@@ -215,6 +230,10 @@ export function CanvasNodeHoverToolbar({
     );
 }
 
+/**
+ * 节点详情弹窗：基础信息与原始 JSON 两个视图；
+ * JSON 里 base64 图片内容折叠为占位文本，避免整卡数据。
+ */
 export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeData | null; open: boolean; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -226,6 +245,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
         return JSON.stringify(
             node,
             (key, value) => {
+                // base64 图片内容太长，序列化时替换为占位文本。
                 if (key === "content" && typeof value === "string" && value.startsWith("data:image/")) {
                     return "[base64 image]";
                 }
@@ -287,6 +307,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     );
 }
 
+/** 工具条按钮：图标 + 可选文字标签，Tooltip 展示完整说明。 */
 function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false }: ToolbarTool & { showLabel: boolean }) {
     const hasText = showLabel && Boolean(label);
     return (
@@ -301,6 +322,7 @@ function ToolbarAction({ title, label, icon, onClick, showLabel, active = false,
     );
 }
 
+/** 详情弹窗的「标签-值」行。 */
 function InfoRow({ label, value }: { label: string; value: ReactNode }) {
     return (
         <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-3">

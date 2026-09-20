@@ -10,6 +10,9 @@ import { formatBytes } from "@/lib/image-utils";
 import { getCreditPackages, getPlans } from "@/services/api/credits";
 import { useAuthStore } from "@/stores/use-auth-store";
 
+/** 定价页入口：充值套餐卡片 + 免费/付费套餐权益对比表 + 底部购买引导。
+ * 套餐卡不直接下单，统一跳转到充值页完成支付。
+ */
 export default function PricingPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
@@ -31,6 +34,7 @@ export default function PricingPage() {
     const paidPlan = plansQuery.data?.items.find((plan) => plan.id === "paid");
     const packages = packagesQuery.data?.items ?? [];
 
+    // 对比表只列存储、单文件大小、保留期三行；套餐未加载完时不渲染表格。
     const comparisonRows =
         freePlan && paidPlan
             ? [

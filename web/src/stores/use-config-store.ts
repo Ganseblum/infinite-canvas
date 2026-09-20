@@ -5,6 +5,7 @@ import { persist } from "zustand/middleware";
 import { catalogModel } from "@/stores/use-model-catalog-store";
 
 export type ModelCapability = "image" | "video" | "text" | "audio";
+/** 文本生成的推理力度档位，auto 表示跟随服务端默认。 */
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 // 浏览器不再持有任何用户渠道与密钥；模型来源只有平台目录 /api/models。
@@ -34,6 +35,7 @@ export type AiConfig = {
     proxyUrl: string;
 };
 
+/** 设置页（config 弹窗/页面）的 tab 标识。 */
 export type ConfigTabKey = "local-proxy" | "preferences" | "prompt-sources" | "local-storage";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
@@ -78,10 +80,16 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
+/** 把持久化里的字符串布尔值（"true"/"false"）解析成 boolean，空串时用 fallback。 */
 export function boolConfig(value: string, fallback: boolean) {
     return value ? value === "true" : fallback;
 }
 
+/**
+ * 全局 AI 配置 store：管各能力模型选择与生成参数、设置弹窗开关，
+ * 工作台/画布/Agent 面板读写。persist 到 localStorage（键 CONFIG_STORE_KEY），
+ * 只持久化 config，且水合时经 sanitizeConfig 过滤白名单字段。
+ */
 export const useConfigStore = create<ConfigStore>()(
     persist(
         (set) => ({
@@ -112,6 +120,7 @@ export const useConfigStore = create<ConfigStore>()(
     ),
 );
 
+// 只保留 defaultConfig 中存在的字段，其余（含旧版残留的密钥/渠道）一律丢弃。
 function sanitizeConfig(persisted: Partial<AiConfig> | undefined): AiConfig {
     const source = persisted || {};
     const config = { ...defaultConfig };
@@ -137,6 +146,7 @@ export function modelOptionLabel(_config: AiConfig, value: string) {
     return catalogModel(value)?.displayName || value;
 }
 
+// 补全协议前缀并去掉尾部斜杠，返回空串表示未配置。
 export function normalizeLocalProxyUrl(value: string) {
     const trimmed = value.trim().replace(/\/+$/, "");
     if (!trimmed) return "";

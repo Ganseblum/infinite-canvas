@@ -33,6 +33,7 @@ export default function LoginPage() {
       }
       saveToken(data.accessToken);
       const params = new URLSearchParams(window.location.search);
+      // next 仅接受站内路径（以 / 开头），防开放重定向
       const next = params.get("next");
       window.location.href = next && next.startsWith("/") ? next : "/";
     } catch {

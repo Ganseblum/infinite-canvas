@@ -1,7 +1,10 @@
+// 本地存储用量统计：设置页「本地存储」面板展示浏览器配额与 IndexedDB 明细。
+
 export type IndexedDbStoreUsage = { name: string; records: number; bytes: number };
 export type IndexedDbDatabaseUsage = { name: string; version: number; bytes: number; stores: IndexedDbStoreUsage[] };
 export type LocalStorageUsage = { usage: number; quota: number; contentBytes: number; databases: IndexedDbDatabaseUsage[] };
 
+/** 汇总浏览器配额（navigator.storage.estimate）与本应用 IndexedDB 各仓的字节数。 */
 export async function readLocalStorageUsage(): Promise<LocalStorageUsage> {
     const [estimate, database] = await Promise.all([navigator.storage.estimate(), readDatabaseUsage("infinite-canvas")]);
     return { usage: estimate.usage!, quota: estimate.quota!, contentBytes: database.bytes, databases: [database] };

@@ -7,14 +7,16 @@ import { useTranslation } from "react-i18next";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+/** 缩放控制坞的 props：缩放范围 5%~500%，由父层持有视口状态。 */
 type CanvasZoomControlsProps = {
     scale: number;
     onScaleChange: (scale: number) => void;
-    onReset: () => void;
+    onReset: () => void; // 重置视图（回到内容中心与默认缩放）。
     isMiniMapOpen: boolean;
     onToggleMiniMap: () => void;
 };
 
+/** 画布左下角控制坞：小地图开关、重置视图、缩放滑杆（带百分比）与快捷键帮助。 */
 export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpen, onToggleMiniMap }: CanvasZoomControlsProps) {
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const { t } = useTranslation();
@@ -75,6 +77,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
     );
 }
 
+/** 快捷键说明行：左侧按键组合、右侧功能说明。 */
 function Shortcut({ label, value }: { label: ReactNode; value: string }) {
     return (
         <div className="flex items-center justify-between gap-4">

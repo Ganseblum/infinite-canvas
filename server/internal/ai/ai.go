@@ -1,3 +1,6 @@
+// Package ai 是 AI 生成与媒体域：报价、图像/语音/视频/对话四类生成接口与媒体读写下发。
+// 各 handler 按固定顺序串起校验、报价、审核、并发槽位、预扣与退还；上游协议差异由
+// internal/provider 收敛，本域只面对统一的请求与结果。
 package ai
 
 import (
@@ -101,6 +104,7 @@ type quoteRequest struct {
 	Params     map[string]any `json:"params"`
 }
 
+// Quote 生成一次报价并附带余额与缺口信息，只读不落库；报价凭证由后续生成接口携带校验。
 func (h *AIHandler) Quote(c *gin.Context) {
 	user, ok := h.currentUser(c)
 	if !ok {
@@ -312,6 +316,8 @@ func (h *AIHandler) markRequestRejected(request *model.AIRequest) error {
 		Updates(map[string]any{"status": "failed", "moderation_status": "rejected"}).Error
 }
 
+// callImages 按模型绑定的渠道依次尝试：可重试错误先原渠道重试一次，仍失败才切换渠道，
+// 最多尝试 2 个渠道；能力不支持立即终止不做切换。
 func (h *AIHandler) callImages(ctx context.Context, catalogItem model.ModelCatalog, req provider.ImageRequest) (provider.ImageResult, error) {
 	channels, err := h.channelsFor(catalogItem)
 	if err != nil {
@@ -742,6 +748,7 @@ func (h *AIHandler) Speech(c *gin.Context) {
 	})
 }
 
+// callSpeech 与 callImages 一样最多尝试 2 个渠道做故障转移，但不做原渠道重试。
 func (h *AIHandler) callSpeech(ctx context.Context, catalogItem model.ModelCatalog, req provider.SpeechRequest) (provider.SpeechResult, error) {
 	channels, err := h.channelsFor(catalogItem)
 	if err != nil {
@@ -789,6 +796,8 @@ type videoRequest struct {
 	SessionID       string   `json:"sessionId"`
 }
 
+// CreateVideo 创建视频生成任务：非同步，拿到上游任务句柄即返回 202 与建议轮询间隔，
+// 产物由任务轮询（VideoTask）发放；每用户 pending 任务数上限 3。
 func (h *AIHandler) CreateVideo(c *gin.Context) {
 	user, ok := h.currentUser(c)
 	if !ok {
@@ -903,6 +912,8 @@ func (h *AIHandler) CreateVideo(c *gin.Context) {
 	})
 }
 
+// createUpstreamVideoTask 调上游创建视频任务并把任务与 pending 生成记录在同一事务落库；
+// 渠道故障转移上限与其它能力一致（≤2），ai_requests 同时记录实际采用的渠道。
 func (h *AIHandler) createUpstreamVideoTask(c *gin.Context, user model.PlatformUser, request *model.AIRequest, catalogItem model.ModelCatalog, videoReq provider.VideoRequest, prompt string) (*model.AITask, uuid.UUID, error) {
 	channels, err := h.channelsFor(catalogItem)
 	if err != nil {
@@ -1052,6 +1063,7 @@ type chatRequest struct {
 	SessionID       string                 `json:"sessionId"`
 }
 
+// Chat 文本对话：stream 未传或为 true 走 SSE 事件流，显式 false 走一次性 JSON 响应。
 func (h *AIHandler) Chat(c *gin.Context) {
 	user, ok := h.currentUser(c)
 	if !ok {
@@ -1102,6 +1114,7 @@ func (h *AIHandler) Chat(c *gin.Context) {
 	h.chatStream(c, user, request, reserved, catalogItem, req)
 }
 
+// chatNonStream 非流式对话：收集完整输出后一次性响应 JSON。
 func (h *AIHandler) chatNonStream(c *gin.Context, user model.PlatformUser, request *model.AIRequest, reserved *service.ReserveResult, catalogItem model.ModelCatalog, req chatRequest) {
 	started := time.Now()
 	// 非流式每次尝试都用全新的 collectSink（由 callChat 逐次调用），
@@ -1221,6 +1234,7 @@ func (h *AIHandler) callChat(ctx context.Context, catalogItem model.ModelCatalog
 
 // ===== 公共辅助 =====
 
+// currentUser 从中间件注入的身份加载用户；邮箱未验证一律拒绝，生成接口要求已验证。
 func (h *AIHandler) currentUser(c *gin.Context) (model.PlatformUser, bool) {
 	uid, err := uuid.Parse(c.GetString("user_id"))
 	if err != nil {
@@ -1277,6 +1291,7 @@ func (h *AIHandler) abortQuoteError(c *gin.Context, err error) {
 	}
 }
 
+// abortConcurrency 返回 429 并附 Retry-After: 5，作为给前端的建议重试间隔。
 func (h *AIHandler) abortConcurrency(c *gin.Context) {
 	c.Header("Retry-After", "5")
 	errs.Abort(c, errs.ErrConcurrencyLimited)
@@ -1581,6 +1596,8 @@ func (h *AIHandler) abortUpstream(c *gin.Context, err error, upstreamStatus int)
 	}
 }
 
+// isTimeout 判断错误是否为超时：除 context.DeadlineExceeded 外，还按错误文本兜底识别，
+// 覆盖上游把超时包成普通错误返回的情况。
 func isTimeout(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
@@ -1589,6 +1606,7 @@ func isTimeout(err error) bool {
 	return strings.Contains(message, "timeout") || strings.Contains(message, "deadline exceeded")
 }
 
+// channelsFor 加载模型目录绑定的渠道与对应 provider 实例，作为故障转移的尝试顺序。
 func (h *AIHandler) channelsFor(catalogItem model.ModelCatalog) ([]service.ChannelWithProvider, error) {
 	var ids []uuid.UUID
 	if len(catalogItem.ChannelIDs) > 0 {
@@ -1633,6 +1651,7 @@ func (h *AIHandler) maxFileBytes(userID uuid.UUID) (int64, error) {
 	return plan.MaxFileBytes, nil
 }
 
+// availableMicros 返回可用余额（购买 + 赠送），账户不存在按 0 处理。
 func (h *AIHandler) availableMicros(userID uuid.UUID) (int64, error) {
 	account, err := h.billing.Balance(context.Background(), userID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1644,6 +1663,7 @@ func (h *AIHandler) availableMicros(userID uuid.UUID) (int64, error) {
 	return account.PurchasedMicros + account.GrantedMicros, nil
 }
 
+// creditsPayload 组装响应里的点数消耗块，remaining 为响应时的剩余余额。
 func (h *AIHandler) creditsPayload(request *model.AIRequest, remaining int64) gin.H {
 	payload := gin.H{
 		"baseCostMicros":  request.BaseCostMicros,
@@ -1698,6 +1718,7 @@ func paramsSnapshot(params map[string]string) datatypes.JSON {
 	return raw
 }
 
+// stringifyParams 把报价参数压平成字符串；键 n 由调用方单独取出作为张数计价，不进参数串。
 func stringifyParams(params map[string]any) map[string]string {
 	out := make(map[string]string, len(params))
 	for key, value := range params {

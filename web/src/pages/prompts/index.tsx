@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
 import { useAddAsset } from "@/hooks/use-asset-library";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 
+/** 提示词广场页入口：左侧分类 + 标签筛选，右侧关键字搜索与卡片瀑布列表，
+ * 滚动到底自动加载下一页；卡片支持复制提示词与存入素材库。
+ */
 export default function PromptsPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -22,10 +25,12 @@ export default function PromptsPage() {
     const copyText = useCopyText();
     const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
 
+    // 列表加载失败时用全局消息提示一次，避免页内错误提示重复堆叠。
     useEffect(() => {
         if (query.isError) message.error(query.error instanceof Error ? query.error.message : t("prompts.loadFailed"));
     }, [message, query.error, query.isError, t]);
 
+    // 「全部」标签直接清空筛选；其余标签多选切换。
     const toggleTag = (tag: string) => {
         if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
         setSelectedTags((items) => (items.includes(tag) ? items.filter((item) => item !== tag) : [...items, tag]));
@@ -35,6 +40,7 @@ export default function PromptsPage() {
         addAsset.mutate({ kind: "text", title: item.title, tags: item.tags, data: { content: item.prompt, source: item.category, promptId: item.id, githubUrl: item.githubUrl } });
     };
 
+    // 无限滚动：距列表底部不足 160px 且不在加载中时预取下一页。
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
         const target = event.currentTarget;
         if (query.hasNextPage && !query.isFetchingNextPage && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) void query.fetchNextPage();
@@ -76,11 +82,15 @@ export default function PromptsPage() {
     );
 }
 
+/** 侧栏单组可勾选筛选项（分类或标签通用）。 */
 function PromptFilter({ label, options, selected, onChange }: { label: string; options: string[]; selected: string; onChange: (value: string) => void }) {
     const { t } = useTranslation();
     return <div><div className="mb-2 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">{label}</div><div className="flex flex-wrap gap-1.5">{options.map((option) => <Tag.CheckableTag key={option} checked={selected === option} className={cn("prompt-filter-tag", selected === option && "is-active")} onChange={() => onChange(option)}>{option === ALL_PROMPTS_OPTION ? t("common.all") : option}</Tag.CheckableTag>)}</div></div>;
 }
 
+/** 提示词卡片网格：空列表渲染空态占位。
+ * key 用 sourceId + id 组合，因为列表可能聚合多个来源的同 id 提示词。
+ */
 function PromptGrid({ items, onOpen, onCopy, renderActions, emptyText }: { items: Prompt[]; onOpen: (item: Prompt) => void; onCopy: (item: Prompt) => void; renderActions: (item: Prompt) => ReactNode; emptyText: string }) {
     return <div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{items.map((item) => <PromptCard key={`${item.sourceId}:${item.id}`} item={item} onOpen={() => onOpen(item)} onCopy={() => onCopy(item)} extraAction={renderActions(item)} />)}</div>{items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} className="py-16" /> : null}</div>;
 }

@@ -9,6 +9,10 @@ import { useAgentStore, type AgentModel, type AgentPermissionMode, type AgentRea
 import type { AgentChatAttachment } from "./agent-chat-message";
 import { AgentChatPromptInput } from "./agent-chat-prompt-input";
 
+/**
+ * 聊天输入区：附件缩略图行、mention 输入框与工具栏（传图/确认开关/权限模式/模型与推理力度）。
+ * 发送条件统一收敛在 canSubmit：未禁用、非发送中且内容非空（文本/附件/画布引用任一）。
+ */
 export function AgentChatComposer({
     prompt,
     attachments = [],
@@ -59,6 +63,7 @@ export function AgentChatComposer({
     const canvasReferences = useAgentStore((state) => state.canvasReferences);
     const canSubmit = !disabled && !sending && Boolean(prompt.trim() || attachments.length || canvasReferences.length);
     return (
+        // onWheelCapture 阻止滚轮事件冒泡到画布：在输入区滚动不应缩放/平移画布。
         <div className="px-2 pb-2 pt-2" onWheelCapture={(event) => event.stopPropagation()}>
             <div className="rounded-[24px] border px-3 pb-3 pt-3 shadow-lg" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke }}>
                 {attachments.length ? (
@@ -95,6 +100,7 @@ export function AgentChatComposer({
                         {left}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
+                        {/* 发送中替换为停止按钮；停止属于危险操作（中断当前 turn）。 */}
                         {sending && onStop ? (
                             <Tooltip title={t("agent.composer.stop")} placement="top"><Button danger shape="circle" className="!h-10 !w-10 !min-w-10" icon={<Square className="size-4" />} onClick={() => void onStop()} aria-label={t("agent.composer.stop")} /></Tooltip>
                         ) : (
@@ -107,6 +113,7 @@ export function AgentChatComposer({
     );
 }
 
+/** 模型与推理力度选择器：窄容器下折叠成纯图标，展开后显示名称；菜单向上弹出避免遮挡。 */
 function AgentModelControls({ models, model, reasoningEffort, onModelChange, onReasoningEffortChange }: { models: AgentModel[]; model: string; reasoningEffort: AgentReasoningEffort; onModelChange: (model: string) => void; onReasoningEffortChange: (effort: AgentReasoningEffort) => void }) {
     const { t } = useTranslation();
     const current = models.find((item) => item.model === model) || models[0];
@@ -115,6 +122,7 @@ function AgentModelControls({ models, model, reasoningEffort, onModelChange, onR
     const [reasoningOpen, setReasoningOpen] = useState(false);
     return (
         <div className="flex min-w-0 items-center gap-1">
+            {/* 菜单展开时用 open={false} 压制 Tooltip，避免提示与弹层同时出现。 */}
             <Tooltip title={t("agent.composer.model", { model: current.displayName || current.model })} placement="top" open={modelOpen ? false : undefined}>
                 <span className="inline-flex shrink-0">
                     <Select value={model} open={modelOpen} onOpenChange={setModelOpen} onValueChange={onModelChange}>
@@ -147,6 +155,7 @@ function AgentModelControls({ models, model, reasoningEffort, onModelChange, onR
     );
 }
 
+/** 权限模式菜单：request（逐次确认）/ automatic（自动执行）/ full（完全访问），full 用警示色提示。 */
 function PermissionModeMenu({ permissionMode, theme, onChange }: { permissionMode: AgentPermissionMode; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (permissionMode: AgentPermissionMode) => void }) {
     const { t } = useTranslation();
     const permissionOptions: Array<{ key: AgentPermissionMode; title: string; shortTitle: string; description: string; icon: ReactNode }> = [
@@ -183,6 +192,7 @@ function PermissionModeMenu({ permissionMode, theme, onChange }: { permissionMod
     );
 }
 
+/** 工具确认开关菜单：manual 表示画布写工具需逐次确认，automatic 表示自动执行。 */
 function ToolConfirmationMenu({ confirmTools, theme, onChange }: { confirmTools: boolean; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (confirmTools: boolean) => void }) {
     const { t } = useTranslation();
     const [open, setOpen] = useState(false);
@@ -221,6 +231,7 @@ function ToolConfirmationMenu({ confirmTools, theme, onChange }: { confirmTools:
     );
 }
 
+/** 菜单选项行：图标 + 标题 + 描述 + 选中勾，供权限/确认两个菜单复用。 */
 function ConfirmationOption({ icon, title, description, selected }: { icon: ReactNode; title: string; description: string; selected: boolean }) {
     return (
         <div className="flex min-w-64 items-start gap-3 py-1">

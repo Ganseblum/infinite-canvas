@@ -10,10 +10,18 @@ import type { AgentEventLog } from "@/stores/use-agent-store";
 import { formatLogJson, formatLogText, type AgentLogContext } from "./agent-event-formatters";
 import { AgentScrollToBottom } from "./agent-scroll-to-bottom";
 
+/** 日志筛选档位：all 为全部，其余按级别过滤。 */
 type LogFilter = "all" | "error" | "warning" | "info";
+/** 列表渲染用的日志条目：在原始日志上补充了条数合并计数、级别与展示文案等派生字段。 */
 type DisplayLog = AgentEventLog & { count: number; detail: string; displayText: string; level: Exclude<LogFilter, "all">; signature: string; success: boolean };
+// 距底部 48px 内视为「贴底」：贴底时新日志自动跟随滚动，否则累计未读条数。
 const SCROLL_BOTTOM_THRESHOLD = 48;
 
+/**
+ * 事件日志视图：顶部连接诊断信息，正文分「诊断文本」与「原始 JSON」两种模式。
+ * 文本模式支持按级别筛选、同类日志合并计数、贴底跟随与未读条数提示；
+ * 复制失败时兜底聚焦隐藏 textarea 让用户手动选择。
+ */
 export function AgentLogView({
     logs,
     theme,
@@ -52,6 +60,7 @@ export function AgentLogView({
     const visibleLogCount = visibleLogs.reduce((sum, item) => sum + item.count, 0);
     const previousVisibleCountRef = useRef(visibleLogCount);
     const lastError = [...logs].reverse().find((item) => logLevel(item) === "error");
+    // 与聊天时间线相同的贴底跟随逻辑：用户上滚即停止跟随并显示「回到底部」。
     const updateScrollState = useCallback(() => {
         const list = listRef.current;
         if (!list) return;
@@ -68,6 +77,7 @@ export function AgentLogView({
         setShowScrollToBottom(false);
         setNewLogCount(0);
     }, []);
+    // 最后一条日志是 <details>，展开/收起会改变高度：收起后重判贴底；展开且在跟随时等两帧（高度生效后）再滚底。
     const handleLastLogToggle = useCallback((open: boolean) => {
         if (!open) {
             requestAnimationFrame(updateScrollState);
@@ -86,8 +96,10 @@ export function AgentLogView({
         const addedCount = Math.max(0, visibleLogCount - previousCount);
         previousVisibleCountRef.current = visibleLogCount;
         if (mode !== "text") return;
+        // 条数减少说明发生了清空或筛选变化，未读计数直接归零。
         if (visibleLogCount < previousCount) setNewLogCount(0);
         const frame = requestAnimationFrame(() => {
+            // 贴底则跟随滚到最新；未贴底则累计新日志条数用于「回到底部」按钮上的未读提示。
             if (followLogsRef.current) scrollToBottom("auto");
             else {
                 if (addedCount) setNewLogCount((count) => count + addedCount);
@@ -96,6 +108,7 @@ export function AgentLogView({
         });
         return () => cancelAnimationFrame(frame);
     }, [mode, scrollToBottom, updateScrollState, visibleLogCount]);
+    // Clipboard API 不可用（如非安全上下文）时退回 textarea 全选，让用户 Ctrl+C 手动复制。
     const copy = async (value = content, tip = t("agent.logs.copied")) => {
         if (await copyToClipboard(value)) {
             onCopied(tip);
@@ -204,6 +217,7 @@ export function AgentLogView({
     );
 }
 
+/** 日志操作按钮组：复制全部、复制最后一条错误、清空，文本/JSON 两种模式共用。 */
 function LogActions({ logs, lastError, context, onClear, onCopy }: { logs: AgentEventLog[]; lastError?: AgentEventLog; context: AgentLogContext; onClear: () => void; onCopy: (value?: string, tip?: string) => void }) {
     const { t } = useTranslation();
     return (
@@ -221,6 +235,7 @@ function LogActions({ logs, lastError, context, onClear, onCopy }: { logs: Agent
     );
 }
 
+/** 单条日志行：按级别着色，可展开查看结构化详情（JSON），重复日志显示合并计数。 */
 function LogRow({ item, theme, onToggle }: { item: DisplayLog; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onToggle?: (open: boolean) => void }) {
     const { t } = useTranslation();
     const tone = item.level === "error" ? "text-red-600 dark:text-red-400" : item.level === "warning" ? "text-amber-600 dark:text-amber-400" : item.success ? "text-emerald-600 dark:text-emerald-400" : "";
@@ -263,6 +278,10 @@ function LogRow({ item, theme, onToggle }: { item: DisplayLog; theme: (typeof ca
     );
 }
 
+/**
+ * 把原始日志整理为展示列表：先展开（一条日志可能内含多个 JSON 事件），
+ * 再把相邻且签名相同的条目合并计数，减少刷屏。
+ */
 function prepareLogs(logs: AgentEventLog[]) {
     return logs.flatMap(expandLog).reduce<DisplayLog[]>((result, item) => {
         const previous = result.at(-1);
@@ -277,6 +296,10 @@ function prepareLogs(logs: AgentEventLog[]) {
     }, []);
 }
 
+/**
+ * 单条原始日志 → 展示条目。raw/text 里若解析出 JSON 事件，会展开成多条（id 加序号），
+ * 并从事件里提取标题、时间与摘要；签名用于相邻去重（路径/ID 归一化后比较）。
+ */
 function expandLog(item: AgentEventLog): DisplayLog[] {
     const entries = parseJsonEntries(item.raw ?? item.text);
     return (entries.length ? entries : [undefined]).map((entry, index) => {
@@ -300,6 +323,7 @@ function expandLog(item: AgentEventLog): DisplayLog[] {
     });
 }
 
+/** 推断日志级别：优先取结构化字段（mcp.startup 状态 / level 字段），否则按中英文关键词兜底。 */
 function logLevel(item: AgentEventLog, entry?: unknown): DisplayLog["level"] {
     const entries = entry === undefined ? parseJsonEntries(item.raw ?? item.text) : [entry];
     const structured = entries.find((value) => value && typeof value === "object" && !Array.isArray(value)) as Record<string, unknown> | undefined;
@@ -318,6 +342,7 @@ function logLevel(item: AgentEventLog, entry?: unknown): DisplayLog["level"] {
     return "info";
 }
 
+/** 读取日志对象自带 level 字段（error/warn/info 等多种写法），无有效级别返回空串。 */
 function declaredLogLevel(value: unknown): DisplayLog["level"] | "" {
     if (!value || typeof value !== "object" || Array.isArray(value)) return "";
     const level = String((value as Record<string, unknown>).level || "").toLowerCase();
@@ -327,6 +352,7 @@ function declaredLogLevel(value: unknown): DisplayLog["level"] | "" {
     return "";
 }
 
+/** 通用「日志」标题按事件 target 细化（技能/插件/MCP/终端等），其余标题原样保留。 */
 function logTitle(fallback: string, value: unknown) {
     if (fallback !== "日志" && fallback !== "Log" || !value || typeof value !== "object" || Array.isArray(value)) return fallback;
     const target = String((value as Record<string, unknown>).target || "").toLowerCase();
@@ -338,6 +364,7 @@ function logTitle(fallback: string, value: unknown) {
     return "Codex";
 }
 
+/** 优先用日志事件自带的 ISO timestamp 显示时间，缺失或非法时回退原始时间字符串。 */
 function logTime(fallback: string, value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
     const timestamp = (value as Record<string, unknown>).timestamp;
@@ -346,6 +373,10 @@ function logTime(fallback: string, value: unknown) {
     return Number.isNaN(date.getTime()) ? fallback : date.toLocaleTimeString();
 }
 
+/**
+ * 从日志 raw/text 中提取 JSON 事件条目：整体是对象直接返回，字符串先尝试整体解析，
+ * 失败则扫描其中嵌套的 `{...}` / `[...]` 片段逐个解析（stderr 常混有普通文本输出）。
+ */
 function parseJsonEntries(value: unknown): unknown[] {
     if (value && typeof value === "object") return [value];
     if (typeof value !== "string") return [];
@@ -354,6 +385,7 @@ function parseJsonEntries(value: unknown): unknown[] {
     try {
         return [JSON.parse(text)];
     } catch {
+        // 手写扫描器状态机：start 记录片段起点，depth 配对括号，quoted/escaped 处理字符串字面量。
         const entries: unknown[] = [];
         let start = -1;
         let depth = 0;
@@ -388,6 +420,10 @@ function parseJsonEntries(value: unknown): unknown[] {
     }
 }
 
+/**
+ * 递归提取一条日志的人类可读摘要：字符串原样、数组取前三段拼接，
+ * 对象优先取 message/msg/reason 等常见字段，全无时回退 JSON 全文。
+ */
 function logSummary(value: unknown): string {
     if (typeof value === "string") return value;
     if (Array.isArray(value)) return value.map(logSummary).filter(Boolean).slice(0, 3).join(" · ");
@@ -409,10 +445,12 @@ function logSummary(value: unknown): string {
     return [record.method, record.type, record.tool, record.path, record.url].filter((item) => typeof item === "string" && item).join(" · ") || safeJson(value);
 }
 
+/** 压缩空白并去掉 ANSI 转义序列，得到单行摘要文本。 */
 function compactLogText(value: string) {
     return stripAnsi(value).replace(/\s+/g, " ").trim();
 }
 
+/** 去重签名用的文本归一化：把 skill.md 路径、file:// URL 与 UUID 替换为占位符，避免同内容不同参数被判定为新日志。 */
 function logSignature(value: string) {
     return value
         .replace(/[a-z]:\\[^\r\n]*?skill\.md/gi, "<SKILL.md>")
@@ -420,16 +458,19 @@ function logSignature(value: string) {
         .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "<ID>");
 }
 
+/** 去掉终端 ANSI 颜色控制序列（\x1B[...m 等）。 */
 function stripAnsi(value: string) {
     return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
+/** 安全转字符串：字符串原样，null/undefined 返回空串，其余 JSON 序列化。 */
 function safeString(value: unknown) {
     if (typeof value === "string") return value;
     if (value === undefined || value === null) return "";
     return safeJson(value);
 }
 
+/** JSON.stringify 的防抛错封装：循环引用等异常时退回 String()。 */
 function safeJson(value: unknown) {
     try {
         return JSON.stringify(value, null, 2);

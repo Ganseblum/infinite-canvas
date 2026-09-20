@@ -20,6 +20,9 @@ import {
     type CommunityWork,
 } from "@/services/api/community";
 
+/** 社区广场页入口：最新（游标分页）/ 热门两种排序 + 关键字与标签筛选 + 作品网格，
+ * 「我的作品」视图支持下架；弹窗大图预览里可点赞、复刻、举报。
+ */
 export default function CommunityPage() {
     const { message, modal } = App.useApp();
     const { t } = useTranslation();
@@ -34,11 +37,13 @@ export default function CommunityPage() {
     const [preview, setPreview] = useState<CommunityWork | null>(null);
     const [showMine, setShowMine] = useState(false);
 
+    // 关键字停下 300 毫秒再真正查询，避免每敲一个字就打一次接口。
     useEffect(() => {
         const timer = setTimeout(() => setQuery(keyword.trim()), 300);
         return () => clearTimeout(timer);
     }, [keyword]);
 
+    // 最新列表走无限游标分页；热门接口只返回一页，两个查询按当前排序各自启用。
     const worksQuery = useInfiniteQuery({
         queryKey: ["community", "works", sort, query, activeTag],
         queryFn: ({ pageParam, signal }) => listCommunityWorks({ cursor: pageParam, size: 24, sort, q: query || undefined, tag: activeTag }, signal),
@@ -67,6 +72,7 @@ export default function CommunityPage() {
     const loading = sort === "hot" ? hotQuery.isPending : worksQuery.isPending;
     const failed = sort === "hot" ? hotQuery.error : worksQuery.error;
 
+    // 标签云直接从当前已加载的作品里统计，取出现次数前 12 的标签。
     const tags = useMemo(() => {
         const counts = new Map<string, number>();
         for (const work of works) {
@@ -105,6 +111,7 @@ export default function CommunityPage() {
         navigate(`/image?remix=${work.id}`);
     };
 
+    // 点赞/取消后失效 community 缓存；返回最新计数供弹窗局部同步。
     const toggleLike = async (work: CommunityWork) => {
         try {
             const result = work.liked ? await unlikeCommunityWork(work.id) : await likeCommunityWork(work.id);
@@ -115,6 +122,7 @@ export default function CommunityPage() {
         }
     };
 
+    // 举报理由通过闭包变量收集（modal.confirm 内容非受控），为空时拒绝关闭弹窗。
     const report = (work: CommunityWork) => {
         let reason = "";
         modal.confirm({

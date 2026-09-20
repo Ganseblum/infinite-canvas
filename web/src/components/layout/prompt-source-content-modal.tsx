@@ -9,6 +9,12 @@ import { useAddAsset } from "@/hooks/use-asset-library";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
+/**
+ * 提示词源内容预览弹窗：表格展示某个远程源已抓到的提示词列表，
+ * 支持复制、查看详情与收藏进素材库；顶部按钮可强制重新抓取。
+ * @param source  要预览的提示词源，null 时弹窗关闭（组件保持挂载避免重复建表）
+ * @param onClose 关闭回调
+ */
 export function PromptSourceContentModal({ source, onClose }: { source: PromptSource | null; onClose: () => void }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -19,6 +25,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
     const addAsset = useAddAsset();
 
     const load = useCallback(
+        // force=false 只读已缓存条目；force=true 先触发一次远程抓取再读，用于「刷新」按钮。
         async (force: boolean) => {
             if (!source) return;
             setLoading(true);
@@ -125,6 +132,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
     );
 }
 
+/** 重新抓取源内容并返回最新条目列表（两次请求串行，抓取完成后再读列表）。 */
 async function refreshSourceItems(sourceId: string) {
     await refreshSource(sourceId);
     return fetchSourcePrompts(sourceId);

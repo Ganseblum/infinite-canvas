@@ -7,6 +7,7 @@ import { fetchPostDetail, siteUrl } from "@/lib/blog-api";
 
 export const revalidate = 300; // 兜底过期；Go 发布/下架/评论管理后按需再验证
 
+// Next 15 起动态路由参数是 Promise，页面与 generateMetadata 内需 await。
 type Props = { params: Promise<{ slug: string }> };
 
 // generateMetadata 逐页 head：title/description/canonical/OG + BlogPosting JSON-LD。
@@ -32,6 +33,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+/**
+ * 文章详情页（/posts/[slug]）：正文 HTML、目录、上下篇导航与互动/评论区。
+ * 数据经 fetchPostDetail（缓存标签 posts + post:<slug>）从 Go 内网拉取，
+ * 拉取失败（含已下架）转 404；缓存由 Go 发布/下架回调按需失效。
+ */
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
   const detail = await fetchPostDetail(slug).catch(() => null);
@@ -52,6 +58,7 @@ export default async function PostPage({ params }: Props) {
     wordCount: post.wordCount,
   };
 
+  // 阅读时长按中文 400 字/分钟估算，至少 1 分钟
   const readMinutes = Math.max(1, Math.round(post.wordCount / 400));
 
   return (

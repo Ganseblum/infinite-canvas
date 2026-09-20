@@ -14,13 +14,22 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+/** 顶栏动作图标组的属性。 */
 type UserStatusActionsProps = {
+    /** 是否显示设置入口（画布页有自己的设置面板时隐藏）。 */
     showConfig?: boolean;
+    /** default 用常规石色；canvas 跟随画布主题文字色，保证在画布背景上可读。 */
     variant?: "default" | "canvas";
+    /** 快捷键面板入口；不传则不渲染该图标。 */
     onOpenShortcuts?: () => void;
+    /** 插件管理入口；不传则不渲染该图标。 */
     onOpenPlugins?: () => void;
 };
 
+/**
+ * 顶栏右侧的动作图标组：插件、文档、设置、语言切换、主题切换、版本、GitHub、
+ * 快捷键与用户菜单。画布页（variant="canvas"）下图标颜色改用画布主题的前景色。
+ */
 export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
     const { i18n, t } = useTranslation();
     const theme = useThemeStore((state) => state.theme);

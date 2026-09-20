@@ -1,6 +1,9 @@
 import i18n from "@/i18n";
 import type { PromptSource } from "./prompt-source-presets";
 
+// 提示词源运行时：按源的 url 拉取 JSON 并解析为统一的 RawPrompt 结构。
+// 解析宽松容错：字段缺失跳过该条、相对路径补全为绝对 URL、重复 id 去重。
+
 export type RawPrompt = {
     id: string;
     title: string;
@@ -28,6 +31,7 @@ async function fetchSource(source: PromptSource, options?: RunOptions) {
     return response.json();
 }
 
+/** 拉取并解析一个提示词源；网络失败包装成本地化错误，abort 原样抛出。 */
 export async function runPromptSource(source: PromptSource, options?: RunOptions): Promise<RawPrompt[]> {
     if (!source.url.trim()) throw new Error(i18n.t("config.promptSources.runtime.urlRequired"));
     let data: unknown;

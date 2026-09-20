@@ -9,6 +9,9 @@ import { navigationTools } from "@/constant/navigation-tools";
 import i18n from "@/i18n";
 import { cn } from "@/lib/utils";
 
+/** 首页文案高亮装饰：在文字底部叠加色块（highlight）或下划线条（underline），
+ * 供 i18n Trans 组件在描述文案中内嵌使用。
+ */
 function Highlighter({ action, color, children }: { action: "highlight" | "underline"; color: string; children?: ReactNode }) {
     return (
         <span className="relative inline-block px-1">
@@ -22,6 +25,7 @@ function Highlighter({ action, color, children }: { action: "highlight" | "under
     );
 }
 
+/** 首页入口：主视觉 + 行动按钮 + 精选提示词封面瀑布展示（可点击放大预览）。 */
 export default function IndexPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -31,6 +35,7 @@ export default function IndexPage() {
     const [previewIndex, setPreviewIndex] = useState(0);
     const [previewOpen, setPreviewOpen] = useState(false);
 
+    // 精选展示只做静态拉取，失败时提示但不阻塞首屏。
     useEffect(() => {
         void fetchPrompts({ pageSize: 12 })
             .then((data) => setPromptShowcase(data.items))
@@ -80,6 +85,7 @@ export default function IndexPage() {
                                 }}
                                 className={cn(
                                     "group relative cursor-pointer overflow-hidden border border-stone-200 bg-stone-100 text-left dark:border-stone-800 dark:bg-stone-900",
+                                    // 首格放大占 2x2、第四格横向占 2 列，拼出错落的杂志式网格。
                                     index === 0 && "md:col-span-2 md:row-span-2",
                                     index === 3 && "md:col-span-2",
                                 )}
@@ -101,6 +107,7 @@ export default function IndexPage() {
                     </div>
                 </section>
             </section>
+            {/* 预览组复用卡片封面，点击卡片上的图即打开受控大图预览。 */}
             <Image.PreviewGroup
                 preview={{
                     open: previewOpen,

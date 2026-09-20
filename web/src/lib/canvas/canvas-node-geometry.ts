@@ -1,5 +1,9 @@
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle } from "@/types/canvas";
 
+/**
+ * 画布节点几何与分组工具：坐标一律是画布世界坐标（px），position 为节点左上角。
+ * 分组归属按「节点中心点是否落在组矩形内」判定，与视觉直觉一致。
+ */
 export function nodeBounds(nodes: CanvasNodeData[]) {
     return nodes.reduce(
         (acc, node) => ({
@@ -18,6 +22,7 @@ function containsCenter(group: CanvasNodeData, node: CanvasNodeData) {
     return centerX >= group.position.x && centerX <= group.position.x + group.width && centerY >= group.position.y && centerY <= group.position.y + group.height;
 }
 
+/** 拖动结束时找节点应落入的组（中心点判定）；被拖动的组自身不参与，取数组靠后的组（渲染在上层优先）。 */
 export function findGroupDropTarget(movedIds: Set<string>, nodes: CanvasNodeData[]) {
     if (nodes.some((node) => movedIds.has(node.id) && node.type === CanvasNodeType.Group)) return null;
     const movingNodes = nodes.filter((node) => movedIds.has(node.id) && node.type !== CanvasNodeType.Group);
@@ -31,6 +36,10 @@ export function findGroupDropTarget(movedIds: Set<string>, nodes: CanvasNodeData
     return null;
 }
 
+/**
+ * 把被拖动的节点收进组内：整体平移 dx/dy，使成员的包围盒尽量贴合组内边距（pad=24）。
+ * 包围盒比组内容区还大时以左上角对齐为准，宁超右下不出左上。
+ */
 export function snapNodesIntoGroup(movedIds: Set<string>, nodes: CanvasNodeData[], group: CanvasNodeData) {
     const movingNodes = nodes.filter((node) => movedIds.has(node.id) && node.type !== CanvasNodeType.Group);
     if (!movingNodes.length) return nodes;
@@ -48,6 +57,7 @@ export function snapNodesIntoGroup(movedIds: Set<string>, nodes: CanvasNodeData[
     });
 }
 
+// 组包裹选中节点时生成的组矩形：四周留 24px，顶部多留 52px 给组标题栏。
 export const GROUP_WRAP_PADDING = 24;
 export const GROUP_WRAP_TOP_PADDING = 52;
 
@@ -93,6 +103,11 @@ function withoutRemoved(nodes: CanvasNodeData[], connections: CanvasConnection[]
     };
 }
 
+/**
+ * 执行成组：拍平选中的子组、成员写入 groupId、组节点插到首个成员位置（保证渲染顺序）、
+ * 清理变空的旧组；返回新 nodes/connections 与新的选中集（只选中组本身）。
+ * 成员不足 2 个时返回 null 表示不可成组。
+ */
 export function applyGroupSelection(selectedIds: Set<string>, nodes: CanvasNodeData[], connections: CanvasConnection[], group: CanvasNodeData) {
     const members = collectGroupMemberNodes(selectedIds, nodes);
     if (members.length < 2) return null;
@@ -105,6 +120,10 @@ export function applyGroupSelection(selectedIds: Set<string>, nodes: CanvasNodeD
     return { ...next, selectedIds: [group.id] };
 }
 
+/**
+ * 执行解组：移除选中组的 groupId（组节点本身删除），保留原成员选中态，清理变空的组。
+ * 没有任何可解组对象时返回 null。
+ */
 export function applyUngroupSelection(selectedIds: Set<string>, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const flattenedGroupIds = selectedGroupIds(selectedIds, nodes);
     if (!flattenedGroupIds.size && !nodes.some((node) => selectedIds.has(node.id) && node.metadata?.groupId)) return null;
@@ -131,6 +150,7 @@ export function findContainingGroupId(node: CanvasNodeData, nodes: CanvasNodeDat
     return undefined;
 }
 
+/** 连线拖拽时另一端的吸附锚点：source 在节点左缘中点、target 在右缘中点。 */
 export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle) {
     return {
         x: current.handleType === "source" ? node.position.x : node.position.x + node.width,
@@ -138,6 +158,11 @@ export function getConnectionTargetAnchor(node: CanvasNodeData, current: Connect
     };
 }
 
+/**
+ * 规范化一次连线意图为 from→to：目标优先为 config 节点（config 只能当输入方）、
+ * 组节点不可连线、config 之间互斥；无法成线返回 null。
+ * @param firstHandleType 先落点的手柄类型，用于判断 config 端方向。
+ */
 export function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: CanvasNodeData[], firstHandleType: "source" | "target") {
     const first = nodes.find((node) => node.id === firstNodeId);
     const second = nodes.find((node) => node.id === secondNodeId);

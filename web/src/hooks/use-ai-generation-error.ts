@@ -9,6 +9,10 @@ import { ApiError, getApiErrorMessage } from "@/lib/api-error";
 // 生成入口统一错误处理：402 引导充值，429 按 Retry-After 进入禁用倒计时，
 // 5xx 说明点数已退回，其余走 apiErrors 文案；每次失败后刷新余额。
 // onQuoteChanged 由调用方注入：报价在两轮之间再次变化时，由页面决定是否按新价重试。
+/**
+ * 生成类接口的统一错误处理 hook。
+ * @returns handleAiError 传给各生成入口的 onError；retryAfterSeconds 供生成按钮做禁用倒计时。
+ */
 export function useAiGenerationError() {
     const { message, modal } = App.useApp();
     const { t } = useTranslation();

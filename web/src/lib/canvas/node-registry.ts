@@ -5,6 +5,10 @@ import i18n from "@/i18n";
 import type { CanvasNodeDefinition } from "@/types/canvas-plugin";
 import { CanvasNodeType } from "@/types/canvas";
 
+/**
+ * 节点定义注册表：内置节点与插件节点统一在此注册后画布才能识别，
+ * 创建菜单/Agent 操作经 getNodeSpec 取默认尺寸与元数据。
+ */
 const definitions = new Map<string, CanvasNodeDefinition>();
 const ownerByType = new Map<string, string>(); // type -> pluginId; built-in nodes use "builtin".
 
@@ -14,6 +18,7 @@ function bump() {
     useNodeRegistryVersion.setState((state) => ({ version: state.version + 1 }));
 }
 
+/** 注册一批节点定义；pluginId 缺省为内置节点。重复 type 以后注册者为准。 */
 export function registerNodeDefinitions(defs: CanvasNodeDefinition[], pluginId = "builtin") {
     defs.forEach((def) => {
         definitions.set(def.type, def);
@@ -22,6 +27,7 @@ export function registerNodeDefinitions(defs: CanvasNodeDefinition[], pluginId =
     bump();
 }
 
+/** 注销某插件注册的全部节点（禁用/卸载插件时调用）。 */
 export function unregisterPluginNodes(pluginId: string) {
     for (const [type, owner] of ownerByType) {
         if (owner !== pluginId) continue;

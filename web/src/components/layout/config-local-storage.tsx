@@ -13,6 +13,10 @@ const storeLabelKeys: Record<string, string> = {
     prompt_cache: "promptCache",
 };
 
+/**
+ * 设置中的「本地存储」页签：展示浏览器存储配额占用与各 IndexedDB 库/表明细。
+ * 惰性加载：仅在页签首次激活（active）时才读取一次用量，之后手动刷新。
+ */
 export function ConfigLocalStorage({ active }: { active: boolean }) {
     const { t } = useTranslation();
     const [usage, setUsage] = useState<LocalStorageUsage | null>(null);
@@ -100,6 +104,7 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
     );
 }
 
+/** 单个存储指标卡片（图标 + 名称 + 数值 + 说明）。 */
 function StorageMetric({ icon, label, value, hint }: { icon: ReactNode; label: string; value: string; hint: string }) {
     return (
         <div className="rounded-lg bg-stone-100/70 p-3 dark:bg-stone-900/70">
@@ -110,11 +115,13 @@ function StorageMetric({ icon, label, value, hint }: { icon: ReactNode; label: s
     );
 }
 
+/** 表名 → 文案 key；未登记的表（如浏览器内置库）直接显示原名。 */
 function storeLabel(name: string, t: TFunction) {
     const key = storeLabelKeys[name];
     return key ? t(`config.localStorage.stores.${key}`) : name;
 }
 
+/** 字节数人性化展示：B / KB / MB / GB 四档，两级以上保留一位小数。 */
 function formatStorageBytes(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

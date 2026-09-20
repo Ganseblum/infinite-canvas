@@ -120,6 +120,7 @@ func (p *wechatProvider) VerifyAndParse(ctx context.Context, r *http.Request) (C
 	return result, nil
 }
 
+// QueryOrder 主动查询渠道侧真实状态，供超时订单扫描兜底与回调丢失时补偿。
 func (p *wechatProvider) QueryOrder(ctx context.Context, order *model.Order) (CallbackResult, error) {
 	resp, _, err := p.api.QueryOrderByOutTradeNo(ctx, native.QueryOrderByOutTradeNoRequest{
 		OutTradeNo: strPtr(order.ID.String()),

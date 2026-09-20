@@ -4,6 +4,7 @@ import { ApiError } from "@/lib/api-error";
 import { updateCanvas } from "@/services/api/canvas";
 import type { CanvasData } from "@/services/data/types";
 
+/** 自动保存状态机对外暴露的状态：idle 未保存过、saving 保存中、saved 已同步、error 失败或冲突待处理。 */
 export type CanvasSaveState = "idle" | "saving" | "saved" | "error";
 
 // 空闲 2 秒落盘；连续操作时最多 30 秒强制保存一次，避免长时间拖拽期间一次都没保存。
@@ -13,6 +14,7 @@ const MAX_DELAY_MS = 30000;
 type CanvasAutosaveOptions = {
     canvasId: string;
     readData: () => CanvasData;
+    /** revision 冲突时回调，参数为服务端最新 revision，用于「覆盖」路径。 */
     onConflict: (revision: number) => void;
 };
 

@@ -9,6 +9,11 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { useTranslation } from "react-i18next";
 
+/**
+ * 画布底部工具栏：选择/抓手切换、撤销重做、新增各类节点、上传、
+ * 扩展节点菜单、外观设置（主题/网格样式/图片信息）、删除与清空。
+ * 悬停提示与弹出面板的位置由 getTipX 统一计算，跟随按钮中心。
+ */
 export function CanvasToolbar({
     selectedCount,
     canvasTool,
@@ -61,13 +66,15 @@ export function CanvasToolbar({
     const setTheme = useThemeStore((state) => state.setTheme);
     const theme = canvasThemes[colorTheme];
     const [hovered, setHovered] = useState<string | null>(null);
-    const [tipX, setTipX] = useState(0);
+    const [tipX, setTipX] = useState(0); // 当前悬停按钮中心的 x 坐标，用于定位提示气泡。
     const [appearanceOpen, setAppearanceOpen] = useState(false);
     const [panelX, setPanelX] = useState(0);
     const [extensionsOpen, setExtensionsOpen] = useState(false);
     const [extPanelX, setExtPanelX] = useState(0);
     // Keep extension plugin nodes synchronized with registry changes.
+    // 订阅注册表版本，插件节点增删时同步刷新扩展菜单。
     useNodeRegistryVersion();
+    // 扩展菜单只展示插件定义的节点（showInCreateMenu 未关且非 builtin）。
     const extensionDefs = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false && getNodePluginId(def.type) !== "builtin");
     const dockStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: colorTheme === "dark" ? "0 18px 45px rgba(0,0,0,.32)" : "0 16px 40px rgba(28,25,23,.12)" };
     const hoverStyle = { background: theme.toolbar.itemHover, color: theme.toolbar.activeText };
@@ -75,6 +82,7 @@ export function CanvasToolbar({
     const tip = hovered ? toolLabel(hovered, t) : "";
 
     // Close extension-node and canvas-appearance popovers when clicking outside the toolbar and its panels.
+    // 点击工具栏和两个弹出面板之外时关闭扩展节点/外观弹出层。
     useEffect(() => {
         if (!extensionsOpen && !appearanceOpen) return;
         const handlePointerDown = (event: PointerEvent) => {
@@ -268,6 +276,7 @@ export function CanvasToolbar({
     );
 }
 
+/** 工具栏单个按钮：悬停时上报自身 id 与中心 x 坐标，由父级统一渲染提示气泡。 */
 function ToolbarButton({
     id,
     label,
@@ -317,10 +326,12 @@ function ToolbarButton({
     );
 }
 
+/** 工具栏内的竖分隔线。 */
 function Divider({ theme }: { theme: CanvasTheme }) {
     return <div className="mx-1 h-6 w-px" style={{ background: theme.toolbar.border }} />;
 }
 
+/** 明暗主题切换按钮，用 AnimatedThemeToggler 做全屏过渡动画。 */
 function CanvasThemeButton({ colorTheme, targetTheme, onThemeChange, children }: { colorTheme: CanvasColorTheme; targetTheme: CanvasColorTheme; onThemeChange: (theme: CanvasColorTheme) => void; children: ReactNode }) {
     const theme = canvasThemes[colorTheme];
     const active = colorTheme === targetTheme;
@@ -343,6 +354,7 @@ function CanvasThemeButton({ colorTheme, targetTheme, onThemeChange, children }:
     );
 }
 
+/** 工具栏上方的悬停提示气泡，x 为按钮中心的水平坐标。 */
 function DockTip({ label, x, theme }: { label: string; x: number; theme: CanvasTheme }) {
     return (
         <span className="absolute bottom-[calc(100%+8px)] -translate-x-1/2 rounded-md px-2 py-1 text-xs shadow-lg" style={{ left: x, background: theme.node.text, color: theme.node.panel }}>
@@ -351,6 +363,7 @@ function DockTip({ label, x, theme }: { label: string; x: number; theme: CanvasT
     );
 }
 
+/** 按钮 id → 文案 key 的映射（提示气泡用）。 */
 function toolLabel(id: string, t: (key: string) => string) {
     if (id === "tool-select") return t("canvas.toolbar.select");
     if (id === "tool-pan") return t("canvas.toolbar.pan");
@@ -370,6 +383,7 @@ function toolLabel(id: string, t: (key: string) => string) {
     return "";
 }
 
+/** 计算目标按钮中心相对工具栏容器的 x 坐标，用于定位提示气泡与弹出面板。 */
 function getTipX(wrap: HTMLDivElement | null, target: HTMLElement) {
     if (!wrap) return 0;
     const wrapBox = wrap.parentElement?.getBoundingClientRect() || wrap.getBoundingClientRect();

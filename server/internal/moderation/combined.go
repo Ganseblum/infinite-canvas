@@ -18,6 +18,8 @@ func NewCombined(image ImageProvider, text TextProvider) *CombinedProvider {
 
 func (p *CombinedProvider) Name() string { return "nsfwjs+detoxify" }
 
+// Moderate 按内容类型分发：文本走 Detoxify、图片与视频帧走 NSFWJS；
+// 对应能力未配置时返回不可用，其余类型（音频等）直接放行不送审。
 func (p *CombinedProvider) Moderate(ctx context.Context, req Request) (Result, error) {
 	switch req.ContentType {
 	case ContentText:

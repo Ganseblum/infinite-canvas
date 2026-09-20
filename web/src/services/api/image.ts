@@ -11,11 +11,15 @@ import type { ReferenceImage } from "@/types/image";
 
 type RequestOptions = { signal?: AbortSignal };
 
+// 文生图 / 图生图 / 图像问答的高层封装：先报价再生成，报错统一转 ApiError。
+
+/** 单条对话消息：content 可为纯文本，或多模态数组（文本 + 图片 url）。 */
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
     content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 };
 
+/** 一张生成结果：url/dataUrl 都是服务端媒体地址，可直接用于 <img>。 */
 export type GeneratedImage = {
     id: string;
     url: string;
@@ -93,6 +97,7 @@ async function runWithQuoteRetry<T>(quote: () => Promise<QuoteResult>, run: (quo
     }
 }
 
+/** 文生图：POST /api/v1/ai/images/generations。size/quality 为 auto 时不下发该参数。 */
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<GeneratedImage[]> {
     const model = resolveModel(config);
     const n = clampCount(config);
@@ -115,6 +120,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     return response.images.map((image) => ({ ...toGeneratedImage(image), generationId: response.generationId }));
 }
 
+/** 图生图：参考图先上传成 storageKey，提示词按「图 1…」前缀重写后走同一生成接口。 */
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<GeneratedImage[]> {
     const model = resolveModel(config);
     const n = clampCount(config);
@@ -140,6 +146,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     return response.images.map((image) => ({ ...toGeneratedImage(image), generationId: response.generationId }));
 }
 
+/** 图像问答：走文本能力的 SSE 流式接口，onDelta 每次回调全量累积文本。 */
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const model = resolveModel(config);
     const input = withSystemMessage(config, messages) as AiTextMessage[];

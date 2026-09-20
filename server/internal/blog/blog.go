@@ -138,6 +138,7 @@ func splitTags(raw string) []string {
 // slugRe 文章与栏目 slug 规则：全小写字母数字与单连字符分段。
 var slugRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
+// validSlug 在 slugRe 基础上追加长度约束 1-128 字节，文章与栏目共用。
 func validSlug(s string) bool { return len(s) >= 1 && len(s) <= 128 && slugRe.MatchString(s) }
 
 // publishPost 把草稿置为已发布：published_at 只在首发时写入，重复发布不覆盖首发时间。

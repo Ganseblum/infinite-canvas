@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useAssetSearch } from "@/hooks/use-asset-library";
 import type { AssetItem, AssetKind } from "@/services/data/types";
 
+/** 选中素材后回传给宿主的插入载荷：按素材类型携带不同字段。 */
 export type InsertAssetPayload = { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number };
 
 type Props = {
@@ -17,6 +18,7 @@ type Props = {
     onClose: () => void;
 };
 
+/** 「我的素材」选择弹窗：搜索/类型筛选/分页浏览素材，点击卡片即插入画布。 */
 export function AssetPickerModal({ open, onInsert, onClose }: Props) {
     const { t } = useTranslation();
     return (
@@ -28,8 +30,10 @@ export function AssetPickerModal({ open, onInsert, onClose }: Props) {
 
 const PAGE_SIZE = 8;
 
+// 筛选标签：全部 + 三种素材类型。
 const kindOptions: Array<"all" | AssetKind> = ["all", "text", "image", "video"];
 
+/** 素材卡片：图片/视频显示封面，文本显示标题文字，悬停浮出「插入」提示。 */
 function PickerCard({ title, kind, cover, onClick }: { title: string; kind: string; cover: string; onClick: () => void }) {
     const { t } = useTranslation();
     return (
@@ -74,6 +78,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     }, [keyword]);
 
     const handleInsert = (asset: AssetItem) => {
+        // 按素材类型拆成对应的插入载荷；图片统一转 dataUrl，视频/图片带 storageKey 供本地预览。
         if (asset.kind === "text") {
             onInsert({ kind: "text", content: assetText(asset), title: asset.title });
             return;

@@ -10,6 +10,9 @@ import { sendVerifyEmail, verifyEmail } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+/** 邮箱验证页入口：从邮件链接取 token 自动提交验证，分「验证中 / 成功 / 失败」三种视图；
+ * 已登录且验证的是当前账号时会同步刷新本地会话里的用户资料。
+ */
 export default function VerifyEmailPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -22,6 +25,7 @@ export default function VerifyEmailPage() {
     const [status, setStatus] = useState<"verifying" | "success" | "error">(token ? "verifying" : "error");
     const [failureMessage, setFailureMessage] = useState(() => (token ? "" : t("auth.verify.failureDescription")));
     const [resending, setResending] = useState(false);
+    // 防止 StrictMode 下 effect 双触发导致验证接口被调用两次。
     const started = useRef(false);
 
     // 进页自动提交，成功或失败只执行一次（StrictMode 下 effect 会重复触发）。
@@ -31,6 +35,7 @@ export default function VerifyEmailPage() {
         if (!token) return;
         verifyEmail(token)
             .then(({ user }) => {
+                // 仅当验证的是当前登录账号时才用最新资料覆盖本地会话，避免串号。
                 const store = useAuthStore.getState();
                 if (store.status === "authenticated" && store.plan && store.accessToken && store.user?.id === user.id) {
                     store.setSession({ user, plan: store.plan, accessToken: store.accessToken });

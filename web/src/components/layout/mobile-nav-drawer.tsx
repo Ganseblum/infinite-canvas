@@ -11,6 +11,10 @@ type MobileNavDrawerProps = {
     onClose: () => void;
 };
 
+/**
+ * 移动端（<768px）导航抽屉：从左侧滑出，列出全部导航工具入口。
+ * 点击任一入口后自动关闭抽屉再跳转。
+ */
 export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDrawerProps) {
     const { t } = useTranslation();
 

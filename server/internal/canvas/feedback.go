@@ -206,6 +206,7 @@ func (h *FeedbackHandler) Close(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"id": ticket.ID.String(), "status": "closed"})
 }
 
+// loadOwned 取当前用户名下的工单；跨用户与不存在一律 404。
 func (h *FeedbackHandler) loadOwned(c *gin.Context, uid uuid.UUID) (*model.FeedbackTicket, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -225,6 +226,7 @@ func (h *FeedbackHandler) loadOwned(c *gin.Context, uid uuid.UUID) (*model.Feedb
 	return &ticket, true
 }
 
+// loadOwnedTicket 取工单并附带全部回复（按创建时间正序，对话顺序展示）。
 func (h *FeedbackHandler) loadOwnedTicket(c *gin.Context, uid uuid.UUID) (*model.FeedbackTicket, []model.FeedbackTicketReply, bool) {
 	ticket, ok := h.loadOwned(c, uid)
 	if !ok {

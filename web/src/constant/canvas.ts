@@ -3,6 +3,9 @@ import { CanvasNodeType } from "@/types/canvas";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 import { getNodeSpec as getRegistryNodeSpec } from "@/lib/canvas/node-registry";
 
+// 画布节点默认规格：尺寸与初始元数据按节点类型集中定义，
+// 创建节点、Agent 操作与节点面板都从这里取默认值。
+
 type CanvasNodeSpec = {
     width: number;
     height: number;
@@ -10,6 +13,7 @@ type CanvasNodeSpec = {
     metadata?: CanvasNodeMetadata;
 };
 
+// 各类型节点在画布上的默认尺寸（世界坐标 px）与标题（标题经 i18n 惰性取值）。
 export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Image]: { width: 340, height: 240, get title() { return i18n.t("canvas.nodeTypes.image"); } },
     [CanvasNodeType.Text]: { width: 340, height: 240, get title() { return i18n.t("canvas.nodeTypes.text"); } },
@@ -19,6 +23,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Group]: { width: 760, height: 480, get title() { return i18n.t("canvas.nodeTypes.group"); } },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
+// 各类型节点的完整规格：尺寸 + 初始 metadata（含各类型的生成模式等默认值）。
 export const NODE_SPECS = {
     [CanvasNodeType.Image]: {
         width: 340, height: 240, get title() { return NODE_DEFAULT_SIZE[CanvasNodeType.Image].title; },

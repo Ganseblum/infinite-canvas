@@ -19,8 +19,10 @@ import (
 	"github.com/infinite-canvas/server/internal/model"
 )
 
+// assetKinds 素材类型白名单：文本、图片、视频。
 var assetKinds = map[string]struct{}{"text": {}, "image": {}, "video": {}}
 
+// assetSortColumns 列表排序参数白名单，用法同 canvasSortColumns。
 var assetSortColumns = map[string]string{
 	"updatedAt": "updated_at",
 	"createdAt": "created_at",
@@ -54,6 +56,8 @@ type assetPatchReq struct {
 	Bytes      *int64           `json:"bytes"`
 }
 
+// List 返回素材完整对象（data 只含元数据，不含媒体本体）；tag 过滤要求
+// 全部命中，q 同时搜标题与 data.content，第一页额外带标签全集 facets。
 func (h *AssetHandler) List(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -96,6 +100,8 @@ func (h *AssetHandler) List(c *gin.Context) {
 		return db
 	}
 
+	// 标签过滤带 JOIN + GROUP BY，直接 Count 会数成组数；对过滤后的
+	// id 子查询单独计数，保证 total 与实际命中条数一致。
 	var total int64
 	if err := h.db.Table("(?) AS filtered", apply(h.db.Model(&model.Asset{})).Select("assets.id")).
 		Count(&total).Error; err != nil {
@@ -140,6 +146,8 @@ func (h *AssetHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, payload)
 }
 
+// Create 新建素材并在同一事务里写入标签；素材是用户自有内容，不进审核流水，
+// 审核状态固定记 skipped（未送审）。
 func (h *AssetHandler) Create(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -219,6 +227,7 @@ func (h *AssetHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, assetPayload(*asset, tagMap[asset.ID]))
 }
 
+// Patch 局部更新素材字段；storageKey/bytes 单独修改时会镜像回 data JSON。
 func (h *AssetHandler) Patch(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -349,6 +358,7 @@ func (h *AssetHandler) Delete(c *gin.Context) {
 	httpx.NoContent(c)
 }
 
+// findOwned 取当前用户名下的素材；跨用户与不存在一律 404。
 func (h *AssetHandler) findOwned(c *gin.Context, uid uuid.UUID) (*model.Asset, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -369,6 +379,7 @@ func (h *AssetHandler) findOwned(c *gin.Context, uid uuid.UUID) (*model.Asset, b
 	return &asset, true
 }
 
+// tagsFor 批量取素材标签并按素材 id 分组，缺素材不带键。
 func (h *AssetHandler) tagsFor(ids []uuid.UUID) (map[uuid.UUID][]string, error) {
 	tagMap := make(map[uuid.UUID][]string, len(ids))
 	if len(ids) == 0 {
@@ -419,6 +430,8 @@ func replaceAssetTags(tx *gorm.DB, assetID uuid.UUID, tags []string) error {
 	return tx.Create(&rows).Error
 }
 
+// normalizeQueryTags 清洗查询参数里的 tag：去空白、去重并丢弃空值；
+// 与 normalizeTags 不同，查询场景宽松处理，非法输入直接忽略不报错。
 func normalizeQueryTags(raw []string) []string {
 	out := make([]string, 0, len(raw))
 	seen := map[string]struct{}{}

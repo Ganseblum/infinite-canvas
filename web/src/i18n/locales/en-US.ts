@@ -1,3 +1,4 @@
+// 英文语言包：key 与 zh-CN.ts 一一对应；未命中的 key 回退中文（fallbackLng）。
 export default {
     meta: {
         title: "YOUC",

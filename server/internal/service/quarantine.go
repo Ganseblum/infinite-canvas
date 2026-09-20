@@ -83,6 +83,7 @@ func (s *QuarantineService) Get(ctx context.Context, userID uuid.UUID, key strin
 	if err != nil {
 		return nil, err
 	}
+	// 12 是 AES-GCM 标准 nonce 长度，密文不足一个 nonce 即视为损坏。
 	if len(raw) < 12 {
 		return nil, errors.New("隔离对象损坏")
 	}

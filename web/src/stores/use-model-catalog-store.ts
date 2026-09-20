@@ -10,6 +10,10 @@ type ModelCatalogState = {
     load: () => Promise<void>;
 };
 
+/**
+ * 平台模型目录 store：缓存 GET /api/v1/models 返回的模型清单与约束，
+ * 工作台/画布/Agent 工具都从这里取模型选项；不持久化，登录后按需加载。
+ */
 export const useModelCatalogStore = create<ModelCatalogState>()((set, get) => ({
     items: [],
     status: "idle",
@@ -25,11 +29,13 @@ export const useModelCatalogStore = create<ModelCatalogState>()((set, get) => ({
     },
 }));
 
+/** 按模型 id 查目录项；空值或未收录返回 undefined。 */
 export function catalogModel(value: string | undefined) {
     const id = (value || "").trim();
     return id ? useModelCatalogStore.getState().items.find((item) => item.id === id) : undefined;
 }
 
+/** 模型的参数约束（尺寸/比例/时长/数量上限等），供表单钳制取值。 */
 export function modelConstraints(value: string | undefined): ModelConstraints | undefined {
     return catalogModel(value)?.constraints;
 }

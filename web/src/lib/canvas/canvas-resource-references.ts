@@ -5,6 +5,10 @@ import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/media-ingest";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
+/**
+ * 画布资源引用：把可作为生成输入的节点（图片/视频/音频/文本，含插件声明）抽象成
+ * 带序号标签的引用列表，供 Agent @提及、config 节点与工作台选择输入。
+ */
 export type CanvasResourceKind = "image" | "video" | "audio" | "text";
 
 export type CanvasResourceReference = {
@@ -18,14 +22,17 @@ export type CanvasResourceReference = {
     active: boolean;
 };
 
+/** 当前节点的上游输入资源（先看 config 节点的输入，再退回直连上游），用于 @提及候选。 */
 export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
 }
 
+/** 把整张画布的资源节点列成引用清单（标签按 kind 分组计数）。 */
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[]) {
     return labelResourceNodes(nodes, true);
 }
 
+/** 把图片类引用还原成带 base64 的 ReferenceImage：先拼 mediaUrl，缺失元数据时再解码一次取宽高。 */
 export async function resolveCanvasReferenceImages(references: CanvasResourceReference[], nodes: CanvasNodeData[]) {
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     return Promise.all(references.filter((reference) => reference.kind === "image").map(async (reference) => {
@@ -50,6 +57,10 @@ export async function resolveCanvasReferenceImages(references: CanvasResourceRef
     }));
 }
 
+/**
+ * 节点可引用的资源来源，优先级：config 节点连出的输入 > 直连上游 > 节点自身（若是资源节点）。
+ * 组节点会展开为其内部资源成员。返回 null 表示无可引用资源。
+ */
 export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const configInputs = expandGroupResourceNodes(getConnectedConfigInputNodes(nodeId, nodes, connections), nodes);
     if (configInputs.length) return configInputs;
@@ -59,6 +70,7 @@ export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[],
     return node && isResourceNode(node) ? [node] : [];
 }
 
+/** 生成时实际会带上的输入资源：与 @提及同口径，但不包含节点自身，也始终展开组节点。 */
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const configInputs = getConnectedConfigInputNodes(nodeId, nodes, connections);
     if (configInputs.length) return configInputs;

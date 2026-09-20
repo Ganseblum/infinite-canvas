@@ -12,6 +12,7 @@ async function proxy(request: Request, ctx: Ctx): Promise<Response> {
   const url = `${target()}/api/v1/${path.join("/")}${incoming.search}`;
 
   const headers = new Headers(request.headers);
+  // host/content-length 都交给 fetch 按内网目标与实际 body 重算，遗留原值会被上游拒绝
   headers.delete("host");
   headers.delete("content-length");
 
@@ -21,6 +22,7 @@ async function proxy(request: Request, ctx: Ctx): Promise<Response> {
     method: request.method,
     headers,
     body,
+    // 上游 3xx 原样透传给浏览器，不在代理内跟随（Location 可能指向浏览器不可达的内网地址）
     redirect: "manual",
   });
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: res.headers });

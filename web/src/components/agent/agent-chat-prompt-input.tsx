@@ -12,10 +12,16 @@ import { useAgentStore, type AgentCanvasReference, type AgentSkillReference } fr
 import { AgentCanvasReferencePreview, canvasReferenceIcon, canvasReferenceKindLabel } from "./agent-canvas-reference-preview";
 import { agentInlineTokenClass, agentInlineTokenMediaClass, agentReferenceMarker, agentSkillMarker, parseAgentInlineTokens } from "./agent-chat-inline-tokens";
 
+// 输入框内的 mention 命令状态：/ 触发技能搜索、@ 触发画布素材搜索，query 为命令符后的输入。
 type ComposerCommand = { type: "skill" | "resource"; query: string; length: number };
 type ComposerCandidate = { type: "skill"; skill: AgentSkillSummary } | { type: "resource"; reference: CanvasResourceReference };
+// 画布引用 token 的悬停预览定位（相对输入容器）。
 type ReferenceHover = { reference: AgentCanvasReference; left: number; top: number; width: number; height: number };
 
+/**
+ * 基于 contentEditable 的输入框：支持 /技能 与 @画布素材 的 mention 补全、图片粘贴、IME 中文输入。
+ * 值以纯文本 + 内联标记（$skill / @label）序列化，token 用不可编辑 span 呈现，光标可整体删除。
+ */
 export function AgentChatPromptInput({ value, disabled, placeholder, theme, onChange, onSubmit, onAddFiles }: {
     value: string;
     disabled?: boolean;
@@ -59,6 +65,8 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
     }, [command, resourceCandidates, selectedReferenceIds, skills]);
 
     useEffect(() => {
+        // React 不接管 contentEditable 的子节点：值变化时手动把 token 序列重建为 DOM。
+        // 焦点在编辑器且值未变时跳过，避免光标位置被打断。
         const editor = editorRef.current;
         if (!editor || document.activeElement === editor && value === lastEmittedRef.current) return;
         editor.replaceChildren(...tokens.map((token) => {
@@ -81,6 +89,7 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
     };
 
     const syncCommand = () => {
+        // 光标前文本命中「行首或空白后的 / 或 @」时打开候选菜单；/ 技能候选懒加载，@ 素材候选以选中节点优先。
         const text = textBeforeCaret(editorRef.current);
         const match = /(^|\s)([/@])([^\s/@]*)$/.exec(text);
         if (!match) return closeCommand();
@@ -108,9 +117,11 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
         syncCommand();
     };
 
+    /** 选中候选：技能有默认 prompt 且输入为空时直接套用；素材引用写入 store 并插入 token。 */
     const insertCandidate = (candidate: ComposerCandidate) => {
         const editor = editorRef.current;
         if (!editor || !command) return;
+        // 技能 token 全文唯一：插入前移除旧技能 token，并删掉命令符本身。
         if (candidate.type === "skill") editor.querySelector<HTMLElement>("[data-agent-token-kind='skill']")?.remove();
         removeTextBeforeCaret(command.length);
 
@@ -136,6 +147,7 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
         closeCommand();
     };
 
+    /** 候选菜单的键盘导航：上下选择、Enter/Tab 选中、Esc 关闭；IME 组合中不拦截。 */
     const handleCommandKey = (event: KeyboardEvent<HTMLDivElement>) => {
         if (!command || isImeComposing(event)) return false;
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -188,6 +200,7 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
                     syncFromEditor();
                 }}
                 onPaste={(event) => {
+                    // 粘贴行为重写：图片走附件流程，其余按纯文本插入，禁止富文本/HTML 混入。
                     const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
                     if (images.length && onAddFiles) {
                         event.preventDefault();
@@ -199,6 +212,7 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
                     syncFromEditor();
                 }}
                 onKeyDown={(event) => {
+                    // 阻止画布全局快捷键响应输入框按键；IME 组合中不触发提交/删除。
                     event.stopPropagation();
                     if (isImeComposing(event) || handleCommandKey(event)) return;
                     if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentToken(event.key)) {
@@ -220,6 +234,7 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
                 onMouseOver={showReferencePreview}
                 onMouseLeave={() => setReferenceHover(null)}
                 onBlur={(event) => {
+                    // 焦点移入候选菜单不关闭；延迟 120ms 给「点击候选项」留出触发时间。
                     if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-agent-command-menu]")) return;
                     window.setTimeout(closeCommand, 120);
                 }}
@@ -241,6 +256,7 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
         </div>
     );
 }
+/** mention 候选菜单：跟随输入框顶部展示，activeIndex 项自动滚动到可视区。 */
 function AgentCommandMenu({ command, candidates, activeIndex, loading, theme, onSelect }: { command: ComposerCommand; candidates: ComposerCandidate[]; activeIndex: number; loading: boolean; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (candidate: ComposerCandidate) => void }) {
     const { t } = useTranslation();
     const activeItemRef = useRef<HTMLButtonElement | null>(null);
@@ -275,6 +291,9 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
     return <span className="grid size-9 shrink-0 place-items-center"><Icon className="size-4" /></span>;
 }
 
+// —— 以下为 contentEditable 底层操作：token DOM 构造、光标处插入/删除与序列化 ——
+
+/** 构造技能 mention token：$name 作为数据标记，显示名以 / 开头。 */
 function createSkillToken(skill: AgentSkillReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes]) {
     const token = createToken("skill", agentSkillMarker(skill), theme);
     token.dataset.skillName = skill.name;
@@ -283,6 +302,7 @@ function createSkillToken(skill: AgentSkillReference, theme: (typeof canvasTheme
     return token;
 }
 
+/** 构造画布素材 mention token：nodeId 存入 dataset，图片素材内嵌缩略图。 */
 function createReferenceToken(reference: AgentCanvasReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes]) {
     const token = createToken("resource", agentReferenceMarker(reference), theme);
     token.dataset.nodeId = reference.nodeId;
@@ -298,6 +318,7 @@ function createReferenceToken(reference: AgentCanvasReference, theme: (typeof ca
     return token;
 }
 
+/** token 公共属性：不可编辑（整体删除）、携带序列化标记与主题配色。 */
 function createToken(kind: "skill" | "resource", marker: string, theme: (typeof canvasThemes)[keyof typeof canvasThemes]) {
     const token = document.createElement("span");
     token.contentEditable = "false";
@@ -308,6 +329,7 @@ function createToken(kind: "skill" | "resource", marker: string, theme: (typeof 
     return token;
 }
 
+/** 在光标处插入 token（token 后补一个空格并把光标移到空格后）；编辑器未聚焦时追加到末尾。 */
 function insertTokenAtCaret(editor: HTMLElement, token: HTMLElement) {
     const selection = window.getSelection();
     const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
@@ -354,6 +376,7 @@ function removeTextBeforeCaret(length: number) {
     selection.addRange(range);
 }
 
+/** Backspace/Delete 时删除紧邻光标的 token（跨过空白文本节点查找）；命中返回 true。 */
 function deleteAdjacentToken(key: string) {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !selection.isCollapsed) return false;
@@ -409,6 +432,7 @@ function textBeforeCaret(editor: HTMLElement | null) {
     return range.toString();
 }
 
+/** 编辑器内容 → 带标记的纯文本：token 还原为标记，BR/块级节点换行，最后去掉粘贴残留的零宽 BOM。 */
 function serializeEditor(editor: HTMLElement) {
     return serializeNodes(editor.childNodes).replace(/﻿/g, "");
 }

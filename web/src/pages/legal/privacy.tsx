@@ -34,6 +34,7 @@ const SECTIONS: LegalSection[] = [
     },
 ];
 
+/** 隐私政策页入口：把约定章节交给共用法务骨架渲染。 */
 export default function PrivacyPage() {
     return <LegalDoc title="隐私政策" sections={SECTIONS} />;
 }

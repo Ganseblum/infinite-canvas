@@ -36,6 +36,7 @@ type ModelConstraints struct {
 	Features   []string           `json:"features"`
 }
 
+// IntConstraint 是数值参数（如 n）的范围约束，当前只配上限。
 type IntConstraint struct {
 	Max int `json:"max"`
 }
@@ -276,6 +277,8 @@ func ValidateCreditCost(cost CreditCost, constraints ModelConstraints) error {
 	return nil
 }
 
+// joinParts 把各维取值排序后用 \x00 拼成组合键：\x00 不会出现在参数值里，
+// 排序保证键序无关，用作价格组合去重与排序的稳定键。
 func joinParts(parts []string) string {
 	sorted := append([]string(nil), parts...)
 	sort.Strings(sorted)

@@ -13,12 +13,16 @@ type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: 
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
+// 视频生成的高层封装：创建任务是异步的（POST /ai/videos/generations 后轮询任务状态），
+// 常用入口是 requestVideoGeneration（创建 + 轮询到终态）；页面可拆开两步自绘进度。
+
 export type VideoGenerationResult = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number; generationId?: string };
 // 任务携带 generationId：创建响应下发一次，轮询视图每次都带，用于结果卡点赞点踩。
 export type VideoGenerationTask = { id: string; model: string; generationId?: string };
 
 export type VideoGenerationTaskState = { status: "pending"; pollAfterMs?: number } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
+/** 创建任务并轮询到终态，返回结果或抛 VideoTaskFailed。 */
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationResult> {
     return waitForVideoGenerationTask(config, await createVideoGenerationTask(config, prompt, references, options), options);
 }
@@ -43,6 +47,7 @@ function videoTaskFailed(message: string) {
     return error;
 }
 
+/** 创建视频生成任务：先报价再创建，QUOTE_STALE 时静默重报一次重试创建。 */
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const model = (config.model || "").trim();
     if (!model) throw new Error(apiText("modelNotSupported"));
@@ -84,6 +89,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     return { id: response.taskId, model, generationId: response.generationId };
 }
 
+/** 轮询一次任务状态：succeeded/failed 终态直接返回，pending 带下次建议轮询间隔。 */
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     void config;
     const response = await getVideoTask(task.id, options?.signal);

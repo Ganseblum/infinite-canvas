@@ -8,6 +8,10 @@ import type { CanvasConnection, CanvasNodeData, ContextMenuState, ViewportTransf
 
 type GenerateNodeRef = MutableRefObject<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>;
 
+/**
+ * 画布与本地 Agent 面板的桥接参数：同时传入状态与对应的 ref，
+ * 使 Agent 应用操作时能先同步 ref 再更新 state，事件回调总能读到最新画布。
+ */
 type AgentBridgeParams = {
     projectId: string;
     title: string | undefined;
@@ -43,12 +47,14 @@ export function useAgentBridge(params: AgentBridgeParams) {
     const applyAgentOps = useCallback(
         (ops?: CanvasAgentOp[]) => {
             const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
+            // 应用前留存快照，供单步撤销。
             const before = { projectId, title: projectTitle, nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIdsRef.current), viewport: viewportRef.current };
             const generationOps = safeOps.filter((op): op is Extract<CanvasAgentOp, { type: "run_generation" }> => op.type === "run_generation" && Boolean(op.nodeId));
             const next = applyCanvasAgentOps(
                 before,
                 safeOps.filter((op) => op.type !== "run_generation"),
             );
+            // ref 先同步、state 后更新：queueMicrotask 里的生成逻辑依赖 ref 读到最新画布。
             nodesRef.current = next.nodes;
             connectionsRef.current = next.connections;
             selectedNodeIdsRef.current = new Set(next.selectedNodeIds);
@@ -60,6 +66,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
             setSelectedConnectionId(null);
             setViewport(next.viewport);
             setContextMenu(null);
+            // 生成类操作推迟到微任务：等本轮 state 提交完成后再触发生成，避免在更新中途执行。
             if (generationOps.length) {
                 queueMicrotask(() =>
                     generationOps.forEach((op) => {
@@ -74,6 +81,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
         [projectTitle, projectId],
     );
     const undoAgentOps = useCallback(() => {
+        // 仅支持单步撤销：撤销后清空快照，再次撤销返回 null。
         if (!agentUndoSnapshot) return null;
         nodesRef.current = agentUndoSnapshot.nodes;
         connectionsRef.current = agentUndoSnapshot.connections;
@@ -89,6 +97,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
         return { ...agentUndoSnapshot, projectId, title: projectTitle };
     }, [agentUndoSnapshot, projectTitle, projectId]);
 
+    // 把画布快照与应用/撤销能力发布到全局 Agent store，卸载时清理。
     useEffect(() => {
         setAgentCanvasContext({ snapshot: agentSnapshot, applyOps: applyAgentOps, undoOps: undoAgentOps, canUndo: Boolean(agentUndoSnapshot) });
         return () => setAgentCanvasContext(null);

@@ -11,6 +11,10 @@ import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
+/**
+ * 项目列表卡片：勾选进入批量操作、双击标题行内重命名、导出/重命名/删除按钮，
+ * 点击卡片主体进入画布（保留 URL 中的查询参数与 Agent 引导 hash）。
+ */
 export function CanvasProjectCard({ project }: { project: CanvasSummary }) {
     const { i18n, t } = useTranslation();
     const { message } = App.useApp();
@@ -28,6 +32,7 @@ export function CanvasProjectCard({ project }: { project: CanvasSummary }) {
     const editing = editingId === project.id;
     const selected = selectedIds.includes(project.id);
     const open = () => {
+        // 进入画布时透传 Agent URL 引导 hash（bootstrap 流程用），此时用 replace 避免污染历史。
         const agentHash = hasAgentUrlBootstrap(window.location.hash) ? window.location.hash : "";
         navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}${agentHash}`, { replace: Boolean(agentHash) });
     };

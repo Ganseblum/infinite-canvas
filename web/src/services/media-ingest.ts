@@ -20,12 +20,14 @@ export type UploadedFile = { url: string; storageKey: string; bytes: number; mim
 
 type ReadOptions = { signal?: AbortSignal };
 
+// 下载超时放宽到 10 分钟：远端大图可能很慢；解码超时 10 秒失败即返回 null。
 const IMAGE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_REMOTE_LOAD_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 const IMAGE_RESPONSE_ERROR = "ImageResponseError";
 const IMAGE_TIMEOUT_ERROR = "ImageTimeoutError";
 
+/** 上传一张图片：Blob 直接落库；URL 先下载成 Blob，下载失败但浏览器可显示时保留原地址（不落库）。 */
 export async function uploadImage(input: string | Blob, options?: ReadOptions): Promise<UploadedImage> {
     if (typeof input !== "string") return storeImage(input, options);
 
@@ -59,6 +61,7 @@ async function storeImage(blob: Blob, options?: ReadOptions): Promise<UploadedIm
     }
 }
 
+/** 上传任意媒体文件（视频/音频/其他），按需读取宽高与时长元信息。@param prefix 决定 storageKey 前缀。 */
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
     const blob = typeof input === "string" ? await (await fetch(withLocalProxy(input))).blob() : input;
     const storageKey = `${prefix}:${nanoid()}`;

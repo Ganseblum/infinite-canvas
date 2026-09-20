@@ -143,6 +143,8 @@ func validateImageSize(width, height int) error {
 	return nil
 }
 
+// resolveSizeByRatio 按比例换算像素尺寸：preset 表命中直接用；未命中按质量基准边反算，
+// 长短边都对齐到 16 的整数倍后过总像素与长边校验。
 func resolveSizeByRatio(quality, ratio string) (string, error) {
 	ratioWidth, ratioHeight, ok := parseRatio(ratio)
 	if !ok {
@@ -260,6 +262,8 @@ func geminiImageConfig(req ImageRequest) map[string]any {
 	return config
 }
 
+// resolveGeminiImageSize 优先按质量档映射；无质量取值时按像素反查 preset 档位，
+// 再查不到按长边分档兜底，保证高分辨率输入也能量化出一个 imageSize。
 func resolveGeminiImageSize(quality, size string) string {
 	if normalized := normalizeQuality(quality); normalized != "" {
 		return geminiImageSizeByQuality[normalized]
@@ -319,6 +323,8 @@ func normalizeVideoSize(size, resolution string) string {
 	return computeVideoSize(resolution, ratio)
 }
 
+// inferVideoRatio 把任意 size 输入归到白名单比例：完全无法解析时回落 16:9，
+// 与原版「永不丢弃比例信息」的行为一致。
 func inferVideoRatio(size string) string {
 	value := strings.TrimSpace(size)
 	if value == "" || strings.EqualFold(value, "auto") {
@@ -367,6 +373,7 @@ func computeVideoSize(resolution, ratio string) string {
 	return fmt.Sprintf("%dx%d", width, height)
 }
 
+// videoResolutionNumber 从 `${n}p` 或 low/high 等别名解析分辨率数值，非法回落 720。
 func videoResolutionNumber(raw string) int {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	switch value {
@@ -382,6 +389,7 @@ func videoResolutionNumber(raw string) int {
 	return number
 }
 
+// evenRound 取最接近的偶数，最小 2（视频编码要求宽高为偶数）。
 func evenRound(value float64) int {
 	return max(2, int(math.Round(value/2))*2)
 }

@@ -4,6 +4,7 @@ const KEY = "infinite-canvas:remix_source";
 
 export type RemixSource = { workId: string; title: string };
 
+/** 读取当前复刻来源；不存在或数据损坏时返回 null（损坏按无来源处理）。 */
 export function peekRemixSource(): RemixSource | null {
     try {
         const raw = sessionStorage.getItem(KEY);
@@ -18,6 +19,7 @@ export function peekRemixSource(): RemixSource | null {
     return null;
 }
 
+/** 写入或清除复刻来源；传 null 即清除。 */
 export function setRemixSource(source: RemixSource | null) {
     if (source) sessionStorage.setItem(KEY, JSON.stringify(source));
     else sessionStorage.removeItem(KEY);

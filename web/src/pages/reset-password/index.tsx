@@ -12,13 +12,21 @@ import { resetPassword } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+/** 重置密码表单取值。 */
 type ResetValues = { password: string; confirmPassword: string };
 
+/** 把服务端返回的字段级校验错误铺回表单对应输入框。
+ * @param form 目标表单实例
+ * @param fields 字段名到错误文案的映射
+ */
 function applyFieldErrors(form: FormInstance, fields?: Record<string, string>) {
     if (!fields) return;
     form.setFields(Object.entries(fields).map(([name, message]) => ({ name, errors: [message] })));
 }
 
+/** 重置密码页入口：携带邮件链接里的 token，分「表单 / 成功 / 失败」三种视图；
+ * 无 token 或 token 失效直接进入失败视图并提供重新申请入口。
+ */
 export default function ResetPasswordPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -28,6 +36,7 @@ export default function ResetPasswordPage() {
     const clearSession = useAuthStore((state) => state.clearSession);
     const [searchParams] = useSearchParams();
     const token = searchParams.get("token") || "";
+    // 初始 phase 取决于链接里有没有 token：缺 token 直接进入失败视图。
     const [phase, setPhase] = useState<"form" | "success" | "error">(token ? "form" : "error");
     const [failureMessage, setFailureMessage] = useState(() => (token ? t("auth.reset.invalidToken") : t("auth.reset.missingToken")));
     const [submitting, setSubmitting] = useState(false);
@@ -110,6 +119,7 @@ export default function ResetPasswordPage() {
                                 label={t("auth.reset.newPassword")}
                                 rules={[
                                     { required: true, message: t("auth.validation.passwordRequired") },
+                                    // 与服务端一致按字节长度校验，避免多字节密码提交后才报错。
                                     { validator: (_, value: string) => (!value || isPasswordByteLengthValid(value) ? Promise.resolve() : Promise.reject(new Error(t("auth.validation.password")))) },
                                 ]}
                             >

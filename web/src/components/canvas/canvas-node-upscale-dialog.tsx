@@ -8,8 +8,10 @@ import { MAX_UPSCALE_LONG_EDGE, resolveUpscaleSize, type ImageUpscaleAlgorithm, 
 
 export type CanvasImageUpscaleParams = ImageUpscaleParams;
 
+// 可选的放大插值算法（顺序即展示顺序）。
 const algorithms: ImageUpscaleAlgorithm[] = ["high", "bilinear", "nearest"];
 
+// 目标长边档位；4K 使用库内允许的最大长边常量。
 const targetOptions = [
     { label: "1K", value: 1024 },
     { label: "2K", value: 2048 },
@@ -21,15 +23,21 @@ const defaultParams: CanvasImageUpscaleParams = {
     algorithm: "high",
 };
 
+/**
+ * 图片放大（超分）弹窗：读取原图尺寸后选择目标长边与插值算法，
+ * 只放不放不缩——目标小于等于原图或超出上限时禁用确认。
+ */
 export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (params: CanvasImageUpscaleParams) => void }) {
     const { t } = useTranslation();
     const [params, setParams] = useState<CanvasImageUpscaleParams>(defaultParams);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const sourceLongEdge = image ? Math.max(image.width, image.height) : 0;
     const outputSize = useMemo(() => (image ? resolveUpscaleSize(image.width, image.height, params.targetLongEdge) : null), [image, params.targetLongEdge]);
+    // 仅当目标长边大于原图且不超过上限时才允许放大。
     const canUpscale = Boolean(image && sourceLongEdge < params.targetLongEdge && params.targetLongEdge <= MAX_UPSCALE_LONG_EDGE);
     const reachedMax = Boolean(image && sourceLongEdge >= MAX_UPSCALE_LONG_EDGE);
 
+    // 打开或换图时重置参数与图片信息。
     useEffect(() => {
         if (!open) return;
         setParams(defaultParams);
@@ -41,6 +49,7 @@ export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: {
         void readImageMeta(dataUrl).then(setImage);
     }, [dataUrl, open]);
 
+    // 图片就绪后自动选第一个大于原图长边的档位；已超上限则顶到 4K。
     useEffect(() => {
         if (!image) return;
         const nextTarget = targetOptions.find((option) => sourceLongEdge < option.value)?.value || MAX_UPSCALE_LONG_EDGE;

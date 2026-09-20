@@ -19,6 +19,7 @@ type ArkProvider struct {
 	Client  *http.Client
 }
 
+// NewArk 构造 Ark provider。client 为 nil 时用无整体超时的 Client，超时由请求 ctx 控制。
 func NewArk(baseURL, apiKey string, client *http.Client) *ArkProvider {
 	if client == nil {
 		client = &http.Client{Timeout: 0}
@@ -26,6 +27,7 @@ func NewArk(baseURL, apiKey string, client *http.Client) *ArkProvider {
 	return &ArkProvider{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, Client: client}
 }
 
+// doJSON 统一发 JSON 请求：响应体截断到 64MB 防异常上游撑爆内存，非 2xx 归一成 ErrUpstream。
 func (p *ArkProvider) doJSON(ctx context.Context, method, url string, payload any) ([]byte, error) {
 	var body io.Reader
 	if payload != nil {
@@ -156,6 +158,7 @@ func (p *ArkProvider) ChatStream(ctx context.Context, req ChatRequest, sink Stre
 	return fallback.ChatStream(ctx, req, sink)
 }
 
+// dataURL 把内联素材编码成 data: URI，供 content 数组的 image_url / video_url 字段携带。
 func dataURL(media InlineMedia) string {
 	if media.MimeType == "" {
 		media.MimeType = "application/octet-stream"

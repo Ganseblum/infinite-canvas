@@ -26,19 +26,23 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { InsertAssetPayload } from "./asset-picker-modal";
 
+// 面板开合动画时长（秒）与缓动曲线，与 side-panel store 里的毫秒配置保持一致。
 const PANEL_MOTION_SECONDS = CANVAS_SIDE_PANEL_MOTION_MS / 1000;
 const PANEL_EASE = [0.22, 1, 0.36, 1] as const;
 
+/** 面板页签：画布元素 / 我的素材 / 提示词库。 */
 type PanelTab = "canvas" | "assets" | "prompts";
 
+/** 画布左侧面板的 props。 */
 type Props = {
-    nodes: CanvasNodeData[];
+    nodes: CanvasNodeData[]; // 全部画布节点，元素页签直接消费。
     selectedNodeIds: Set<string>;
-    onFocusNode: (nodeId: string) => void;
-    onPreviewNode: (nodeId: string) => void;
-    onInsertAsset: (payload: InsertAssetPayload) => void;
+    onFocusNode: (nodeId: string) => void; // 点击元素行：把视口定位到该节点。
+    onPreviewNode: (nodeId: string) => void; // 点击图片行的预览按钮。
+    onInsertAsset: (payload: InsertAssetPayload) => void; // 素材/提示词插入画布。
 };
 
+// 节点类型 → 列表图标映射表。
 const NODE_TYPE_ICON: Record<string, typeof Square> = {
     [CanvasNodeType.Image]: ImageIcon,
     [CanvasNodeType.Video]: Video,
@@ -48,6 +52,7 @@ const NODE_TYPE_ICON: Record<string, typeof Square> = {
     [CanvasNodeType.Group]: Square,
 };
 
+// 节点生成状态 → 状态点颜色映射表（idle 透明不显示）。
 const STATUS_COLOR: Record<string, string> = {
     success: "#22c55e",
     loading: "#f59e0b",
@@ -55,6 +60,11 @@ const STATUS_COLOR: Record<string, string> = {
     idle: "transparent",
 };
 
+/**
+ * 画布左侧面板：三个页签（元素/素材/提示词），可拖拽调宽
+ * （上下限由 side-panel store 常量约束），宽度在拖拽结束时持久化到 localStorage，
+ * 开合与宽度动画由 framer-motion 驱动，挂载/卸载时机由 store 控制。
+ */
 export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onInsertAsset }: Props) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -68,6 +78,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
     const setWidth = useCanvasSidePanelStore((state) => state.setWidth);
     const [resizing, setResizing] = useState(false);
 
+    // 拖拽边缘调宽：拖动中关闭过渡动画避免迟滞，松手时把最终宽度写入 localStorage。
     const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
         event.preventDefault();
         const startX = event.clientX;
@@ -88,6 +99,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
         window.addEventListener("pointerup", onUp);
     };
 
+    // 关闭动画播完才真正卸载（panelMounted 由 store 延迟置 false），避免动画中途消失。
     if (!panelMounted) return null;
 
     return (
@@ -126,6 +138,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
     );
 }
 
+/** 面板页签按钮，active 下方有 layoutId 共享的滑动指示条。 */
 function TabButton({ label, active, theme, onClick }: { label: string; active: boolean; theme: CanvasTheme; onClick: () => void }) {
     return (
         <button type="button" onClick={onClick} className="relative pb-1.5 text-sm font-semibold transition-opacity" style={{ color: theme.node.text, opacity: active ? 1 : 0.45 }}>
@@ -139,13 +152,19 @@ function TabButton({ label, active, theme, onClick }: { label: string; active: b
 // Canvas tab: list nodes and center, zoom, and select the clicked node.
 // ---------------------------------------------------------------------------
 
+// 元素页签的类型过滤选项，"all" 表示不过滤。
 const NODE_FILTER_VALUES = ["all", CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Text, CanvasNodeType.Audio, CanvasNodeType.Config, CanvasNodeType.Group];
 
+/** 取节点的列表副标题文本：文本节点显示内容/提示词，其它节点显示类型名。 */
 function nodePreviewText(node: CanvasNodeData) {
     if (node.type === CanvasNodeType.Text) return node.metadata?.content || node.metadata?.prompt || "";
     return getNodeDefinition(node.type)?.title || node.type;
 }
 
+/**
+ * 元素页签：搜索/类型过滤、分组树形展示、多选导出、点击行定位到节点。
+ * 多选模式与画布本身的选中态互不影响。
+ */
 function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; onPreviewNode: (nodeId: string) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -160,6 +179,8 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
         const query = keyword.trim().toLowerCase();
         return nodes.filter((node) => (typeFilter === "all" || node.type === typeFilter) && (!query || [node.title, node.metadata?.content, node.metadata?.prompt].filter(Boolean).join(" ").toLowerCase().includes(query)));
     }, [nodes, keyword, typeFilter]);
+    // 把平铺节点列表整理成树行：子节点挂到所属分组之后；分组自身或其子节点
+    // 命中过滤时分组行保留，折叠的分组隐藏子行。
     const treeRows = useMemo(() => {
         const filteredIds = new Set(filtered.map((node) => node.id));
         const groups = new Set(nodes.filter((node) => node.type === CanvasNodeType.Group).map((node) => node.id));
@@ -291,6 +312,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
     );
 }
 
+/** 多选模式的复选框。 */
 function CheckMark({ checked, theme }: { checked: boolean; theme: CanvasTheme }) {
     return (
         <span className="grid size-4 shrink-0 place-items-center rounded border transition" style={{ borderColor: checked ? theme.toolbar.activeText : theme.node.stroke, background: checked ? theme.toolbar.activeText : "transparent" }}>
@@ -303,18 +325,24 @@ function CheckMark({ checked, theme }: { checked: boolean; theme: CanvasTheme })
 // Assets tab: collapsible type groups, tag filtering, and click-to-insert.
 // ---------------------------------------------------------------------------
 
+// 素材页签按类型分组的展示顺序。
 const ASSET_GROUPS: { kind: AssetKind; icon: typeof Square }[] = [
     { kind: "image", icon: ImageIcon },
     { kind: "video", icon: Video },
     { kind: "text", icon: FileText },
 ];
 
+/** 把素材项转成统一的插入载荷：文本取内容、视频带尺寸、图片取 URL。 */
 function buildInsertPayload(asset: AssetItem): InsertAssetPayload {
     if (asset.kind === "text") return { kind: "text", content: assetText(asset), title: asset.title };
     if (asset.kind === "video") return { kind: "video", url: assetUrl(asset), storageKey: asset.storageKey, title: asset.title, width: assetWidth(asset), height: assetHeight(asset) };
     return { kind: "image", dataUrl: assetUrl(asset), storageKey: asset.storageKey, title: asset.title };
 }
 
+/**
+ * 素材页签：关键字/标签走服务端筛选，按类型分组折叠展示；
+ * 支持上传图片/视频建素材、点击插入画布、删除并清理本地缩略图缓存。
+ */
 const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -340,6 +368,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     const refreshAssets = () => queryClient.invalidateQueries({ queryKey: ["assets"] });
 
     const handleFiles = async (fileList: FileList | null) => {
+        // 仅接受图片/视频；图片走 uploadImage、视频走 uploadMediaFile，全部成功后再统一刷新列表。
         const files = Array.from(fileList || []);
         if (!files.length) return;
         setUploading(true);
@@ -450,6 +479,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     );
 });
 
+/** 素材卡片：悬浮出现插入/删除操作，封面按类型用文本/视频/图片渲染。 */
 function AssetCard({ asset, theme, onInsert, onRemove }: { asset: AssetItem; theme: CanvasTheme; onInsert: () => void; onRemove: () => void }) {
     const { t } = useTranslation();
     return (
@@ -478,6 +508,7 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: AssetItem; the
     );
 }
 
+/** 素材封面：文本预览内容、视频取首帧（#t=0.1）、图片直接展示。 */
 function AssetCover({ asset }: { asset: AssetItem }) {
     if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{assetText(asset)}</div>;
     if (asset.kind === "video") return <video src={`${assetUrl(asset)}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
@@ -488,6 +519,10 @@ function AssetCover({ asset }: { asset: AssetItem }) {
 // Prompt library tab: collapsible source groups, lazy loading, and copy or text-node insertion actions.
 // ---------------------------------------------------------------------------
 
+/**
+ * 提示词库页签：按提示词源分组折叠展示，支持搜索、查看详情、
+ * 复制或以文本节点形式插入画布。
+ */
 const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -533,6 +568,10 @@ const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { o
     );
 });
 
+/**
+ * 单个提示词源分组：首次展开才拉取数据（react-query 缓存 1 小时），
+ * 搜索关键字在已加载数据内本地过滤。
+ */
 function PromptSourceGroup({
     sourceId,
     sourceName,
@@ -599,6 +638,7 @@ function PromptSourceGroup({
     );
 }
 
+/** 提示词行：封面 + 标题摘要，右侧提供查看详情与插入操作。 */
 function PromptRow({ item, theme, onInsert, onView }: { item: Prompt; theme: CanvasTheme; onInsert: () => void; onView: () => void }) {
     const { t } = useTranslation();
     return (

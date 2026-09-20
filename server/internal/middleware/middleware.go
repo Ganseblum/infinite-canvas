@@ -1,3 +1,7 @@
+// Package middleware 提供服务端横切中间件：JWT 与媒体令牌鉴权、账号状态拦截、
+// 后台 RBAC、限流、CORS、请求日志与维护模式写闸门。中间件之间的挂载顺序约束
+// （如 LoadAdminAccess 必须紧跟 Auth、MaintenanceGate 挂组级且先于 Auth）
+// 写在各自函数的注释里。
 package middleware
 
 import (

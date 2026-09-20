@@ -28,6 +28,7 @@ func NewGemini(baseURL, apiKey string, client *http.Client) *GeminiProvider {
 	return &GeminiProvider{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, Client: client}
 }
 
+// baseURL 已带 /v1 或 /v1beta 后缀时原样返回，否则补 /v1beta（取舍见 params.go 头部说明）。
 func (p *GeminiProvider) baseURL() string {
 	lower := strings.ToLower(p.BaseURL)
 	if strings.HasSuffix(lower, "/v1") || strings.HasSuffix(lower, "/v1beta") {
@@ -45,6 +46,7 @@ func (p *GeminiProvider) newRequest(ctx context.Context, method, url string, bod
 	return req, nil
 }
 
+// doJSON 统一发 JSON 请求：响应体截断到 64MB 防异常上游撑爆内存，非 2xx 归一成 ErrUpstream。
 func (p *GeminiProvider) doJSON(ctx context.Context, method, url string, payload any) ([]byte, error) {
 	var body io.Reader
 	if payload != nil {
@@ -424,6 +426,8 @@ func (p *GeminiProvider) ChatStream(ctx context.Context, req ChatRequest, sink S
 	return nil
 }
 
+// geminiErrorMessage 汇总响应里的三类失败信号：顶层 error、promptFeedback 安全拦截、
+// candidate 的 SAFETY / PROHIBITED_CONTENT 终止原因；都没有返回空串。
 func geminiErrorMessage(payload geminiPayload) string {
 	if payload.Error != nil && payload.Error.Message != "" {
 		return payload.Error.Message
@@ -445,6 +449,8 @@ func (p *GeminiProvider) modelURL(model, action string) string {
 	return p.baseURL() + "/models/" + url.PathEscape(clean) + ":" + action
 }
 
+// toGeminiContents 把统一消息翻译成 Gemini contents：system 消息合并成 systemInstruction 文本，
+// tool 结果转 FunctionResponse，assistant 角色映射为 model。
 func toGeminiContents(messages []ChatMessage) ([]geminiContent, string) {
 	callNameByID := map[string]string{}
 	contents := make([]geminiContent, 0, len(messages))
@@ -544,6 +550,8 @@ func parseDataURL(url string) (string, string, bool) {
 	return mimeType, encoded, true
 }
 
+// toGeminiTools 把工具声明与 toolChoice 映射成 Gemini 的 tools / toolConfig；
+// 无工具时返回 nil，调用方据此整体省略工具字段。
 func toGeminiTools(tools []ChatTool, toolChoice any) map[string]any {
 	if len(tools) == 0 {
 		return nil

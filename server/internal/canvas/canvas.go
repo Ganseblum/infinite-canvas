@@ -1,3 +1,6 @@
+// Package canvas 画布产品域：画布 CRUD、素材库、生成记录、社区作品、
+// 签到邀请与用户反馈。路由统一挂 /api/v1/canvas 分组，鉴权等中间件
+// 由调用方在分组上配置，各 Mount*Routes 只注册业务路由。
 package canvas
 
 import (
@@ -26,26 +29,32 @@ type CanvasHandler struct {
 
 func NewCanvasHandler(db *gorm.DB) *CanvasHandler { return &CanvasHandler{db: db} }
 
+// canvasSortColumns 列表排序参数白名单：键是 API 取值，值是排序列名，
+// sort 只能命中这些键，避免把用户输入拼进 ORDER BY。
 var canvasSortColumns = map[string]string{
 	"updatedAt": "updated_at",
 	"createdAt": "created_at",
 	"title":     "title",
 }
 
+// canvasCreateReq 创建画布请求；data 原样存库，统计与封面由服务端从 data 计算。
 type canvasCreateReq struct {
 	Title string          `json:"title"`
 	Data  json.RawMessage `json:"data"`
 }
 
+// canvasUpdateReq 全量更新请求：revision 需与当前值一致，否则返回 409 REVISION_CONFLICT。
 type canvasUpdateReq struct {
 	Data     json.RawMessage `json:"data"`
 	Revision int64           `json:"revision"`
 }
 
+// canvasPatchReq 元数据更新请求：目前仅支持改标题，不触碰 data 与 revision。
 type canvasPatchReq struct {
 	Title *string `json:"title"`
 }
 
+// List 分页返回画布摘要（不含 data）；q 按标题模糊匹配，sort 只接受白名单字段。
 func (h *CanvasHandler) List(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -97,6 +106,7 @@ func (h *CanvasHandler) List(c *gin.Context) {
 	})
 }
 
+// Create 新建画布：revision 从 1 起，节点/连线数与封面键随 data 一并算出。
 func (h *CanvasHandler) Create(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -145,6 +155,8 @@ func (h *CanvasHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, canvasDetail(*canvas))
 }
 
+// Update 全量覆盖 data 与统计字段；携带的 revision 与当前值不一致时不落库，
+// 改为返回 409 并附带服务端当前 revision，由客户端拉取后重试。
 func (h *CanvasHandler) Update(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -207,6 +219,7 @@ func (h *CanvasHandler) Update(c *gin.Context) {
 	})
 }
 
+// Patch 只改标题，不影响 data 与 revision，因此不需要乐观锁。
 func (h *CanvasHandler) Patch(c *gin.Context) {
 	uid, ok := httpx.CurrentUserID(c)
 	if !ok {
@@ -292,6 +305,7 @@ func (h *CanvasHandler) Delete(c *gin.Context) {
 	httpx.NoContent(c)
 }
 
+// findOwned 取当前用户名下的画布；跨用户与不存在一律 404，不暴露存在性。
 func (h *CanvasHandler) findOwned(c *gin.Context, uid uuid.UUID) (*model.Canvas, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -312,6 +326,7 @@ func (h *CanvasHandler) findOwned(c *gin.Context, uid uuid.UUID) (*model.Canvas,
 	return &canvas, true
 }
 
+// validTitle 校验标题长度（最长 200 字），超限时直接写出 400 响应。
 func validTitle(c *gin.Context, title string) bool {
 	if utf8.RuneCountInString(title) > 200 {
 		errs.Abort(c, errs.WithFields(errs.ErrValidation, map[string]string{"title": "标题长度不能超过 200 字符"}))
@@ -371,6 +386,7 @@ func analyzeCanvasData(c *gin.Context, raw json.RawMessage) (datatypes.JSON, int
 	return data, len(shape.Nodes), len(shape.Connections), cover, true
 }
 
+// canvasSummary 列表摘要字段；canvasDetail 在此基础上追加 data/revision/createdAt。
 func canvasSummary(cv model.Canvas) gin.H {
 	return gin.H{
 		"id":              cv.ID.String(),

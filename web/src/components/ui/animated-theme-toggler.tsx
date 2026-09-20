@@ -5,23 +5,37 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
+/** 切换动画的几何形状变体，决定 View Transition 用的 clip-path 轮廓。 */
 export type TransitionVariant = "circle" | "square" | "triangle" | "diamond" | "hexagon" | "rectangle" | "star";
 
+/**
+ * 主题切换按钮的属性：受控/非受控两种用法，
+ * 不传 theme/targetTheme 时由组件自行读写 documentElement 的 dark class。
+ */
 interface AnimatedThemeTogglerProps extends React.ComponentPropsWithoutRef<"button"> {
+    /** 一次切换动画的时长（毫秒）。 */
     duration?: number;
     variant?: TransitionVariant;
     /** When true, the transition expands from the viewport center instead of the button center. */
     fromCenter?: boolean;
+    /** 受控模式下的当前主题；不传则监听 html 的 dark class 变化自行维护。 */
     theme?: "light" | "dark";
+    /** 点击后的目标主题；不传则在明暗之间取反。 */
     targetTheme?: "light" | "dark";
+    /** 主题实际切换完成后的回调（View Transition 失败直接生效时也会触发）。 */
     onThemeChange?: (theme: "light" | "dark") => void;
 }
 
+/** 生成「所有顶点都收拢在同一点」的 polygon：即动画起点时形状完全不可见。 */
 function polygonCollapsed(cx: number, cy: number, vertexCount: number): string {
     const pairs = Array.from({ length: vertexCount }, () => `${cx}px ${cy}px`).join(", ");
     return `polygon(${pairs})`;
 }
 
+/**
+ * 按形状变体计算 View Transition 的 [起始, 结束] clip-path：
+ * 起始都是收拢在展开中心 (cx, cy) 的不可见形状，结束是能盖住整个视口的外扩形状。
+ */
 function getThemeTransitionClipPaths(variant: TransitionVariant, cx: number, cy: number, maxRadius: number, viewportWidth: number, viewportHeight: number): [string, string] {
     switch (variant) {
         case "circle":
@@ -82,6 +96,10 @@ function getThemeTransitionClipPaths(variant: TransitionVariant, cx: number, cy:
     }
 }
 
+/**
+ * 带形状揭示动画的主题切换按钮：点击后通过 View Transitions API 以 clip-path
+ * 从按钮（或视口中心）展开新主题截图；浏览器不支持时静默降级为直接切换。
+ */
 export const AnimatedThemeToggler = ({ children, className, duration = 400, variant, fromCenter = false, theme, targetTheme, onThemeChange, ...props }: AnimatedThemeTogglerProps) => {
     const { t } = useTranslation();
     const shape = variant ?? "circle";
@@ -89,6 +107,7 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
     const buttonRef = useRef<HTMLButtonElement>(null);
 
     useEffect(() => {
+        // 传入受控 theme 时以它为准，不再监听 DOM；否则跟随其它入口（如系统/画布主题）对 dark class 的修改。
         if (theme) {
             setIsDark(theme === "dark");
             return;
@@ -127,10 +146,12 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
             y = top + height / 2;
         }
 
+        // 展开中心到视口最远角的距离，保证动画形状最终能覆盖全屏。
         const maxRadius = Math.hypot(Math.max(x, viewportWidth - x), Math.max(y, viewportHeight - y));
 
         const applyTheme = () => {
             const nextTheme = targetTheme ?? (isDark ? "light" : "dark");
+            // 目标主题与当前一致时跳过，避免无意义的 DOM 变更触发 View Transition。
             if (nextTheme === (isDark ? "dark" : "light")) return;
             setIsDark(nextTheme === "dark");
             document.documentElement.classList.toggle("dark", nextTheme === "dark");
@@ -138,6 +159,7 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
             onThemeChange?.(nextTheme);
         };
 
+        // 不支持 View Transitions（如旧版 Firefox）时退化为直接切换，不播动画。
         if (typeof document.startViewTransition !== "function") {
             applyTheme();
             return;
@@ -168,6 +190,7 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
 
         const ready = transition?.ready;
         if (ready && typeof ready.then === "function") {
+            // 必须等 ready（旧快照已截图）才能开始动画，否则动画会被并行的截图打断。
             ready.then(() => {
                 document.documentElement.animate(
                     {

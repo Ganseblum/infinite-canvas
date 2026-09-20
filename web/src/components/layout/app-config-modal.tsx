@@ -11,12 +11,14 @@ import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { useConfigStore, type ConfigTabKey, type ModelCapability } from "@/stores/use-config-store";
 
+/** 默认模型偏好的一行配置：能力维度 ↔ 配置字段 ↔ 文案 key 的三元组。 */
 type ModelGroup = {
     capability: ModelCapability;
     modelKey: "imageModel" | "videoModel" | "textModel" | "audioModel";
     labelKey: string;
 };
 
+// 四类默认模型用同一套 UI 循环渲染，避免四段重复表单。
 const modelGroups: ModelGroup[] = [
     { capability: "image", modelKey: "imageModel", labelKey: "config.preferences.defaultImageModel" },
     { capability: "video", modelKey: "videoModel", labelKey: "config.preferences.defaultVideoModel" },
@@ -24,6 +26,12 @@ const modelGroups: ModelGroup[] = [
     { capability: "audio", modelKey: "audioModel", labelKey: "config.preferences.defaultAudioModel" },
 ];
 
+/**
+ * 应用设置面板主体：默认模型偏好、生成参数、提示词源、本地代理与本地存储四个页签，
+ * 顶部提供配置的导入/导出。弹窗与画布侧栏等场景共用，由 showDoneButton 区分形态。
+ * @param showDoneButton 底部是否显示「完成」按钮（弹窗模式需要，内嵌模式不需要）
+ * @param initialTab     初始页签，外部可通过 store 的 configTab 指定
+ */
 export function AppConfigPanel({ showDoneButton = false, initialTab = "preferences" }: { showDoneButton?: boolean; initialTab?: ConfigTabKey }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -151,6 +159,9 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "preferenc
     );
 }
 
+/**
+ * 应用设置弹窗：读取全局 store 的打开状态与目标页签，内嵌 AppConfigPanel 展示。
+ */
 export function AppConfigModal() {
     const { t } = useTranslation();
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
@@ -176,6 +187,7 @@ export function AppConfigModal() {
     );
 }
 
+// 画布单次生成图数量收敛到 1–15：输入合法直接取整，非法/越界回退默认 3。
 function normalizeImageCount(value: string) {
     return String(Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || 3))));
 }

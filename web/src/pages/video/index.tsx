@@ -32,6 +32,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
 
+/** 单条视频生成结果；storageKey 有值表示已入库，下载走取件链接。 */
 type GeneratedVideo = {
     id: string;
     url: string;
@@ -41,9 +42,11 @@ type GeneratedVideo = {
     height: number;
     bytes: number;
     mimeType: string;
+    /** 服务端生成记录 id，用于提交评分反馈。 */
     generationId?: string;
 };
 
+/** 结果区单个槽位：pending → success / failed。 */
 type GenerationResult = {
     id: string;
     status: "pending" | "success" | "failed";
@@ -51,6 +54,7 @@ type GenerationResult = {
     error?: string;
 };
 
+/** 视频生成记录：会话内新记录与服务端历史共用同一展示结构。 */
 type GenerationLog = {
     id: string;
     createdAt: number;
@@ -70,15 +74,21 @@ type GenerationLog = {
     error?: string;
 };
 
+/** 记录里留存的生成参数子集，回填预览时用于还原工作台配置。 */
 type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
+/**
+ * 视频生成工作台页：任务式生成（创建任务 → 落 pending 记录 → 轮询直到成片/失败）。
+ * 刷新后通过服务端 pending 记录恢复轮询；会话内新记录先展示在内存，历史由服务端分页提供。
+ */
 export default function VideoPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const { download: downloadMedia, isDownloading } = useMediaDownload();
     const [ratings, setRatings] = useState<Record<string, 1 | -1 | undefined>>({});
+    // 提交/取消评分；rating 为 null 表示删除已有反馈。
     const rateGeneration = async (id: string, rating: GenerationRatingValue, meta?: { labels?: string; note?: string }) => {
         if (!id) return;
         try {
@@ -96,7 +106,9 @@ export default function VideoPage() {
         }
     };
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // dragenter/leave 在子元素间移动会成对触发，用深度计数判断是否真正离开拖拽区。
     const dragDepthRef = useRef(0);
+    // 正在轮询的任务 id 集合：防止同一任务被重复轮询（刷新恢复与手动重试可能并发触发）。
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -154,6 +166,7 @@ export default function VideoPage() {
         const selectedFiles = Array.from(files || []);
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/"));
         if (unsupported.length) message.warning(t("videoWorkbench.unsupportedFiles"));
+        // 参考图最多 7 张：按剩余配额截断，超出的文件直接忽略。
         const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, 7 - references.length);
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
@@ -203,6 +216,7 @@ export default function VideoPage() {
             message.error(t("videoWorkbench.clipboardEmpty"));
         }
     };
+    /** 创建视频生成任务并立即落一条 pending 记录，随后交给 pollGenerationLog 轮询。 */
     const generate = async () => {
         const agentTaskId = agentTaskIdRef.current;
         agentTaskIdRef.current = undefined;
@@ -257,6 +271,7 @@ export default function VideoPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoRunToken]);
 
+    /** 固化本次生成的提示词/模型/参考图快照。 */
     const buildRequestSnapshot = () => {
         const text = prompt.trim();
         if (!text) {
@@ -327,6 +342,7 @@ export default function VideoPage() {
         setDeleteConfirmOpen(false);
     };
 
+    /** 会话内记录写入内存列表（按 id 去重、新记录置顶）。 */
     const saveLog = async (log: GenerationLog) => {
         setSessionLogs((current) => [log, ...current.filter((item) => item.id !== log.id)]);
     };
@@ -341,6 +357,11 @@ export default function VideoPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pendingQuery.data]);
 
+    /**
+     * 轮询单个视频任务直到成片或失败，并回填结果与记录。
+     * @param configOverride Agent 触发时使用的生成配置
+     * @param agentTaskId Agent 任务回执 id，用于回写任务状态
+     */
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
         if (!log.task || activeLogIdsRef.current.has(log.id)) return;
         activeLogIdsRef.current.add(log.id);
@@ -383,6 +404,7 @@ export default function VideoPage() {
         }
     };
 
+    /** 回填历史记录到工作台：还原提示词、参考图与生成参数；pending 记录仅展示占位。 */
     const previewGenerationLog = (log: GenerationLog) => {
         setPreviewLog(log);
         setLogsOpen(false);
@@ -575,6 +597,7 @@ export default function VideoPage() {
     );
 }
 
+/** 生成参数设置区：模型选择 + 视频参数面板（桌面内嵌、移动端抽屉复用同一组件）。 */
 function GenerationSettings({ config, model, updateConfig }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -592,6 +615,7 @@ function GenerationSettings({ config, model, updateConfig }: { config: AiConfig;
     );
 }
 
+/** 成片卡片：视频预览、元信息、评分与入库/下载操作。 */
 function ResultVideoCard({ video, downloading, rating, onRate, onDownload, onSaveAsset }: { video: GeneratedVideo; downloading: boolean; rating: GenerationRatingValue; onRate: (rating: GenerationRatingValue, meta?: { labels?: string; note?: string }) => void; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
     const { t } = useTranslation();
     return (
@@ -619,6 +643,7 @@ function ResultVideoCard({ video, downloading, rating, onRate, onDownload, onSav
     );
 }
 
+/** 生成中占位卡片。 */
 function PendingVideoCard() {
     const { t } = useTranslation();
     return (
@@ -631,6 +656,7 @@ function PendingVideoCard() {
     );
 }
 
+/** 失败卡片：展示错误信息并支持重试。 */
 function FailedVideoCard({ error, onRetry }: { error: string; onRetry: () => void }) {
     const { t } = useTranslation();
     return (
@@ -650,6 +676,7 @@ function FailedVideoCard({ error, onRetry }: { error: string; onRetry: () => voi
     );
 }
 
+/** 生成历史面板：多选删除、滚动到底自动加载下一页。 */
 function LogPanel({
     logs,
     selectedLogIds,
@@ -682,6 +709,7 @@ function LogPanel({
     useEffect(() => {
         const target = loadMoreRef.current;
         if (!target || !hasMore || loadingMore) return;
+        // 提前 120px 触发加载，减少滚动到底的等待感。
         const observer = new IntersectionObserver(
             (entries) => {
                 if (entries[0]?.isIntersecting) onLoadMore();
@@ -733,6 +761,7 @@ function LogPanel({
     );
 }
 
+/** 单条历史记录卡片：参数标签与状态/耗时。 */
 function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
     const { t } = useTranslation();
     return (
@@ -764,6 +793,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
+/** 在数组内把 index 元素与相邻 offset 位交换，越界时原样返回。 */
 function moveListItem<T>(items: T[], index: number, offset: number) {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= items.length) return items;
@@ -772,6 +802,7 @@ function moveListItem<T>(items: T[], index: number, offset: number) {
     return next;
 }
 
+/** 参考图左右调序按钮（仅一张时不显示）。 */
 function ReferenceOrderButtons({ index, total, onMove }: { index: number; total: number; onMove: (offset: number) => void }) {
     if (total <= 1) return null;
     return (
@@ -782,6 +813,7 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
     );
 }
 
+/** 组装会话内展示用的生成记录；vquality 统一归一为分辨率文案。 */
 function buildLog({
     id,
     prompt,
@@ -842,11 +874,13 @@ function upsertResult(results: GenerationResult[], next: GenerationResult) {
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
 }
 
+/** 以全局配置为底、强制写入本次模型，产出视频生成配置。 */
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
     const built = buildGenerationConfig(config, undefined, "video");
     return { ...built, model, videoModel: model };
 }
 
+/** 服务端 GenerationItem → 页面展示用 GenerationLog；storageKey 统一转取件地址。 */
 function toGenerationLog(item: GenerationItem): GenerationLog {
     const result = (item.result || {}) as Partial<Pick<GenerationLog, "title" | "time" | "references" | "size" | "resolution" | "seconds" | "video" | "task" | "error">>;
     const config = (item.config || {}) as Partial<GenerationLogConfig>;

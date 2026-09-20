@@ -115,16 +115,19 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 // Register built-in nodes in the shared registry once when the module loads.
 registerBuiltinNodes();
 
+/** 画布内部剪贴板：复制的节点及两端都在选中集内的连线。 */
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
 };
 
+/** 连线落点判定结果：nodeId 为命中的目标节点；isNearNode 表示落在某个节点附近（含内部与外扩区）。 */
 type ConnectionDropTarget = {
     nodeId: string | null;
     isNearNode: boolean;
 };
 
+/** 撤销/重做的一条历史：节点连线 + 助手会话 + 画布外观设置的整体快照。 */
 type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     chatSessions: CanvasAssistantSession[];
     activeChatId: string | null;
@@ -132,6 +135,7 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     showImageInfo: boolean;
 };
 
+/** 一次进行中的生成请求：targetNodeId 为登记键，originNodeId 为触发来源，runningNodeId 用于统一停止。 */
 type CanvasGenerationRequest = {
     targetNodeId: string;
     originNodeId: string;
@@ -139,17 +143,24 @@ type CanvasGenerationRequest = {
     controller: AbortController;
 };
 
+// 视频节点展示上限：超宽超高的成片按比例缩到该框内。
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 // Stable empty reference array prevents `... || []` from invalidating CanvasNode's React.memo on every render.
 const EMPTY_REFERENCES: CanvasResourceReference[] = [];
+// 连线命中判定参数（屏幕像素）：运行时按视口缩放折算为世界坐标距离。
 const CONNECTION_HANDLE_HIT_RADIUS = 40;
 const CONNECTION_NODE_HIT_PADDING = 32;
+// 节点与生成子项的通用状态值（写入 metadata.status）。
 const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 
+/**
+ * 成片落节点：尺寸按视频比例适配展示上限，位置保持节点中心不变。
+ * @param extra 追加合并进 metadata 的字段
+ */
 function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: CanvasNodeData["metadata"] = {}): CanvasNodeData {
     const videoSize = fitNodeSize(video.width || item.width, video.height || item.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
     return {
@@ -161,6 +172,7 @@ function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: C
     };
 }
 
+/** 画布项目页入口：先渲染一帧轻量刷新占位（CanvasRefreshShell），挂载后再初始化画布主体。 */
 export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
 
@@ -173,6 +185,10 @@ export default function CanvasPage() {
     return <InfiniteCanvasPage />;
 }
 
+/**
+ * 画布项目编辑页主组件：节点/连线/视口交互、撤销重做、自动保存、
+ * 图片/视频/音频/文本生成编排与本地 Agent 桥接全部在此收口。
+ */
 function InfiniteCanvasPage() {
     const { message, modal } = App.useApp();
     const { t } = useTranslation();
@@ -308,6 +324,8 @@ function InfiniteCanvasPage() {
         [activeChatId, backgroundMode, chatSessions, showImageInfo],
     );
 
+    // 以目标节点为键登记进行中的生成请求；同键再次发起时先中止上一次。
+    // runningNodeId 允许「实际跑在子节点、归属于来源节点」的请求被统一停止。
     const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => {
         const previous = generationRequestsRef.current.get(targetNodeId);
         if (previous?.controller !== controller) previous?.controller.abort();
@@ -315,11 +333,13 @@ function InfiniteCanvasPage() {
         return controller;
     }, []);
 
+    // 完成时按 controller 校验后移除登记，避免误删同节点的新请求。
     const finishGenerationRequest = useCallback((targetNodeId: string, controller: AbortController) => {
         const request = generationRequestsRef.current.get(targetNodeId);
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
 
+    /** 创建视频生成任务并等待成片，成功后按成片尺寸回填节点。 */
     const completeVideoNodeTask = useCallback(
         async (
             nodeId: string,
@@ -339,6 +359,10 @@ function InfiniteCanvasPage() {
         [],
     );
 
+    /**
+     * 轮询节点上遗留的视频任务（刷新后仍带 videoTaskId 时）。
+     * @param silent 静默模式：配置缺失时不弹提示，仅把节点标记为错误
+     */
     const pollVideoNodeTask = useCallback(
         async (node: CanvasNodeData, silent = false) => {
             const taskId = node.metadata?.videoTaskId;
@@ -406,6 +430,7 @@ function InfiniteCanvasPage() {
         [effectiveConfig, finishGenerationRequest, handleAiError, message, queryClient, startGenerationRequest, t],
     );
 
+    // 按 runningNodeId 批量中止：同一来源可能同时带动多个目标节点，加载中的子项一并标记为已取消。
     const stopGenerationByRunningId = useCallback(
         (runningId: string) => {
             const affectedNodeIds = new Set<string>();
@@ -458,6 +483,7 @@ function InfiniteCanvasPage() {
     const loadCanvasBaseline = autosave.load;
     const markCanvasDirty = autosave.markDirty;
 
+    // 详情到达后一次性恢复本地状态：清洗数据、重置历史栈与自动保存基线。
     useEffect(() => {
         if (!canvasDetail) return;
         setProjectLoaded(false);
@@ -507,6 +533,7 @@ function InfiniteCanvasPage() {
         if (!searchParams.has("agentUrl") && !localAgentEnabled && !fragmentBootstrap) openAgentPanel();
     }, [fragmentBootstrap, localAgentEnabled, openAgentPanel, projectLoaded, searchParams]);
 
+    // 撤销/重做提交：180ms 防抖把连续变更合并为一条历史，栈深 50 条。
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
         const next = createHistoryEntry();
@@ -551,6 +578,7 @@ function InfiniteCanvasPage() {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
 
+    // 布局阶段同步 ref：事件回调与 Agent 操作总能在 setState 生效前读到最新值。
     useLayoutEffect(() => {
         nodesRef.current = nodes;
         connectionsRef.current = connections;
@@ -565,6 +593,7 @@ function InfiniteCanvasPage() {
         selectionBoxRef.current = selectionBox;
     }, [selectionBox]);
 
+    // 容器尺寸跟踪；首次拿到尺寸时把视口原点移到容器中心。
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -584,6 +613,7 @@ function InfiniteCanvasPage() {
         return () => resizeObserver.disconnect();
     }, []);
 
+    /** 屏幕（client）坐标 → 画布世界坐标。 */
     const screenToCanvas = useCallback((clientX: number, clientY: number) => {
         const rect = containerRef.current?.getBoundingClientRect();
         const currentViewport = viewportRef.current;
@@ -664,6 +694,7 @@ function InfiniteCanvasPage() {
         setConnecting(null);
     }, [setConnecting]);
 
+    /** 连线落点判定：优先节点内部，其次锚点吸附半径，再次外扩区域；后绘制的节点优先命中。 */
     const getConnectionDropTarget = useCallback(
         (clientX: number, clientY: number, current: ConnectionHandle): ConnectionDropTarget => {
             const world = screenToCanvas(clientX, clientY);
@@ -698,6 +729,7 @@ function InfiniteCanvasPage() {
         [screenToCanvas],
     );
 
+    // 视口裁剪范围：四周多留 280px 余量，避免贴边节点在平移中反复出现/消失。
     const viewBounds = useMemo(() => {
         const padding = 280;
         const rect = containerRef.current?.getBoundingClientRect();
@@ -761,6 +793,7 @@ function InfiniteCanvasPage() {
         });
         return map;
     }, [nodes]);
+    // hover/选中节点的高亮扩散：直接相连的节点与连线；组节点高亮会带上全部成员。
     const relatedHighlight = useMemo(() => {
         const nodeIds = new Set<string>();
         const connectionIds = new Set<string>();
@@ -782,6 +815,7 @@ function InfiniteCanvasPage() {
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections, nodeById, nodes]);
 
+    // 每个 Config 节点的上游输入（按连线汇聚），供组合器与内容面板展示。
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
         nodes.forEach((node) => {
@@ -790,11 +824,13 @@ function InfiniteCanvasPage() {
         });
         return map;
     }, [connections, nodes]);
+    // 每个节点可 @ 引用的上游资源。
     const mentionReferencesByNodeId = useMemo(() => {
         const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
         nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections)));
         return map;
     }, [connections, nodes]);
+    // 目标节点 → 上游来源节点列表。
     const connectedNodesByNodeId = useMemo(() => {
         const map = new Map<string, CanvasNodeData[]>();
         connections.forEach((connection) => {
@@ -880,6 +916,7 @@ function InfiniteCanvasPage() {
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter],
     );
 
+    // 删除节点并级联清理：组归属、连线，以及所有指向被删节点的选中/弹层/运行状态。
     const deleteNodes = useCallback(
         (ids: Set<string>) => {
             if (!ids.size) return;
@@ -911,6 +948,7 @@ function InfiniteCanvasPage() {
         [projectId],
     );
 
+    // 把选中节点收进新建组节点：自动计算包围盒并吸附成员。
     const groupSelection = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
         const members = collectGroupMemberNodes(selectedIds, nodesRef.current);
@@ -928,6 +966,7 @@ function InfiniteCanvasPage() {
         setContextMenu(null);
     }, []);
 
+    // 解散指定（或当前选中）的组：成员脱离组。
     const ungroupSelection = useCallback((ids?: Set<string>) => {
         const result = applyUngroupSelection(ids || selectedNodeIdsRef.current, nodesRef.current, connectionsRef.current);
         if (!result) return;
@@ -1028,6 +1067,7 @@ function InfiniteCanvasPage() {
         if (next.type !== CanvasNodeType.Group) setDialogNodeId(id);
     }, []);
 
+    // 复制选中节点到画布内部剪贴板（不占用系统剪贴板）。
     const copySelectedNodes = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
         if (!selectedIds.size) return;
@@ -1048,6 +1088,7 @@ function InfiniteCanvasPage() {
         };
     }, []);
 
+    // 粘贴：以画布中心为锚整体平移；全部 id 重新生成，并按新旧映射还原组归属与连线。
     const pasteCopiedNodes = useCallback(() => {
         const clipboard = clipboardRef.current;
         if (!clipboard?.nodes.length) return false;
@@ -1114,6 +1155,7 @@ function InfiniteCanvasPage() {
         setContextMenu(null);
     }, [size.height, size.width]);
 
+    // 视口动画聚焦节点：目标缩放不超过 1，450ms easeOutCubic 过渡。
     const focusNode = useCallback(
         (nodeId: string) => {
             const node = nodesRef.current.find((item) => item.id === nodeId);
@@ -1323,6 +1365,7 @@ function InfiniteCanvasPage() {
         setIsNodeDragging(true);
     }, []);
 
+    // 拖拽结束：区分点击与拖动；落点在组上则吸附进组，落在组内则自动归属该组。
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (rafRef.current) {
             cancelAnimationFrame(rafRef.current);
@@ -1417,6 +1460,7 @@ function InfiniteCanvasPage() {
         [finishNodeDrag, getConnectionDropTarget, screenToCanvas],
     );
 
+    // 框选拖拽：buttons === 0 说明按键已在别处释放（如拖出窗口后松开），直接丢弃选择框。
     const handleGlobalPointerMove = useCallback(
         (event: PointerEvent) => {
             const currentSelection = selectionBoxRef.current;
@@ -1494,6 +1538,7 @@ function InfiniteCanvasPage() {
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
+    // 上传媒体文件并创建对应节点（图片/视频/音频三个变体，见下方三个函数）。
     const createImageFileNode = useCallback(async (file: File, position: Position) => {
         const image = await uploadImage(file);
         const size = fitNodeSize(image.width, image.height);
@@ -1575,6 +1620,7 @@ function InfiniteCanvasPage() {
         [getCanvasCenter, t],
     );
 
+    // 读取系统剪贴板：优先图片建图片节点，其次文本建文本节点。
     const pasteSystemClipboard = useCallback(async () => {
         if (!navigator.clipboard) return;
 
@@ -1594,6 +1640,7 @@ function InfiniteCanvasPage() {
         if (createTextNodeFromClipboard(text)) message.success(t("canvas.projectPage.clipboardTextAdded"));
     }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, t]);
 
+    // 全局快捷键：撤销/重做/全选/编组/复制/粘贴/删除/Esc；输入控件或富文本聚焦时跳过。
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
@@ -1726,6 +1773,7 @@ function InfiniteCanvasPage() {
         setIsNodeResizing(false);
     }, [applyNodeResize]);
 
+    // 关闭自由缩放时按原始比例恢复高度，避免图片保持变形状态。
     const toggleNodeFreeResize = useCallback((nodeId: string) => {
         setNodes((prev) =>
             prev.map((node) => {
@@ -1756,6 +1804,7 @@ function InfiniteCanvasPage() {
         });
     }, []);
 
+    // 设置批量结果的主项：节点主体内容与尺寸随之切换到主项。
     const setBatchPrimary = useCallback((nodeId: string, itemId: string) => {
         setNodes((prev) =>
             prev.map((node) => {
@@ -1841,6 +1890,7 @@ function InfiniteCanvasPage() {
         saveAs(image.content, `canvas-image-${node.id}-${image.id}.${imageExtension(image.content)}`);
     }, []);
 
+    /** 从视频节点按指定位置截帧生成新图片节点，落点向下避让已有节点。 */
     const captureVideoNodeFrame = useCallback(
         async (nodeId: string, position: VideoFramePosition) => {
             setContextMenu(null);
@@ -1957,6 +2007,7 @@ function InfiniteCanvasPage() {
         [effectiveConfig.model, effectiveConfig.textModel, message, t],
     );
 
+    /** 裁剪图片：生成新图片节点作为子节点并连线，继承提示词。 */
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
         if (!node.metadata?.content) return;
         const cropped = await cropDataUrl(node.metadata.content, crop);
@@ -1982,6 +2033,7 @@ function InfiniteCanvasPage() {
         setCropNodeId(null);
     }, []);
 
+    /** 网格切分：按行列切成多个子图片节点并连线。 */
     const splitImageNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageSplitParams) => {
             if (!node.metadata?.content) return;
@@ -2020,6 +2072,7 @@ function InfiniteCanvasPage() {
         [message, t],
     );
 
+    /** 蒙版编辑：上传蒙版图后按需发起 edit 生成（generate 为 false 时只落蒙版节点）。 */
     const maskEditImageNode = useCallback(
         async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
             if (!node.metadata?.content) return;
@@ -2085,6 +2138,7 @@ function InfiniteCanvasPage() {
         [effectiveConfig, finishGenerationRequest, handleAiError, message, startGenerationRequest, t],
     );
 
+    /** 放大图片：生成放大后的新图片节点。 */
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
         if (!node.metadata?.content) return;
         setUpscaleNodeId(null);
@@ -2110,6 +2164,7 @@ function InfiniteCanvasPage() {
         setDialogNodeId(childId);
     }, []);
 
+    /** 多视角生成：按角度参数构造提示词，以原图为参考发起 edit 生成。 */
     const generateAngleNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
             if (!node.metadata?.content) return;
@@ -2171,6 +2226,7 @@ function InfiniteCanvasPage() {
         imageInputRef.current?.click();
     }, []);
 
+    // 文件选择回调：替换目标节点或批量导入，多文件按 40px 错位排布。
     const handleImageInputChange = useCallback(
         async (event: ReactChangeEvent<HTMLInputElement>) => {
             const files = Array.from(event.target.files || []).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/") || isAudioFile(f));
@@ -2356,6 +2412,10 @@ function InfiniteCanvasPage() {
         setContextMenu(null);
     }, []);
 
+    /**
+     * 画布节点生成总入口：按 mode 分派图片/视频/音频/文本。
+     * 空白的图/视/音/文节点就地填充，其余在来源节点右侧生成子节点并连线。
+     */
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
@@ -2411,6 +2471,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
                 return;
             }
+            // 是否在来源节点上标记 loading：图片节点由子节点承载状态，文本编辑模式直接改写内容。
             const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
                 finishGenerationRequest(nodeId, runController);
@@ -2422,6 +2483,7 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...(node.type === CanvasNodeType.Config ? {} : { prompt }), status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
 
             try {
+                // 图片：按张数并发单图请求，首个成功者作为主图决定节点尺寸。
                 if (mode === "image") {
                     const count = getGenerationCount(generationConfig.count);
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
@@ -2580,6 +2642,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
+                // 视频：任务式生成（创建任务 + 等待轮询），见 completeVideoNodeTask。
                 if (mode === "video") {
                     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
@@ -2669,6 +2732,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
+                // 文本：多路流式请求，主文本跟随首个成功结果。
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                 const textCount = getGenerationCount(String(sourceNode?.metadata?.textCount || 1));
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : CanvasNodeType.Text];
@@ -2821,6 +2885,10 @@ function InfiniteCanvasPage() {
         generateNodeRef.current = handleGenerateNode;
     }, [handleGenerateNode]);
 
+    /**
+     * 重试节点生成：优先复用节点上留存的生成参数（模型/尺寸/参考图），
+     * 否则沿连线回溯来源节点重建上下文；视频节点若还有未完成任务则直接续轮询。
+     */
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData, imageId?: string) => {
             if (hasResumableVideoTask(node)) {
@@ -3035,6 +3103,7 @@ function InfiniteCanvasPage() {
 
     const retryBatchImage = useCallback((node: CanvasNodeData, imageId: string) => void handleRetryNode(node, imageId), [handleRetryNode]);
 
+    // 文本节点一键转图：同步维护 ref，保证随后打开的生成面板读到最新节点数据。
     const generateImageFromTextNode = useCallback(
         (node: CanvasNodeData) => {
             const prompt = (node.metadata?.content || node.metadata?.prompt || "").trim();
@@ -3072,6 +3141,7 @@ function InfiniteCanvasPage() {
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, t],
     );
 
+    /** 助手产出的图片落画布：已有 storageKey 时直接复用，否则重新上传取尺寸。 */
     const insertAssistantImage = useCallback(
         async (image: CanvasAssistantImage) => {
             const storedImage = image.storageKey ? { url: image.dataUrl, storageKey: image.storageKey, width: 1, height: 1, bytes: 0, mimeType: "image/png" } : await uploadImage(image.dataUrl);
@@ -3157,6 +3227,7 @@ function InfiniteCanvasPage() {
         setPreviewNodeId(node.id);
         setPreviewImageId(imageId || null);
     }, []);
+    // 批量文本节点重试走整体重新生成，其余节点走单点重试。
     const handleNodeRetry = useCallback(
         (node: CanvasNodeData) => {
             if (node.type === CanvasNodeType.Text && (node.metadata?.textCount || 1) > 1) {
@@ -3285,6 +3356,7 @@ function InfiniteCanvasPage() {
                     onRetrySave={autosave.retry}
                 />
 
+                {/* 保存冲突弹窗：自动保存撞上 revision 时弹出，可选覆盖本地或回源重载 */}
                 <Modal
                     open={conflictRevision !== null}
                     centered

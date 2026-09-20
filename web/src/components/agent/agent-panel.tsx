@@ -7,8 +7,13 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+// 动画面板宽度动画时长（秒）：由共享常量（毫秒）换算，画布各面板共用同一节奏。
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 
+/**
+ * 画布右侧的 AI 助手面板外壳：负责开合动画、宽度拖拽调宽与主题配色。
+ * 内容主体是 LocalAgentPanel（embedded 模式），本组件只管容器行为。
+ */
 export function AgentPanel() {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -23,11 +28,13 @@ export function AgentPanel() {
         const startX = event.clientX;
         const startWidth = width;
         let nextWidth = startWidth;
+        // 拖拽在 window 上监听 pointermove：指针移出按钮后仍能持续调整；向左拖为加宽。
         const onMove = (moveEvent: PointerEvent) => {
             nextWidth = Math.min(760, Math.max(360, startWidth + startX - moveEvent.clientX));
             setAgentState({ width: nextWidth });
         };
         const onUp = () => {
+            // 拖拽结束后把最终宽度持久化，下次打开面板沿用。
             localStorage.setItem("canvas-agent-panel-width", String(nextWidth));
             window.removeEventListener("pointermove", onMove);
             window.removeEventListener("pointerup", onUp);
@@ -45,7 +52,9 @@ export function AgentPanel() {
             className="relative z-[70] flex h-full shrink-0"
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
+            // 拖拽调宽时关闭动画（duration 0），否则宽度更新会被动画延迟拖住；+1 防止小数宽度取整后内容溢出。
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
+            // 关闭动画期间禁用指针事件，避免半透明状态下仍可点到面板内容。
             style={{ overflow: "clip", pointerEvents: panelOpen && !panelClosing ? undefined : "none" }}
         >
             <motion.aside

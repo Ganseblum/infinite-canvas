@@ -9,6 +9,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
+/** 图片生成设置弹层 props：面板内所有变更按「配置键 → 字符串值」回传。 */
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
@@ -19,6 +20,11 @@ type CanvasImageSettingsPopoverProps = {
     autoAdjustOverflow?: boolean;
 };
 
+/**
+ * 图片生成设置入口按钮 + Portal 弹层：按钮上摘要当前质量/尺寸/数量，
+ * 点击弹出共享的 ImageSettingsPanel。不用 antd Popover，改用手写 Portal 定位，
+ * 避免嵌套在画布 transform 容器里时定位失真。
+ */
 export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChange, buttonClassName, placement = "topLeft" }: CanvasImageSettingsPopoverProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -27,6 +33,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const quality = config.quality || "auto";
+    // 数量夹取到 1~15，防止 localStorage 写入非法值导致生成请求异常。
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const updateOpen = (nextOpen: boolean) => {
@@ -34,6 +41,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         onOpenChange?.(nextOpen);
     };
 
+    // 打开期间跟随按钮位置（resize/滚动都会失效 fixed 定位基准），并监听外部点击关闭。
     useEffect(() => {
         if (!open) return;
         const syncPosition = () => setButtonRect(buttonRef.current?.getBoundingClientRect() || null);
@@ -41,6 +49,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
             const target = event.target;
             if (!(target instanceof Node)) return;
             if (buttonRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+            // 先把焦点移出面板再关闭，避免焦点残留导致后续键盘操作错乱。
             if (document.activeElement instanceof HTMLElement && panelRef.current?.contains(document.activeElement)) document.activeElement.blur();
             setOpen(false);
             onOpenChange?.(false);
@@ -80,6 +89,10 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     );
 }
 
+/**
+ * 图片设置面板的 Portal 容器：按按钮 rect 与 placement 手动定位，
+ * 水平方向夹在视口 margin 内；顶部放置时限制 maxHeight 防止溢出屏幕。
+ */
 function ImageSettingsPortal({
     buttonRect,
     panelRef,
@@ -98,6 +111,7 @@ function ImageSettingsPortal({
     const width = 356;
     const gap = 8;
     const margin = 12;
+    // 水平对齐：*Right 右对齐按钮、top/bottom 居中、其余左对齐。
     const alignRight = placement?.endsWith("Right");
     const alignCenter = placement === "top" || placement === "bottom";
     const left = alignCenter ? buttonRect.left + buttonRect.width / 2 - width / 2 : alignRight ? buttonRect.right - width : buttonRect.left;
@@ -117,6 +131,7 @@ function ImageSettingsPortal({
     } as const;
 
     return createPortal(
+        // 阻断面板内指针事件冒泡，避免拖动画布/触发节点交互。
         <div ref={panelRef} className="canvas-image-settings-popover" style={style} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
         </div>,

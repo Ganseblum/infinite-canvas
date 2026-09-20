@@ -7,11 +7,17 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { CanvasNodeType, type ConnectionHandle, type Position } from "@/types/canvas";
 
+/** 连线拖出后松手位置的记录：连线信息 + 菜单弹出坐标（世界坐标）。 */
 export type PendingConnectionCreate = {
     connection: ConnectionHandle;
     position: Position;
 };
 
+/**
+ * 连线末端「创建节点」菜单：从某条连线松手后弹出，选择类型即断开原连线
+ * 并在松手位置创建对应节点接管连线。样式标识 data-connection-create-menu
+ * 供画布识别（不触发缩放/取消选中）。
+ */
 export function ConnectionCreateMenu({
     pending,
     onCreate,
@@ -50,6 +56,7 @@ export function ConnectionCreateMenu({
     );
 }
 
+/** 菜单里的单个类型选项：图标底块 + 标题 + 可选描述，悬停换浅色底。 */
 export function ConnectionCreateOption({ theme, icon, title, description, onClick }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; icon: React.ReactNode; title: string; description?: string; onClick?: () => void }) {
     return (
         <button
@@ -75,6 +82,10 @@ export function ConnectionCreateOption({ theme, icon, title, description, onClic
     );
 }
 
+/**
+ * 空白处右键/工具栏触发的「新建节点」菜单：列出节点注册表中
+ * showInCreateMenu 未关闭的类型（含插件节点），点击后在指定位置创建。
+ */
 export function NodeCreateMenu({ position, onCreate, onClose }: { position: Position; onCreate: (type: string) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -82,6 +93,7 @@ export function NodeCreateMenu({ position, onCreate, onClose }: { position: Posi
     const menuRef = useRef<HTMLDivElement>(null);
     const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false);
     // Close automatically when clicking outside the menu.
+    // 点击菜单外（捕获阶段）自动关闭。
     useEffect(() => {
         const handlePointerDown = (event: PointerEvent) => {
             if (menuRef.current && !menuRef.current.contains(event.target as Node)) onClose();

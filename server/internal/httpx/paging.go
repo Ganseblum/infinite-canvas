@@ -1,3 +1,5 @@
+// Package httpx 提供 Gin handler 的通用请求辅助：分页与排序参数解析、
+// 当前用户读取、时间与关键字匹配模式的统一序列化口径。
 package httpx
 
 import (

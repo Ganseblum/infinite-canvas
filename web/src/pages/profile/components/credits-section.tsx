@@ -12,6 +12,7 @@ import { formatPoints, formatSignedPoints } from "@/lib/credits-format";
 import { getCredits, listCreditTransactions, type CreditTransaction, type CreditTransactionType } from "@/services/api/credits";
 import { useAuthStore } from "@/stores/use-auth-store";
 
+// 点数流水的类型到图标组件的映射，覆盖服务端全部交易类型。
 const TYPE_ICONS: Record<CreditTransactionType, ComponentType<{ className?: string }>> = {
     purchase: PlusCircle,
     consume: Sparkles,
@@ -20,6 +21,10 @@ const TYPE_ICONS: Record<CreditTransactionType, ComponentType<{ className?: stri
     expire: Clock,
 };
 
+/** 点数流水的单行展示：图标 + 摘要 + 时间/来源桶 + 带符号金额。
+ * 金额以 micros（百万分之一点）存储，正数为收入、负数为支出。
+ * @param transaction 单条点数流水记录
+ */
 function TransactionRow({ transaction }: { transaction: CreditTransaction }) {
     const { t } = useTranslation();
     const Icon = TYPE_ICONS[transaction.type] ?? Sparkles;
@@ -42,6 +47,9 @@ function TransactionRow({ transaction }: { transaction: CreditTransaction }) {
     );
 }
 
+/** 个人中心点数区块：余额三类构成卡片 + 流水列表；折叠态显示余额接口自带的最近几条，
+ * 展开后切换为分页流水的无限加载视图。
+ */
 export function CreditsSection() {
     const { t } = useTranslation();
     const navigate = useNavigate();
@@ -64,6 +72,7 @@ export function CreditsSection() {
     });
 
     const balance = creditsQuery.data;
+    // 余额接口自带最近流水，折叠态直接取前 5 条，无需额外请求。
     const recent = balance?.recent?.slice(0, 5) ?? [];
     const transactions = transactionsQuery.data?.pages.flatMap((page) => page.items) ?? [];
 

@@ -12,6 +12,7 @@ import { resolveAgentMessageAssetUrl, revealAgentLocalFile } from "@/services/ap
 import { AgentCanvasReferencePreview, canvasReferenceIcon, canvasReferenceKindLabel } from "./agent-canvas-reference-preview";
 import { agentInlineTokenClass, agentInlineTokenIconClass, agentInlineTokenMediaClass, agentReferenceMarker, parseAgentInlineTokens } from "./agent-chat-inline-tokens";
 
+// Streamdown 公共配置：代码/表格自带复制，外链打开前强制经过安全确认弹窗。
 const streamdownProps = () => ({
     className: "agent-streamdown",
     controls: { code: { copy: true, download: false }, table: { copy: true, download: false, fullscreen: false } },
@@ -21,8 +22,10 @@ const streamdownProps = () => ({
         close: tr("close"), copied: tr("copied"), copyCode: tr("copyCode"), copyLink: tr("copyLink"), externalLinkWarning: tr("externalWarning"), openExternalLink: tr("openExternal"), openLink: tr("continueOpen"),
     },
 } as const);
+// 逐词淡入动画参数；duration 为字符级动画时长，配合 isAnimating 控制流式节奏。
 const streamdownAnimation = { duration: 20, stagger: 0, sep: "word" } as const;
 
+/** Markdown/代码/外链渲染时的安全确认弹窗；本地文件路径（file:// 或本机绝对路径）走「在文件夹中显示」。 */
 function AgentLinkModal({ isOpen, onClose, onConfirm, url }: LinkSafetyModalProps) {
     const { t } = useTranslation();
     const { message } = App.useApp();
@@ -61,6 +64,10 @@ function AgentLinkModal({ isOpen, onClose, onConfirm, url }: LinkSafetyModalProp
     );
 }
 
+/**
+ * 判断 URL 是否指向本机文件路径：支持 file:// 协议、Windows 盘符与 localhost 链接里的绝对路径。
+ * 只放行常见系统目录前缀（Users/home/private/tmp 等），防止把任意 URL 当作本地路径打开。
+ */
 function localFilePath(value: string) {
     let decoded = value;
     try {
@@ -87,7 +94,9 @@ function localFilePath(value: string) {
     return /^\/(?:Users|home|private|tmp|Volumes|var\/folders)\//.test(pathname) ? decodeURIComponent(pathname) : "";
 }
 
+/** 消息渲染使用的附件视图（地址已解析）。 */
 export type AgentChatAttachment = { id: string; name: string; url: string };
+/** 时间线消息的渲染模型：role 决定布局，detail 携带工具/命令/计划的结构化详情，streamId 表示仍在流式输出。 */
 export type AgentChatMessageItem = {
     id: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
@@ -102,6 +111,10 @@ export type AgentChatMessageItem = {
     streamId?: string;
 };
 
+/**
+ * 单条消息渲染入口：按 role 分派——system 居中弱化、tool 走工具卡片、
+ * user 右对齐并解析 @画布引用 与 /技能 内联标记、assistant 用 Streamdown 渲染 Markdown。
+ */
 export function AgentChatMessage({ item, theme, onRejectTool, onApproveTool }: { item: AgentChatMessageItem; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onRejectTool?: (id: string) => void; onApproveTool?: (id: string) => void }) {
     const isUser = item.role === "user";
     const isSystem = item.role === "system";
@@ -184,6 +197,7 @@ function AgentCanvasMention({ reference, theme }: { reference: AgentCanvasRefere
     );
 }
 
+/** 待确认工具卡片：可展开查看操作详情，附「拒绝 / 执行」按钮。 */
 export function AgentPendingToolCard({ summary, detail, theme, onReject, onApprove }: { summary: string; detail?: unknown; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onReject?: () => void; onApprove?: () => void }) {
     const { t } = useTranslation();
     const view = userDetail(detail);
@@ -214,6 +228,7 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
     );
 }
 
+/** Codex 运行时审批卡片（文件改动 / 网络访问 / 权限提升 / 命令执行），支持「拒绝 / 本轮允许 / 会话内允许」。 */
 export function AgentApprovalCard({ approval, theme, onDecision }: { approval: AgentPendingApproval; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onDecision: (decision: "accept" | "acceptForSession" | "decline") => void }) {
     const { t } = useTranslation();
     const isFile = approval.method === "item/fileChange/requestApproval";
@@ -239,6 +254,7 @@ export function AgentApprovalCard({ approval, theme, onDecision }: { approval: A
     );
 }
 
+/** 通用工具卡片：按 detail.kind 分派计划/推理/命令渲染，其余展示状态图标与可展开详情。 */
 export function AgentToolCard({ title, text, detail, theme }: { title: string; text: string; detail?: unknown; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const plan = planDetail(detail);
     if (plan) return <AgentPlanCard title={title} plan={plan} theme={theme} />;
@@ -274,6 +290,7 @@ export function AgentToolCard({ title, text, detail, theme }: { title: string; t
     );
 }
 
+/** 推理摘要卡片：默认折叠，运行中显示旋转图标并用 Streamdown 渲染正文。 */
 function AgentReasoningSummary({ text, detail, theme }: { text: string; detail?: unknown; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const status = String(objectField(detail, "status") || "");
@@ -296,6 +313,7 @@ function AgentReasoningSummary({ text, detail, theme }: { text: string; detail?:
 
 type AgentCommandItem = Pick<AgentChatMessageItem, "id" | "text" | "detail">;
 
+/** 命令执行组：多条命令折叠成一行汇总（进行中/完成/失败数），单条命令直接展开输出。 */
 export function AgentCommandGroup({ items, theme }: { items: AgentCommandItem[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const states = items.map((item) => commandViewState(item.detail));
@@ -333,6 +351,7 @@ function AgentSingleCommand({ item, theme }: { item: AgentCommandItem; theme: (t
     );
 }
 
+/** 命令组内单条命令行：显示序号、命令文本与状态，有详情时可展开。 */
 function AgentCommandEntry({ item, index, theme }: { item: AgentCommandItem; index: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const [open, setOpen] = useState(false);
@@ -361,6 +380,7 @@ function AgentCommandEntry({ item, index, theme }: { item: AgentCommandItem; ind
     );
 }
 
+// 状态字段的多种写法统一成布尔值，兼容服务端 camelCase / snake_case。
 function commandViewState(detail: unknown) {
     const status = String(objectField(detail, "status") || "").toLowerCase();
     return {
@@ -369,6 +389,7 @@ function commandViewState(detail: unknown) {
     };
 }
 
+/** 计划卡片：展示任务列表与完成度，默认展开，状态按 turn 结束情况收敛。 */
 function AgentPlanCard({ title, plan, theme }: { title: string; plan: PlanDetail; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const [open, setOpen] = useState(true);
     const completed = plan.tasks.filter((item) => item.status === "completed").length;
@@ -399,6 +420,7 @@ function AgentPlanCard({ title, plan, theme }: { title: string; plan: PlanDetail
     );
 }
 
+/** 「Agent 正在做什么」状态行：带耗时计时，超过 5s 显示时长、超过 30s 提示响应偏慢。 */
 export function AgentWorkingMessage({ text, detail, status = "running", mcpStatuses = [], activityKey, theme }: { text: string; detail?: string; status?: "running" | "ready" | "error"; mcpStatuses?: Array<{ name: string; status: "running" | "ready" | "error"; detail: string }>; activityKey: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const [elapsed, setElapsed] = useState(0);
@@ -452,10 +474,12 @@ function approvalTarget(value: unknown) {
     return host ? `${protocol ? `${protocol}://` : ""}${host}${port ? `:${port}` : ""}` : "";
 }
 
+/** 计划/详情的结构化视图类型（从 unknown 的 detail 中安全抽取）。 */
 type PlanTask = { step: string; status: string };
 type PlanDetail = { status: string; tasks: PlanTask[]; explanation?: string };
 type UserDetail = { kind?: string; status?: string; rows?: Array<{ label: string; value: string }>; output?: string; files?: Array<{ path: string; action?: string }> };
 
+/** 键值行 / 文件列表 / 输出（或错误）的三段式详情展示块。 */
 function AgentDetailBlock({ detail, theme }: { detail: UserDetail; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     return (
@@ -492,6 +516,7 @@ function AgentDetailBlock({ detail, theme }: { detail: UserDetail; theme: (typeo
     );
 }
 
+/** 消息附件缩略图行：点击用 antd Image 大图预览。 */
 function AgentMessageAttachments({ attachments, alignRight }: { attachments: AgentChatAttachment[]; alignRight?: boolean }) {
     const { t } = useTranslation();
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -519,6 +544,7 @@ function AgentMessageAttachments({ attachments, alignRight }: { attachments: Age
     );
 }
 
+/** 综合状态字段与标题/文本关键词推断工具卡片的运行状态（中英文兜底匹配）。 */
 function toolCardState(title: string, text: string, detail?: unknown) {
     const raw = `${title} ${text} ${normalizeText(objectField(detail, "error"))}`;
     const lower = raw.toLowerCase();
@@ -552,6 +578,7 @@ function planTaskState(status: string, muted: string) {
     return { label: tr("pending"), color: muted, icon: <Circle className="size-3.5" /> };
 }
 
+// detail.kind 为 todo 时按计划卡片渲染；无任务列表视为无效计划返回 null。
 function planDetail(value: unknown): PlanDetail | null {
     if (!value || typeof value !== "object" || objectField(value, "kind") !== "todo") return null;
     const tasks = Array.isArray(objectField(value, "tasks"))
@@ -565,6 +592,7 @@ function planDetail(value: unknown): PlanDetail | null {
     return { status: String(objectField(value, "status") || "inProgress"), tasks, ...(explanation ? { explanation } : {}) };
 }
 
+/** 从 unknown 的 detail 中抽取 rows/files/output；三者全空返回 null 表示无可展开内容。 */
 function userDetail(value: unknown): UserDetail | null {
     if (!value || typeof value !== "object") return null;
     const detail = value as Record<string, unknown>;

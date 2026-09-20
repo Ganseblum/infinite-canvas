@@ -5,16 +5,20 @@ import { formatMoney, formatPoints } from "@/lib/credits-format";
 import type { CreditPackage } from "@/services/api/credits";
 import type { PaymentProvider } from "@/services/api/orders";
 
+/** 套餐网格的 props 定义。 */
 type PackageGridProps = {
     packages: CreditPackage[];
     provider: PaymentProvider;
     providers: PaymentProvider[];
     onProviderChange: (provider: PaymentProvider) => void;
     onBuy: (packageId: string) => void;
+    /** 正在下单的套餐 id；只让该套餐按钮转圈，其余按钮禁用 */
     buyingPackageId?: string;
+    /** 限流倒计时中或无可用支付渠道时整体禁用购买 */
     disabled?: boolean;
 };
 
+/** 充值套餐网格：单渠道不显示切换、多渠道显示 Segmented；每卡展示价格、点数、赠送与有效期。 */
 export function PackageGrid({ packages, provider, providers, onProviderChange, onBuy, buyingPackageId, disabled }: PackageGridProps) {
     const { t } = useTranslation();
 
@@ -49,6 +53,7 @@ export function PackageGrid({ packages, provider, providers, onProviderChange, o
                                 className="mt-5"
                                 type="primary"
                                 loading={buyingPackageId === item.id}
+                                // 下单进行中时禁用其它套餐按钮，避免并发创建订单。
                                 disabled={disabled || (!!buyingPackageId && buyingPackageId !== item.id)}
                                 onClick={() => onBuy(item.id)}
                             >

@@ -2,14 +2,17 @@ import { apiRequest } from "@/services/api/client";
 import type { CanvasData, CanvasDetail, CanvasListParams, CanvasListResult, CanvasPatchResult, CanvasUpdateResult } from "@/services/data/types";
 
 // 画布资源客户端：只负责发请求与类型转换，不含缓存与业务判断。
+/** 分页查询画布列表（关键词/排序），返回摘要不含 data。GET /api/v1/canvases。 */
 export function listCanvases(params: CanvasListParams = {}, signal?: AbortSignal) {
     return apiRequest<CanvasListResult>("/canvases", { query: params, signal });
 }
 
+/** 新建画布。POST /api/v1/canvases。 */
 export function createCanvas(payload: { title: string; data?: Partial<CanvasData> }) {
     return apiRequest<CanvasDetail>("/canvases", { method: "POST", body: payload });
 }
 
+/** 读取画布详情（含完整 data 与 revision）。GET /api/v1/canvases/{id}。 */
 export function getCanvas(id: string, signal?: AbortSignal) {
     return apiRequest<CanvasDetail>(`/canvases/${id}`, { signal });
 }

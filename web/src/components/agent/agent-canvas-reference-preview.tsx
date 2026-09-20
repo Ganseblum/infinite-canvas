@@ -5,6 +5,10 @@ import i18n from "@/i18n";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { AgentCanvasReference } from "@/stores/use-agent-store";
 
+/**
+ * 画布素材引用的悬停预览卡片：按素材类型展示图片/视频/音频播放器或文本内容，
+ * 预览数据取不到时显示「暂无法预览」占位。
+ */
 export function AgentCanvasReferencePreview({ reference, previewUrl, previewText, theme }: { reference: AgentCanvasReference; previewUrl?: string; previewText?: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const Icon = canvasReferenceIcon(reference.kind);
@@ -27,10 +31,12 @@ export function AgentCanvasReferencePreview({ reference, previewUrl, previewText
     );
 }
 
+/** 素材类型 → lucide 图标；文本/未知类型一律回退到文件图标。 */
 export function canvasReferenceIcon(kind: AgentCanvasReference["kind"]) {
     return kind === "audio" ? Music2 : kind === "video" ? Video : kind === "image" ? ImageIcon : FileText;
 }
 
+/** 素材类型的本地化名称，用于 aria 标签与候选列表的副标题。 */
 export function canvasReferenceKindLabel(kind: AgentCanvasReference["kind"]) {
     return i18n.t(`agent.composer.mentions.kind.${kind}`);
 }

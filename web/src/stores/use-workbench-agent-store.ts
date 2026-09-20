@@ -4,6 +4,7 @@ import { create } from "zustand";
 // The panel writes model, quality, size, count, and other options to use-config-store, which workbench pages read directly.
 // Prompt and run are sent here; pages identify new commands by nonce and call clear after consuming them.
 
+/** 一次工作台命令：nonce 用于页面识别「新命令」，run=true 时附带创建跟踪任务并返回 taskId。 */
 export type WorkbenchCommand = {
     nonce: number;
     taskId?: string;
@@ -11,6 +12,7 @@ export type WorkbenchCommand = {
     run: boolean;
 };
 
+/** 工作台生成任务的轻量跟踪记录：仅汇报进度，真实计费与产物仍以服务端生成记录为准。 */
 export type WorkbenchGenerationTask = {
     id: string;
     kind: "image" | "video";
@@ -37,6 +39,10 @@ type WorkbenchAgentStore = {
 let nonce = 0;
 const nextNonce = () => (nonce += 1);
 
+/**
+ * 工作台生成命令 store：Agent 面板与工作台页面（image/video）之间的桥，
+ * 只存内存、不持久化；任务列表保留最近 30 条供 Agent 查询生成状态。
+ */
 export const useWorkbenchAgentStore = create<WorkbenchAgentStore>((set) => ({
     imageCommand: null,
     videoCommand: null,

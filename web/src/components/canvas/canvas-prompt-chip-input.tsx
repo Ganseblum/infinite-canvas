@@ -10,31 +10,40 @@ import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
+/** 提示词 chip 输入框的 props。 */
 type Props = {
-    value: string;
-    references: CanvasResourceReference[];
+    value: string; // 序列化后的文本，引用以 label 形式内联。
+    references: CanvasResourceReference[]; // @ 可引用的资源候选。
     onChange: (value: string) => void;
-    onSubmit?: () => void;
+    onSubmit?: () => void; // 非法输入外（非 IME 合成）的回车提交。
     className?: string;
     style?: CSSProperties;
     placeholder?: string;
 };
 
+/** @ 提及候选菜单状态：查询词与光标位置（用于菜单定位）。 */
 type MentionState = {
     query: string;
     rect: DOMRect | null;
 };
 
+/** 编辑器内容 token：纯文本或一个引用 label。 */
 type Token =
     | { type: "text"; value: string }
     | { type: "reference"; label: string };
 
 // Prompt-panel contentEditable input: @ references embed thumbnail chips instead of plain label text.
 // Serialization converts chips back to reference labels so the generated value matches the former textarea semantics.
+/**
+ * 提示词面板的 chip 输入框（contentEditable）。
+ * @ 引用以缩略图 chip 嵌入，失焦/外部更新时把 chip 还原为 label 文本；
+ * 通过 lastEmittedRef 区分「自己的回写」与「外部修改」，
+ * 自己的回写不重建 DOM，避免光标与输入法被打断。
+ */
 export function CanvasPromptChipInput({ value, references, onChange, onSubmit, className, style, placeholder }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
-    const composingRef = useRef(false);
+    const composingRef = useRef(false); // IME 合成中标记，合成期间跳过 input 同步。
     // Track the last value emitted to the parent. An identical focused value is this component's own echo,
     // so skip rebuilding to preserve the caret and IME. Rebuild external changes even while focused.
     const lastEmittedRef = useRef(value);
@@ -74,6 +83,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     }, [tokens, referenceByLabel, theme, value]);
 
     const emit = (next: string) => {
+        // 记录本次外发的值，供 effect 判断聚焦时的 value 是否只是自己的回写。
         lastEmittedRef.current = next;
         onChange(next);
     };
@@ -85,6 +95,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
         syncMention();
     };
 
+    // 光标前的文本以 @ 结尾时唤起候选菜单，并记录光标矩形用于菜单定位。
     const syncMention = () => {
         const text = textBeforeCaret();
         const match = /@([^\s@]*)$/.exec(text);
@@ -101,6 +112,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
         setActiveIndex(0);
     };
 
+    // 在光标处插入引用 chip：先删掉 @ 草稿，再插 chip 与空格并复位光标。
     const insertReference = (reference: CanvasResourceReference) => {
         const editor = editorRef.current;
         if (!editor) return;
@@ -186,9 +198,11 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                         onSubmit();
                         return;
                     }
+                    // 浏览器按键后才移动光标，下一帧再计算 @ 草稿。
                     requestAnimationFrame(syncMention);
                 }}
-                onBlur={() => window.setTimeout(closeMention, 120)}
+                    // 延迟关闭：给 chip 点击等先触发 blur 后的处理留出时间窗口。
+                    onBlur={() => window.setTimeout(closeMention, 120)}
             />
             {mention && candidates.length ? (
                 <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} />
@@ -198,6 +212,10 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     );
 }
 
+/**
+ * @ 提及候选菜单：portal 到 body，按光标矩形定位，
+ * 底部放不下时自动翻转到光标上方，位置夹在视口内。
+ */
 function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect: DOMRect | null; references: CanvasResourceReference[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (reference: CanvasResourceReference) => void }) {
     const selectedRef = useRef(false);
     const activeItemRef = useRef<HTMLButtonElement | null>(null);
@@ -207,6 +225,7 @@ function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect:
     }, [activeIndex, references]);
 
     const selectReference = (reference: CanvasResourceReference) => {
+        // onPointerDown 与 onClick 都会触发选择，标记防止重复插入。
         if (selectedRef.current) return;
         selectedRef.current = true;
         onSelect(reference);
@@ -261,6 +280,7 @@ function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect:
     );
 }
 
+/** 引用候选行的小预览：图片缩略图 / 视频首帧 / 类型图标。 */
 function ReferencePreview({ reference }: { reference: CanvasResourceReference }) {
     if (reference.kind === "image" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-9 rounded-md object-cover" />;
     if (reference.kind === "video" && reference.previewUrl) return <video src={reference.previewUrl} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" />;
@@ -272,10 +292,14 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
     );
 }
 
+/**
+ * 用原生 DOM 创建引用 chip：contentEditable=false 保证 chip 原子性，
+ * label 存在 dataset 上供序列化还原，图片 chip 点击可预览大图。
+ */
 function createReferenceChip(reference: CanvasResourceReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
-    wrapper.dataset.refLabel = reference.label;
+    wrapper.dataset.refLabel = reference.label; // 序列化时据此还原为 label 文本。
     if (reference.kind === "image" && reference.previewUrl) {
         const image = document.createElement("img");
         image.src = reference.previewUrl;
@@ -300,6 +324,7 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
     return wrapper;
 }
 
+/** 编辑器 DOM → 文本：chip 还原为 label，<br> 还原为换行，并清掉零宽字符。 */
 function serializeEditor(editor: HTMLElement) {
     return serializeNodes(editor.childNodes).replace(/﻿/g, "");
 }
@@ -328,7 +353,7 @@ function removeActiveMention() {
     range.deleteContents();
 }
 
-// Chips are atomic contentEditable="false" blocks and are removed as a unit with adjacent Backspace/Delete presses.
+/** 删除光标紧邻的整个 chip（Backspace 向前 / Delete 向后），返回是否命中。 */
 function deleteAdjacentReference(key: string) {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !selection.isCollapsed) return false;
@@ -344,6 +369,7 @@ function deleteAdjacentReference(key: string) {
     return true;
 }
 
+/** 找到光标位置相邻（前/后）的引用 chip 元素，跳过空白文本节点。 */
 function adjacentReferenceNode(range: Range, key: string) {
     const container = range.startContainer;
     const offset = range.startOffset;
@@ -363,6 +389,7 @@ function findReferenceSibling(node: Node, previous: boolean, includeSelf = false
     return current instanceof HTMLElement && current.dataset.refLabel ? current : null;
 }
 
+/** 取光标之前到编辑器开头的文本，用于匹配 @ 草稿。 */
 function textBeforeCaret() {
     const selection = window.getSelection();
     if (!selection?.rangeCount) return "";
@@ -373,6 +400,7 @@ function textBeforeCaret() {
     return range.toString();
 }
 
+/** 光标的屏幕矩形；空行等零尺寸 range 回退到编辑器整体矩形。 */
 function caretRect(): DOMRect | null {
     const selection = window.getSelection();
     if (!selection?.rangeCount) return null;
@@ -400,6 +428,7 @@ function placeCaretAtEnd(element: HTMLElement) {
 }
 
 // Split value into text fragments and matching active labels, which are already sorted by descending length.
+// 把 value 按激活 label 切成文本/引用 token（labels 已按长度降序，长 label 优先命中）。
 function parseTokens(value: string, labels: string[]): Token[] {
     if (!labels.length) return value ? [{ type: "text", value }] : [];
     const escaped = labels.map(escapeRegExp).join("|");

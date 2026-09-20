@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import type { ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
+/** 工具设置弹窗中展示的工具条目（由宿主从工具注册表解析后传入）。 */
 export type ImageToolbarSettingsTool = {
     id: ImageQuickToolId;
     title: string;
@@ -14,6 +15,7 @@ export type ImageToolbarSettingsTool = {
     danger?: boolean;
 };
 
+/** 预览工具条条目：普通工具 + 末尾固定的「更多」占位。 */
 type PreviewTool = ImageToolbarSettingsTool | {
     id: "more";
     title: string;
@@ -23,13 +25,18 @@ type PreviewTool = ImageToolbarSettingsTool | {
     danger?: boolean;
 };
 
+/** 预览工具条的横向滚动状态，用于驱动自定义滚动条。 */
 type PreviewScroll = {
     left: number;
-    max: number;
+    max: number; // 最大可滚动距离。
     viewport: number;
     content: number;
 };
 
+/**
+ * 图片快捷工具条自定义弹窗：上半部分实时预览工具条外观（含自定义横向滚动条），
+ * 下半部分用复选框勾选要显示的工具。选中状态由父层持有，onToggle 逐项回传。
+ */
 export function ImageToolSettingsModal({
     open,
     tools,
@@ -61,6 +68,7 @@ export function ImageToolSettingsModal({
         { id: "more", title: t("canvas.imageTools.configure"), label: t("canvas.imageTools.more"), icon: <Ellipsis className="size-4" />, active: true },
     ];
 
+    // 从预览工具条 DOM 读取当前滚动位置与宽度，同步到自定义滚动条。
     const syncPreviewScroll = useCallback(() => {
         const toolbar = previewToolbarRef.current;
         if (!toolbar) return;
@@ -82,6 +90,7 @@ export function ImageToolSettingsModal({
         [syncPreviewScroll],
     );
 
+    // 勾选变化时逐项 diff，只对发生变化的工具回传 onToggle。
     const updateSelectedTools = (values: ImageQuickToolId[]) => {
         const next = new Set(values);
         tools.forEach((tool) => {
@@ -90,6 +99,8 @@ export function ImageToolSettingsModal({
         });
     };
 
+    // 预览条在弹窗动画结束、图标字体/布局就绪后宽度才稳定，因此多重兜底：
+    // 连续两帧 + 120ms 定时 + ResizeObserver（观察工具条与其子元素）+ 窗口 resize。
     useEffect(() => {
         if (!open) return;
         const toolbar = previewToolbarRef.current;
@@ -118,6 +129,7 @@ export function ImageToolSettingsModal({
         };
     }, [open, selectedIds, showLabels, previewTools.length, syncPreviewScroll]);
 
+    // 自定义滚动条宽度按「视口/内容」比例计算，最小 64px 保证可拖拽。
     const scrollbarWidth = scrollbarTrackRef.current?.clientWidth || previewScroll.viewport;
     const scrollbarThumbWidth = previewScroll.max > 0 ? Math.min(scrollbarWidth, Math.max(64, (previewScroll.viewport / previewScroll.content) * scrollbarWidth)) : scrollbarWidth;
 
@@ -176,6 +188,7 @@ export function ImageToolSettingsModal({
                         <ImageIcon className="mb-2 size-8" />
                         <Typography.Text type="secondary">{t("canvas.imageTools.imageNode")}</Typography.Text>
                     </div>
+                    {/* 自定义横向滚动条：借用 range input 的拖拽语义驱动预览条 scrollLeft。 */}
                     <input
                         ref={scrollbarTrackRef}
                         type="range"
@@ -219,6 +232,7 @@ export function ImageToolSettingsModal({
     );
 }
 
+/** 预览工具条的单个条目：仅展示（Tooltip + 图标/文字），不可交互。 */
 function PreviewToolbarItem({ tool, showLabels }: { tool: PreviewTool; showLabels: boolean }) {
     return (
         <Tooltip title={tool.title}>

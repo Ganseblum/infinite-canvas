@@ -9,6 +9,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig, ReasoningEffort } from "@/stores/use-config-store";
 
+/** 文本生成设置弹层 props：仅暴露推理力度与（可选）生成条数。 */
 type CanvasTextSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: "reasoningEffort", value: ReasoningEffort) => void;
@@ -18,6 +19,10 @@ type CanvasTextSettingsPopoverProps = {
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
+/**
+ * 文本生成设置入口按钮 + Portal 弹层：按钮上摘要当前推理力度与条数，
+ * 弹层内容为共享 TextSettingsPanel + 条数输入。定位方式与图片设置弹层一致。
+ */
 export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCountChange, buttonClassName, placement = "topLeft" }: CanvasTextSettingsPopoverProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -26,6 +31,7 @@ export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCou
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
 
+    // 打开期间跟随按钮位置（resize/scroll 失效 fixed 基准），点击面板外关闭。
     useEffect(() => {
         if (!open) return;
         const syncPosition = () => setButtonRect(buttonRef.current?.getBoundingClientRect() || null);
@@ -59,6 +65,9 @@ export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCou
     );
 }
 
+/**
+ * 文本设置面板的 Portal 容器：按按钮 rect 与 placement 手动定位，水平夹在视口 margin 内。
+ */
 function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, count, onConfigChange, onCountChange }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
@@ -75,6 +84,7 @@ function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, co
     const margin = 12;
     const alignRight = placement?.endsWith("Right");
     const alignCenter = placement === "top" || placement === "bottom";
+    // 水平对齐：*Right 右对齐按钮、top/bottom 居中、其余左对齐。
     const left = alignCenter ? buttonRect.left + buttonRect.width / 2 - width / 2 : alignRight ? buttonRect.right - width : buttonRect.left;
     const topPlacement = placement?.startsWith("top");
     const style = {
@@ -91,6 +101,7 @@ function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, co
     } as const;
 
     return createPortal(
+        // 阻断面板内指针事件冒泡，避免拖动画布/触发节点交互。
         <div ref={panelRef} style={style} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <TextSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} />
             {onCountChange ? (

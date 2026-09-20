@@ -1,6 +1,8 @@
 import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
 
+// 全站 antd 中性色（近黑/近白）：主色即文字色，弹层悬停/选中一律用低透明度同色叠加，
+// 保证浅色深色两套算法下观感一致；admin 端经 AppProviders 共用此配置。
 const neutral = {
     light: {
         primary: "#171717",
@@ -28,6 +30,11 @@ const neutral = {
     },
 };
 
+/**
+ * 生成 antd 全局主题配置：算法（明/暗）、Alias Token 与弹层组件 Token。
+ * Dropdown/Menu/Select/Table 的悬停与选中底色统一在这里钳制，
+ * 业务组件不要再为单个弹层覆盖颜色。
+ */
 export function getAntThemeConfig(dark: boolean): ThemeConfig {
     const color = dark ? neutral.dark : neutral.light;
 

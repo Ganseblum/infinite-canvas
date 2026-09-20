@@ -1,3 +1,6 @@
+// Package db 数据库引导层：建立连接（MySQL / SQLite 双驱动）、AutoMigrate 建表、
+// schema 版本记录与启动期 seed（会员档位、点数包、示例模型、管理员账号、测试数据）。
+// 各 seed 一律幂等：已存在的记录不做任何覆盖。
 package db
 
 import (
@@ -72,6 +75,8 @@ func Connect(databaseURL string) (*gorm.DB, error) {
 	return gormDB, nil
 }
 
+// Migrate 对全部业务模型执行 AutoMigrate：只增量建表、加列，没有结构回滚；
+// 新模型必须登记进这份清单，漏登记的表不会被创建。
 func Migrate(gormDB *gorm.DB) error {
 	return gormDB.AutoMigrate(
 		&model.PlatformUser{},

@@ -1,3 +1,5 @@
+// Package model 是共享数据模型层：全部 GORM 表结构集中在此，gorm tag 的 comment
+// 即建表列注释；跨域共享的常量（统计时区、存储键格式契约）也定义在这里。
 package model
 
 import (
@@ -47,6 +49,8 @@ type Session struct {
 	CreatedAt time.Time  `gorm:"comment:会话签发时间"`
 }
 
+// EmailToken 是邮件令牌表（email_tokens）：验证邮箱与重置密码共用，
+// 按 purpose 区分；只存令牌哈希，用过即失效。
 type EmailToken struct {
 	ID        uuid.UUID  `gorm:"type:char(36);primaryKey;comment:邮件令牌主键"`
 	UserID    uuid.UUID  `gorm:"type:char(36);index;not null;comment:令牌所属用户"`
@@ -57,6 +61,8 @@ type EmailToken struct {
 	CreatedAt time.Time  `gorm:"comment:令牌签发时间"`
 }
 
+// FreeGrantClaim 是免费赠送领取记录表（free_grant_claims）：
+// (user_id, campaign_id) 唯一，同一活动一人只能有一条领取结论。
 type FreeGrantClaim struct {
 	ID         uuid.UUID `gorm:"type:char(36);primaryKey;comment:领取记录主键"`
 	UserID     uuid.UUID `gorm:"type:char(36);index;not null;uniqueIndex:idx_user_campaign;comment:领取人用户，与活动 id 组成唯一约束"`

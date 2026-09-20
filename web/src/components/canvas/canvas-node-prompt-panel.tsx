@@ -20,22 +20,29 @@ import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
+/** 生成节点提示词面板的 props。 */
 type CanvasNodePromptPanelProps = {
     node: CanvasNodeData;
     isRunning: boolean;
-    onPromptChange: (nodeId: string, prompt: string) => void;
-    onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void;
+    onPromptChange: (nodeId: string, prompt: string) => void; // 新建内容时写入 prompt。
+    onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void; // 编辑已有内容/改参数时写 metadata。
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
     onStop: (nodeId: string) => void;
-    mentionReferences?: CanvasResourceReference[];
+    mentionReferences?: CanvasResourceReference[]; // @ 引用候选列表。
     nodes: CanvasNodeData[];
     connectedNodes?: CanvasNodeData[];
     onDisconnectReference?: (fromNodeId: string, toNodeId: string) => void;
     onStartReferenceSelection?: (nodeId: string) => void;
-    onImageSettingsOpenChange?: (open: boolean) => void;
+    onImageSettingsOpenChange?: (open: boolean) => void; // 图片设置弹层开合上报（父层用于控制面板显隐）。
     modeOverride?: CanvasNodeGenerationMode; // Plugin nodes set their generation type through useBuiltinPanel.mode.
 };
 
+/**
+ * 生成节点的提示词面板（图片/文本/视频/音频通用）：
+ * 引用条 + @ 提及输入框 + 模型选择与参数设置 + 生成/停止。
+ * 编辑已有内容时把输入写入 composerContent（不覆盖原 prompt），
+ * 新建时写入 prompt。
+ */
 export function CanvasNodePromptPanel({
     node,
     nodes,
@@ -72,6 +79,7 @@ export function CanvasNodePromptPanel({
         setPrompt(externalPrompt);
     }, [externalPrompt]);
 
+    // 编辑已有内容走 composerContent，新建走 prompt，占位文案也随之切换。
     const updatePrompt = (value: string) => {
         setPrompt(value);
         if (isEditingExistingContent) onConfigChange(node.id, { composerContent: value });
@@ -201,10 +209,12 @@ export function CanvasNodePromptPanel({
     );
 }
 
+/** 按节点类型推断默认生成模式。 */
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
 }
 
+/** 合并全局配置与节点级覆盖，得到当前节点实际生效的生成配置。 */
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
     return {
         ...globalConfig,
@@ -226,6 +236,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     };
 }
 
+/** 视频弹层设置 key → 节点 metadata 字段的映射（两边命名不一致）。 */
 function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
@@ -234,6 +245,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     return { [key]: value };
 }
 
+/** 音频弹层设置 key → 节点 metadata 字段的映射。 */
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
     if (key === "audioVoice") return { audioVoice: value };
     if (key === "audioFormat") return { audioFormat: value };

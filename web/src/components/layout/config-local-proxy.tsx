@@ -7,6 +7,10 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { testLocalProxy } from "@/services/api/local-proxy";
 import { DEFAULT_LOCAL_PROXY_URL, LOCAL_PROXY_PACKAGE, normalizeLocalProxyUrl, useConfigStore } from "@/stores/use-config-store";
 
+/**
+ * 设置中的「本地代理」页签：开关、启动命令展示与复制、代理地址编辑与连通性测试。
+ * 代理用于浏览器直连有跨域限制的上游服务，地址保存在本地配置 store。
+ */
 export function ConfigLocalProxy() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -68,6 +72,10 @@ export function ConfigLocalProxy() {
     );
 }
 
+/**
+ * 拼出启动本地代理的 npx 命令；代理端口非默认值时附带 --port 参数。
+ * @param proxyUrl 用户配置的代理地址，解析失败时退回不带端口的默认命令
+ */
 function localProxyCommand(proxyUrl: string) {
     // Pinned to @latest because npx otherwise reuses whatever version it already cached.
     const command = `npx ${LOCAL_PROXY_PACKAGE}@latest`;

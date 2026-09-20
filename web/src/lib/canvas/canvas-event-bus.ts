@@ -6,6 +6,7 @@ import type { PluginStorage } from "@/types/canvas-plugin";
 type Handler = (payload: unknown) => void;
 const handlers = new Map<string, Set<Handler>>();
 
+/** 广播事件；某个 handler 抛错只记日志，不影响其它订阅者。 */
 export function emitCanvasEvent(event: string, payload?: unknown) {
     handlers.get(event)?.forEach((handler) => {
         try {
@@ -16,6 +17,7 @@ export function emitCanvasEvent(event: string, payload?: unknown) {
     });
 }
 
+/** 订阅事件，返回取消订阅函数；同一 handler 重复订阅只登记一次（Set 去重）。 */
 export function onCanvasEvent(event: string, handler: Handler) {
     let set = handlers.get(event);
     if (!set) {

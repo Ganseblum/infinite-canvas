@@ -85,6 +85,8 @@ var calloutLabels = map[string]string{
 	"CAUTION":   "CAUTION",
 }
 
+// rewriteCallouts 把匹配到的 [!KIND] 引用块整体重写为前台 callout div：
+// 标记文本作为眉标，WARNING/CAUTION/IMPORTANT 归入 callout warn 警示色变体。
 func rewriteCallouts(html string) string {
 	return calloutOpenRe.ReplaceAllStringFunc(html, func(m string) string {
 		groups := calloutOpenRe.FindStringSubmatch(m)

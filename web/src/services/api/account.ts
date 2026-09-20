@@ -57,19 +57,25 @@ export type UpdateProfileInput = {
     avatarUrl?: string;
 };
 
+// 个人中心接口客户端（/api/v1/me*）：资料、套餐用量、点数、媒体到期与账号注销状态。
+
+/** 当前登录用户的完整档案：套餐详情、点数余额、用量与媒体到期提示等。GET /api/v1/me。 */
 export function getMe(signal?: AbortSignal) {
     return apiRequest<MeResponse>("/me", { signal });
 }
 
+/** 更新昵称/头像，返回更新后的用户信息。PATCH /api/v1/me。 */
 export async function updateProfile(input: UpdateProfileInput) {
     const result = await apiRequest<{ user: AuthUser }>("/me", { method: "PATCH", body: input });
     return result.user;
 }
 
+/** 修改密码（需旧密码）。POST /api/v1/me/password。 */
 export function changePassword(input: { oldPassword: string; newPassword: string }) {
     return apiRequest<void>("/me/password", { method: "POST", body: input });
 }
 
+/** 领取免费额度活动奖励；幂等，重复调用返回既有结果。POST /api/v1/me/free-grant/claim。 */
 export function claimFreeGrant() {
     return apiRequest<FreeGrantClaim>("/me/free-grant/claim", { method: "POST" });
 }

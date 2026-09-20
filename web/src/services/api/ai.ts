@@ -3,9 +3,14 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { getSessionId } from "@/lib/session-id";
 import type { ModelParameterValue } from "@/services/api/catalog";
 
-// 全部生成行为的唯一调用方。浏览器不持有任何上游地址与密钥。
+// AI 生成底层接口客户端（/api/v1/ai/*）：报价、图像、语音、视频任务与文本流式对话。
+// 全部生成行为的唯一底层调用方。浏览器不持有任何上游地址与密钥。
+// 生成类请求统一附加 sessionId 与幂等键；上层封装见 image.ts / video.ts / audio.ts。
+
+/** 能力域：图像 / 视频 / 文本 / 语音。 */
 export type AiCapability = "image" | "video" | "text" | "audio";
 
+/** 折扣信息：discountBps 为基点（8500 = 8.5 折）。 */
 export type AiDiscount = {
     promotionId: string;
     name: string;
@@ -13,6 +18,7 @@ export type AiDiscount = {
     endsAt?: string;
 };
 
+/** 本次生成的计费结果：原价/折后价（微元）、折扣与退款信息。 */
 export type AiCredits = {
     baseCostMicros: number;
     finalCostMicros: number;
@@ -22,6 +28,10 @@ export type AiCredits = {
     refundedMicros?: number;
 };
 
+/**
+ * 一次报价结果：finalCostPoints 为展示点数，affordable=false 时 shortfallMicros 为缺口；
+ * quoteToken 必须随生成请求回传，expiresAt 前有效，参数集变化会判定失效（QUOTE_STALE）。
+ */
 export type QuoteResult = {
     billingMode: "credits" | "free_trial";
     baseCostMicros: number;
@@ -98,6 +108,7 @@ export function quoteGeneration(input: { model: string; capability: AiCapability
     return apiRequest<QuoteResult>("/ai/quote", { method: "POST", body: input });
 }
 
+/** 先报价后提交生成。POST /api/v1/ai/images/generations。 */
 export function generateImages(input: {
     model: string;
     prompt: string;
@@ -118,6 +129,7 @@ export function generateImages(input: {
     });
 }
 
+/** 语音合成。POST /api/v1/ai/audio/speech。 */
 export function generateSpeech(input: {
     model: string;
     input: string;
@@ -136,6 +148,7 @@ export function generateSpeech(input: {
     });
 }
 
+/** 创建视频生成任务（异步），凭返回的 taskId 轮询。POST /api/v1/ai/videos/generations。 */
 export function createVideoTask(input: {
     model: string;
     prompt: string;
@@ -159,6 +172,7 @@ export function createVideoTask(input: {
     });
 }
 
+/** 查询视频任务状态，succeeded 时携带 video 元信息。GET /api/v1/ai/videos/tasks/{taskId}。 */
 export function getVideoTask(taskId: string, signal?: AbortSignal) {
     return apiRequest<VideoTaskResponse>(`/ai/videos/tasks/${taskId}`, { signal });
 }
@@ -170,7 +184,12 @@ export type ChatMessageInput = {
     toolCallId?: string;
 };
 
-// streamChat 直接消费 SSE；鉴权与刷新复用 client 的单飞逻辑，不重写第二份。
+/**
+ * 文本流式对话：POST /api/v1/ai/chat/completions（SSE）。
+ * 直接消费 SSE；鉴权与过期刷新复用 client 的单飞逻辑，不重写第二份。
+ * 事件按空行分块（event:/data: 行），delta → onDelta、tool_call → onToolCall、
+ * done → onDone（含计费）；error 事件抛 ChatStreamError。
+ */
 export async function streamChat(
     input: {
         model: string;

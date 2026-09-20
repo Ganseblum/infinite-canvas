@@ -67,37 +67,50 @@ import { AgentLogView } from "./agent-log-view";
 import { AgentPanelTabs } from "./agent-panel-tabs";
 import { AgentSkillsView } from "./agent-skills-view";
 
+// 附件上限与总负载上限：附件以 dataUrl 整包随 turn 请求提交，超限会被本地直接拒绝。
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
+// 消息附件预览图的最长边 / dataUrl 长度上限：超过即降采样，控制落库体积。
 const MESSAGE_PREVIEW_LONG_EDGE = 192;
 const MESSAGE_PREVIEW_MAX_LENGTH = 500_000;
 const DEFAULT_AGENT_URL = "http://127.0.0.1:17371";
+// 与本地 Agent 服务的 SSE 协议版本，不一致时直接断开并提示升级，防止新旧前后端互发无法理解的事件。
 const AGENT_PROTOCOL_VERSION = 6;
+// 历史快照拉取的递增重试间隔（毫秒）：覆盖服务端刚切线程、快照尚未就绪的窗口。
 const HISTORY_RETRY_DELAYS_MS = [0, 150, 350, 700, 1200];
+// 支持的推理力度白名单：过滤模型返回的 effort 列表，避免展示后端不认识的值。
 const AGENT_REASONING_EFFORTS = new Set<AgentReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const rt = (key: string, options?: Record<string, unknown>) => i18n.t(`agent.runtime.${key}`, options);
 
+// 本地 Agent 服务各接口的响应结构（均允许缺字段，读取方需判空）。
 type AgentWorkspace = { workspacePath: string; activeThreadId?: string };
 type AgentThreadsResponse = { ok?: boolean; workspace?: AgentWorkspace; conversation?: AgentConversationState; data?: AgentThreadSummary[] };
 type AgentThreadResponse = { ok?: boolean; workspace?: AgentWorkspace; conversation?: AgentConversationState; thread?: AgentThreadSummary; messages?: AgentChatItem[]; settledTurnIds?: string[]; historyReady?: boolean };
 type AgentWorkspaceResponse = { ok?: boolean; workspace?: AgentWorkspace; conversation?: AgentConversationState };
 type AgentTurnResponse = { ok?: boolean; threadId?: string };
 type AgentModelsResponse = { ok?: boolean; data?: AgentModel[] };
+// codex_state 事件负载：busy 表示 turn 正在执行，threadId/turnId 指明归属。
 type AgentCodexState = { busy?: boolean; threadId?: string; turnId?: string };
+// hello 事件负载：连接建立后的首个握手消息，携带协议版本、会话与待审批列表。
 type AgentHelloEvent = { ok?: boolean; protocolVersion?: number; clientId?: string; workspace?: { activeThreadId?: string }; conversation?: AgentConversationState; codex?: AgentCodexState; pendingApprovals?: AgentPendingApproval[] };
 type AgentWorkspaceEvent = { activeThreadId?: string; threadId?: string; sourceClientId?: string; emptyThread?: boolean; draftThread?: boolean; conversation?: AgentConversationState };
 type AgentChatEvent = { threadId?: string; turnId?: string; sourceClientId?: string; replayed?: boolean; message?: AgentChatItem };
+// agent_bootstrap 事件负载：会话初始化与 MCP 服务启动进度的分阶段通知。
 type AgentBootstrapEvent = { type?: "codex.preparing" | "codex.prepare_failed" | "mcp.startup" | "mcp.complete"; phase?: "preheat" | "runtime"; threadId?: string; name?: string; status?: "starting" | "ready" | "failed" | "cancelled"; error?: string | null; failureReason?: string | null };
+// 在 globalThis 上缓存 clientId 的单例 Promise，避免多组件实例重复竞速锁。
 type AgentClientGlobal = typeof globalThis & { __infiniteCanvasAgentClientIdPromise?: Promise<string> };
 
+/** 把 settledTurnIds 编成 `threadId\0turnId` 键集合：作为权威历史标记，用于丢弃重放事件。 */
 function authoritativeHistoryTurnKeys(threadId: string, settledTurnIds: string[]) {
     return new Set(settledTurnIds.map((turnId) => `${threadId}\0${turnId}`));
 }
 
+/** 从 AgentApiError 响应体中提取服务端回传的会话状态快照，用于失败后回滚到一致状态。 */
 function agentErrorState(error: unknown) {
     return error instanceof AgentApiError ? (error.response as { state?: AgentConversationState }).state : undefined;
 }
 
+/** 把会话初始化状态（idle/preparing/warning/failed/ready + 各 MCP 服务状态）折叠成面板顶部的引导状态展示。 */
 function conversationBootstrapView(conversation: AgentConversationState) {
     const mcpStartupStatuses: Record<string, AgentBootstrapStatus> = Object.fromEntries(Object.entries(conversation.mcpStatuses).map(([name, item]) => {
         const view: AgentBootstrapStatus = item.status === "starting"
@@ -123,6 +136,14 @@ function conversationBootstrapView(conversation: AgentConversationState) {
     return { bootstrapStatus, mcpStartupStatuses };
 }
 
+/**
+ * AI 助手面板的主容器：负责与本地 Agent 服务建立 SSE 连接、维护消息/线程/技能状态，
+ * 并把画布上下文快照同步给 Agent。消息严格按 threadId/turnId/itemId 归属去重；
+ * 事件按连接排队串行处理，历史快照到达后成为权威并合并实时消息。
+ * @param embedded 内嵌模式：直接渲染内容（不套面板外壳，由 AgentPanel 提供容器）
+ * @param headless 无头模式：只跑连接逻辑不渲染任何 UI（弹窗也静默）
+ * @param autoConnect 挂载后自动静默连接一次
+ */
 export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?: boolean; headless?: boolean; autoConnect?: boolean }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -202,6 +223,12 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         });
         return () => { disposed = true; };
     }, []);
+    /**
+     * 拉取指定线程的历史快照，按递增间隔重试直至拿到包含期望 turn 的就绪数据。
+     * 每次成功后把快照标记为权威（settled turns 清出 live 集合），再与本地实时消息合并写回 store；
+     * 序列号或激活线程已变化时放弃本轮结果，防止旧请求覆盖新线程。
+     * @returns true 表示拿到了就绪快照（含期望 turn），false 表示重试耗尽或中途失效
+     */
     const loadThreadSnapshot = useCallback(async (threadId: string, sequence: number, response?: AgentThreadResponse, expectedTurnId = "") => {
         let thread = response;
         let lastError: unknown;
@@ -235,6 +262,12 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         if (lastError) throw lastError;
         return false;
     }, [endpoint, setAgentState, token]);
+    /**
+     * 应用工作区/线程切换事件：缓存旧线程消息、清空待发草稿的归属，
+     * 并 bump 序列号使在途的历史请求失效。emptyThread（新建草稿线程）时清空消息，
+     * 但保留「正在发送且尚未拿到 turnId」的用户消息，避免刚发出的内容凭空消失。
+     * @returns 本次的最新序列号，供调用方校验请求是否仍然有效
+     */
     const applyWorkspaceChange = useCallback((data: AgentWorkspaceEvent) => {
         const nextThreadId = data.activeThreadId ?? data.threadId ?? "";
         const current = useAgentStore.getState();
@@ -273,6 +306,11 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         });
         return loadThreadsSequenceRef.current;
     }, [setAgentState]);
+    /**
+     * 按版本号（revision）单调应用会话状态：旧于当前的更新直接忽略。
+     * 会话或线程变化时联动 applyWorkspaceChange 切换消息视图。
+     * @param force 跳过版本比较强制应用（用于 hello 握手后的全量对齐）
+     */
     const applyConversationState = useCallback((next: AgentConversationState, force = false) => {
         const current = useAgentStore.getState();
         if (!next?.revision || !force && next.revision <= current.conversation.revision) return false;
@@ -288,6 +326,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ conversation: next, ...conversationBootstrapView(next) });
         return true;
     }, [applyWorkspaceChange, setAgentState]);
+    /** 拉取线程列表并对当前线程做快照合并；skipHistory 用于新建草稿线程时跳过历史拉取。 */
     const loadThreads = useCallback(async (skipHistory = false, expectedTurnId = "") => {
         if (!connectedRef.current && !useAgentStore.getState().connected) return;
         let sequence = ++loadThreadsSequenceRef.current;
@@ -346,6 +385,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         const clientId = clientIdRef.current;
         let disposed = false;
         let protocolRejected = false;
+        // SSE 事件的处理器全部串行入队：避免上一事件触发的 setState 还是旧状态时下一事件抢先读取。
         let eventQueue = Promise.resolve();
         const isCurrentConnection = () => !disposed && clientIdRef.current === clientId;
         const enqueueEvent = (task: () => void | Promise<void>) => {
@@ -359,6 +399,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         source.addEventListener("hello", (event) => {
             if (!isCurrentConnection()) return;
             const hello = parseEventData<AgentHelloEvent>(event);
+            // 协议版本不一致：服务端可能是旧版插件/新版前端，直接断开并要求升级，防止双方互发错乱事件。
             if (hello?.protocolVersion !== AGENT_PROTOCOL_VERSION) {
                 const text = rt("agentOutdated");
                 protocolRejected = true;
@@ -372,6 +413,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             }
             const codex = hello?.codex;
             const busy = Boolean(codex?.busy);
+            // hello 时对齐全量状态：当前 turn、待审批列表，并清除上次断连留下的本地错误消息。
             const nextThreadId = hello?.conversation?.threadId ?? hello?.workspace?.activeThreadId ?? useAgentStore.getState().activeThreadId;
             if (hello?.conversation) applyConversationState(hello.conversation, true);
             else applyWorkspaceChange({ activeThreadId: nextThreadId });
@@ -402,6 +444,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             void postState(endpoint, token, clientId, canvasContextRef.current?.snapshot || null);
             if (document.visibilityState === "visible" && document.hasFocus()) void activateAgentClient(endpoint, token, clientId);
             if (!busy && !nextThreadId && (!hello?.conversation || hello.conversation.status === "idle")) {
+                // 首次连接且没有任何线程：主动重置出一个新会话，避免面板停在「未初始化」状态。
                 void fetchAgentJson<AgentWorkspaceResponse>(endpoint, token, "/agent/codex/threads/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, permissionMode }) })
                     .then((result) => result.conversation && applyConversationState(result.conversation))
                     .catch((error) => {
@@ -417,6 +460,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             enqueueEvent(async () => {
                 const busy = Boolean(data.busy);
                 const current = useAgentStore.getState();
+                // 只处理属于当前线程的状态，其它线程的 busy 变化由线程切换逻辑兜住。
                 const appliesToCurrentThread = !data.threadId || data.threadId === current.activeThreadId;
                 if (!appliesToCurrentThread) return;
                 const turnId = data.turnId || current.activeTurnId;
@@ -433,11 +477,13 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 if (!busy && current.waiting) void loadThreads(false, turnId);
             });
         });
+        // 画布写工具到达时按确认开关拦截：待确认期间再来的写工具直接回错误，保证一次只确认一个。
         source.addEventListener("tool_call", (event) => {
             if (!isCurrentConnection()) return;
             const data = parseEventData<AgentPendingToolCall>(event);
             if (data) void handleToolCall(endpoint, token, data);
         });
+        // Codex 运行时审批（命令/文件/网络权限）请求：维护 pendingApprovals 列表并提示等待审批。
         source.addEventListener("codex_approval", (event) => {
             if (!isCurrentConnection()) return;
             const data = parseEventData<AgentPendingApproval>(event);
@@ -456,6 +502,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const decision = data.decision || approval?.deciding;
             if (approval && decision) addEventLog(rt(decision === "accept" || decision === "acceptForSession" ? "approvalGranted" : "approvalCanceled"), approval.reason || approval.method, approval);
         });
+        // 核心 Agent 事件流：先做线程归属与重放去重校验，usage 事件除外（它只更新用量条）。
         source.addEventListener("agent_event", (event) => {
             const data = parseEventData<AgentEventPayload>(event);
             if (data) enqueueEvent(() => {
@@ -516,6 +563,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 const clientMessageId = data.message!.clientMessageId || data.message!.itemId || data.message!.id;
                 if (current.activeThreadId !== threadId) return;
                 const next = scopeChatItem(data.message!, threadId, turnId);
+                // 服务端回显的用户消息会替换本地乐观插入的那条（按 clientMessageId 匹配），避免重复。
                 const currentMessages = data.message!.role === "user" && clientMessageId
                     ? current.messages.filter((item) => item.role !== "user" || item.clientMessageId !== clientMessageId || item.id === next.id)
                     : current.messages;
@@ -542,6 +590,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 showAgentError(data.message, data, !data.replayed);
             });
         });
+        // SSE 断连：已连接过提示「连接丢失」，从未连上则关闭连接并禁用，避免无限自动重连风暴。
         source.onerror = () => {
             if (disposed || protocolRejected) return;
             const wasConnected = connectedRef.current;
@@ -590,6 +639,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
 
     useEffect(() => {
         if (!connected) return;
+        // 拉取模型列表并归一化：过滤评审专用模型与重复项，回退用户上次选择或默认模型/力度。
         void fetchAgentJson<AgentModelsResponse>(endpoint, token, "/agent/codex/models").then(({ data = [] }) => {
             const names = new Set<string>();
             const models = data.flatMap((item) => {
@@ -614,6 +664,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
 
     useEffect(() => {
         if (!connected) return;
+        // 窗口重新获得焦点/可见时激活本客户端：多标签页场景下让服务端把实时事件路由到当前标签。
         const activate = () => void activateAgentClient(endpoint, token, clientIdRef.current);
         const activateVisible = () => {
             if (document.visibilityState === "visible") activate();
@@ -625,6 +676,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             document.removeEventListener("visibilitychange", activateVisible);
         };
     }, [connected, endpoint, token]);
+    /** 发送用户消息：合并附件与画布引用、乐观插入本地用户消息，再提交 turn 请求并处理失败回滚。 */
     const sendPrompt = async () => {
         const text = prompt.trim();
         const files = attachments;
@@ -633,6 +685,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         const selectedSkillRevision = skillState.selectionRevision;
         const currentState = useAgentStore.getState();
         const canvasNodeIds = new Set(currentState.canvasContext?.snapshot.nodes.map((node) => node.id) || []);
+        // 画布引用先按当前快照过滤：节点已被删除的引用直接剔除并提示。
         const canvasReferences = currentState.canvasReferences.filter((item) => canvasNodeIds.has(item.nodeId));
         if (canvasReferences.length !== currentState.canvasReferences.length) {
             setAgentState({ canvasReferences });
@@ -663,6 +716,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             return;
         }
         const messageId = createId();
+        // 纯图片/纯引用发送时生成占位文案；引用的预览图换成降采样后的消息附件地址。
         const userText = text || rt(files.length ? "imagesSent" : "canvasReferencesSent", { count: files.length || canvasReferences.length });
         const messageReferences: AgentCanvasReference[] = await Promise.all(canvasReferences.map(async ({ nodeId, label, title, kind, previewUrl, text }) => {
             const image = referenceImages.find((item) => item.id === `canvas:${nodeId}`);
@@ -672,6 +726,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         loadThreadsSequenceRef.current += 1;
         const currentBeforeSend = useAgentStore.getState();
         const requestThreadId = currentBeforeSend.activeThreadId;
+        // 乐观清空输入并插入本地用户消息（itemId 固定为 synthetic:user，turnId 留空待 turn.started 绑定）。
         setAgentState({ prompt: "", attachments: [], canvasReferences: [], activity: rt("sending"), sending: true, loadingThreads: false, activeTurnId: "", messages: currentBeforeSend.messages });
         addMessage({ id: messageId, itemId: "synthetic:user", clientMessageId: messageId, threadId: requestThreadId, turnId: "", role: "user", text: userText, attachments: files, canvasReferences: messageReferences, skill: messageSkill });
         let threadId = requestThreadId;
@@ -715,15 +770,18 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const text = error instanceof Error ? error.message : rt("sendFailed");
             const response = error instanceof AgentApiError ? error.response as { code?: string; state?: AgentConversationState } : undefined;
             if (response?.state) applyConversationState(response.state);
+            // 失败分类：stale 表示会话已被他端推进（草稿作废），busy 表示 turn 还在跑（消息未发出但会话仍在）。
             const stale = response?.code === "CONVERSATION_STALE";
             const busy = response?.code === "CONVERSATION_BUSY" || text.includes("Codex 正在运行");
             const state = useAgentStore.getState();
             const removeFailedPending = (messages: AgentChatItem[]) => messages.filter((item) => item.clientMessageId !== messageId || Boolean(item.turnId));
+            // 从所有线程缓存里撤回这条失败的用户消息（已绑定 turnId 的说明服务端已接受，保留）。
             threadMessagesRef.current.forEach((messages, cachedThreadId) => {
                 const next = removeFailedPending(messages);
                 if (next.length !== messages.length) threadMessagesRef.current.set(cachedThreadId, next);
             });
             const ownsCurrentThread = state.activeThreadId === (threadId || requestThreadId);
+            // 输入框若已被用户重新填写则不回滚草稿，避免覆盖新输入。
             const restoreDraft = state.prompt || state.attachments.length || state.canvasReferences.length ? {} : { prompt, attachments: files, canvasReferences };
             if (ownsCurrentThread) {
                 setAgentState({
@@ -740,6 +798,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         }
     };
 
+    /** 中断当前 turn：仅在有任务进行中时可用。 */
     const stopTurn = async () => {
         if (!connected || (!sending && !waiting)) return;
         setAgentState({ activity: rt("stopping") });
@@ -752,6 +811,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         }
     };
 
+    /** 添加图片附件：读取尺寸元数据并登记 objectURL，总负载超限则整体拒绝。 */
     const addAttachments = async (files: FileList | File[] | null) => {
         if (!files) return;
         const images = Array.from(files).filter((file) => file.type.startsWith("image/"));
@@ -790,6 +850,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ attachments: attachments.filter((item) => item.id !== id) });
     };
 
+    /** 画布写工具的确认入口：开启确认开关时挂起等待用户批准，否则直接执行。 */
     const handleToolCall = async (endpoint: string, token: string, payload: AgentPendingToolCall) => {
         if (confirmToolsRef.current && isCanvasWriteTool(payload.name)) {
             if (pendingToolRef.current) {
@@ -804,6 +865,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         await runToolCall(endpoint, token, payload);
     };
 
+    /** 执行工具调用：站点内工具直接在前端执行，画布/导航类工具操作画布上下文并把结果回传 Agent。 */
     const runToolCall = async (endpoint: string, token: string, payload: AgentPendingToolCall) => {
         if (isSiteTool(payload.name)) {
             try {
@@ -850,6 +912,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         }
     };
 
+    /** 拒绝待确认的画布写工具：把拒绝原因作为错误结果回传给 Agent。 */
     const rejectPendingTool = async () => {
         if (!pendingTool) return;
         await postToolResult(endpoint, token, clientIdRef.current, { requestId: pendingTool.requestId, error: rt("canvasToolCanceled") });
@@ -857,6 +920,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ pendingTool: null });
     };
 
+    /** 批准待确认的画布写工具并立即执行。 */
     const approvePendingTool = async () => {
         if (!pendingTool) return;
         const tool = pendingTool;
@@ -865,6 +929,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         await runToolCall(endpoint, token, tool);
     };
 
+    /** 提交 Codex 运行时审批决定；审批已失效则静默移除，否则失败时回退按钮状态。 */
     const decideApproval = async (approval: AgentPendingApproval, decision: "accept" | "acceptForSession" | "decline") => {
         const current = useAgentStore.getState();
         const pending = current.pendingApprovals.find((item) => item.requestId === approval.requestId);
@@ -888,6 +953,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         }
     };
 
+    /** 切换权限模式：「完全访问」需要弹窗二次确认。 */
     const changePermissionMode = (nextMode: AgentPermissionMode) => {
         const apply = () => {
             localStorage.setItem("canvas-agent-permission-mode", nextMode);
@@ -904,6 +970,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         });
     };
 
+    /** 连接/断开总开关：地址与 token 支持 URL 参数覆盖与本地发现，校验通过后触发 SSE 建连。 */
     const toggleAgentConnection = async ({ silent = false }: { silent?: boolean } = {}) => {
         if (enabled) {
             clearAgentSession({ enabled: false, connected: false, activity: rt("offline"), connectError: "" });
@@ -946,6 +1013,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     };
 
     useLayoutEffect(() => {
+        // URL hash 引导（fragmentBootstrap）：从分享链接中读取 agentUrl/agentToken 后清掉 hash 并静默连接。
         const bootstrap = readAgentUrlBootstrap(hash);
         if (!bootstrap) return;
         navigate(`${window.location.pathname}${window.location.search}${bootstrap.remainingHash}`, { replace: true });
@@ -976,6 +1044,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         void toggleAgentConnection({ silent: true });
     }, [autoConnect, connected, enabled, urlAgentAutoConnect]);
 
+    /** 清空本地会话全部状态（消息、缓存、turn 集合、审批等），patch 允许覆盖部分字段。 */
     function clearAgentSession(patch: Parameters<typeof setAgentState>[0] = {}) {
         loadThreadsSequenceRef.current += 1;
         threadMessagesRef.current.clear();
@@ -1004,6 +1073,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         pendingToolRef.current = null;
     }
 
+    // 线程操作序列号：新建/恢复/删除线程期间阻止其它操作并发进入，并驱动 loadingThreads 状态。
     const beginThreadOperation = () => {
         const operation = ++threadOperationSequenceRef.current;
         threadOperationRef.current = operation;
@@ -1017,6 +1087,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ loadingThreads: false });
     };
 
+    /** 新建线程：调用服务端 reset 建立新会话，并清空本地技能选择。 */
     const startNewThread = async () => {
         const current = useAgentStore.getState();
         if (!current.connected || current.sending || current.waiting || current.loadingThreads || ["preparing", "running"].includes(current.conversation.status)) return;
@@ -1039,6 +1110,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         }
     };
 
+    /** 恢复历史线程：切换服务端激活线程后重拉列表并合并快照。 */
     const resumeThread = async (threadId: string) => {
         const current = useAgentStore.getState();
         if (!current.connected || !threadId || current.sending || current.waiting || current.loadingThreads || ["preparing", "running"].includes(current.conversation.status)) return;
@@ -1059,6 +1131,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         }
     };
 
+    /** 批量删除线程：逐个调用删除接口并同步清理本地消息缓存。 */
     const deleteThreads = async (threadIds: string[]) => {
         if (!connected || !threadIds.length || sending || waiting || loadingThreads) return;
         const operation = beginThreadOperation();
@@ -1091,6 +1164,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         });
     };
 
+    /** 插入或更新一条本地消息（错误提示、乐观用户消息等），统一 scope 到当前线程。 */
     const addMessage = (item: Omit<AgentChatItem, "id"> & { id?: string }) => {
         const text = normalizeText(item.text);
         if (!text && !item.attachments?.length) return;
@@ -1100,6 +1174,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ messages: upsertAgentMessage(current.messages, next) });
     };
 
+    /** 追加事件日志：与上一条标题+内容完全相同时去重不记。 */
     const addEventLog = (title: string, text: unknown, raw?: unknown) => {
         const value = normalizeText(text) || title;
         const last = useAgentStore.getState().eventLogs.at(-1);
@@ -1107,10 +1182,15 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         pushEventLog({ id: `${Date.now()}-${Math.random()}`, time: dayjs().format("YYYY-MM-DD HH:mm:ss"), title, text: value, raw });
     };
 
+    /** 事件驱动的活动消息（推理/命令/计划）统一走 upsert。 */
     const upsertActivityMessage = (item: AgentChatItem) => {
         setAgentState({ messages: upsertAgentMessage(useAgentStore.getState().messages, item) });
     };
 
+    /**
+     * 处理 item.updated 的增量：推理摘要按 item.id 聚合进 activityItems；
+     * 命令输出按 delta 追加；其它活动用 mergeStreamText 处理可能整段重发的文本。
+     */
     const appendActivityDelta = (event: AgentEventPayload) => {
         const item = event.item;
         if (!item?.id) return;
@@ -1147,6 +1227,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ messages: currentMessages.map((message, itemIndex) => itemIndex === index ? { ...message, text: nextText, detail: { ...activityDetail(message.detail, activityKind(item.type), "inProgress") } } : message) });
     };
 
+    /** item.completed / plan.updated 到达时把格式化好的活动卡片 upsert 进时间线。 */
     const upsertEventActivity = (event: AgentEventPayload, item: Omit<AgentChatItem, "id">) => {
         const itemId = event.item?.id;
         if (!itemId) return;
@@ -1163,6 +1244,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         upsertActivityMessage(scopeEventChatItem(event, { ...item, id: itemId }, itemId));
     };
 
+    /** 推理块完成时移除对应摘要；所有摘要都无效则整条推理消息删除，避免留下空「分析中」卡片。 */
     const finishEmptyReasoningActivity = (event: AgentEventPayload) => {
         const itemId = event.item?.id;
         if (!itemId) return;
@@ -1180,6 +1262,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ messages: currentMessages.map((message, itemIndex) => itemIndex === index ? { ...message, text: reasoningActivityText(activityItems), activityItems, detail: activityDetail(message.detail, "reasoning", "completed") } : message) });
     };
 
+    /** turn 结束时把计划卡片状态收敛为最终态（完成/失败/中断）。 */
     const finishPlanActivity = (event: AgentEventPayload) => {
         const id = scopeEventChatItem(event, { id: "synthetic:plan", role: "tool", text: "" }, "synthetic:plan").id;
         const currentMessages = useAgentStore.getState().messages;
@@ -1190,6 +1273,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ messages: currentMessages.map((message, itemIndex) => itemIndex === index ? { ...message, detail } : message) });
     };
 
+    /** 展示错误消息：同一 ID 已存在且无新内容时跳过，避免重放事件重复刷错误。 */
     const showAgentError = (value: unknown, event?: AgentEventPayload, log = true) => {
         const error = agentErrorView(value);
         const item = event
@@ -1203,6 +1287,11 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         if (log) addEventLog(rt("processingFailed"), error.text, value);
     };
 
+    /**
+     * 事件处理主入口：按事件类型分派到日志、活动卡片、流式正文、计划与用量等分支。
+     * turn.started 绑定 pending 用户消息；item.completed(agent_message) 以服务端全文覆盖流式文本；
+     * turn.completed 收尾 turn 并清 streamId；图片生成结果还会尝试导入画布。
+     */
     const handleAgentEvent = async (event: AgentEventPayload) => {
         if (event.type === "usage.updated") setAgentState({ tokenUsage: eventUsage(event) });
         const log = event.replayed ? null : formatAgentEventLog(event);
@@ -1255,6 +1344,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             return;
         }
         if (!event.replayed && event.type === "item.completed" && event.item?.type === "image_generation" && event.item.id && event.sourceClientId === clientIdRef.current) {
+            // 只有本客户端产生的图片生成结果才导入画布，且放在现有节点最右侧，纵向按序错开。
             const generated = await importGeneratedImages(endpoint, token, event.item);
             if (generated.length) {
                 const context = canvasContextRef.current;
@@ -1286,6 +1376,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const scope = eventScope(event);
             if (scope.turnId) {
                 finishPlanActivity(event);
+                // turn 正常结束后把该 turn 转入 live 集合保留，等待权威历史快照统一收敛。
                 liveTurnKeysRef.current.add(`${scope.threadId}\0${scope.turnId}`);
             }
             const current = useAgentStore.getState();
@@ -1299,6 +1390,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         if (item) addMessage(scopeEventChatItem(event, { ...item, id: event.item?.id || createId() }, event.item?.id || createId()));
     };
 
+    /** 助手正文的流式增量：按 itemId 定位消息，delta 追加、整段重发时用 mergeStreamText 合并。 */
     const appendStreamText = (event: AgentEventPayload, text: string, isDelta = false) => {
         if (!text) return;
         const itemId = event.item?.id;
@@ -1448,10 +1540,16 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         </>
     );
 
+    // headless（分享链接引导页）不渲染；embedded 模式由 AgentPanel 提供外壳后直接输出内容。
     if (headless) return null;
     return embedded ? content : null;
 }
 
+/**
+ * 获取跨标签页唯一的 clientId：用 Web Locks 独占 `infinite-canvas-agent:<id>` 锁，
+ * 锁被占用则换新 ID 重试，保证同一时刻只有一个标签页作为「激活客户端」接收实时事件。
+ * 结果缓存在 globalThis 上，页面生命周期内只竞速一次。
+ */
 function acquireAgentClientId() {
     const scope = globalThis as AgentClientGlobal;
     scope.__infiniteCanvasAgentClientIdPromise ||= (async () => {
@@ -1483,6 +1581,7 @@ function acquireAgentClientId() {
     return scope.__infiniteCanvasAgentClientIdPromise;
 }
 
+// clientId 存 sessionStorage：每个标签页独立身份；存储不可用时仅用内存身份，当前页面内的归属关系仍然一致。
 function readAgentClientId() {
     try {
         return sessionStorage.getItem("canvas-agent-client-id") || "";
@@ -1499,6 +1598,7 @@ function saveAgentClientId(clientId: string) {
     }
 }
 
+/** 从事件负载中取出 threadId/turnId（兼容 snake_case），作为消息归属的作用域。 */
 function eventScope(event: AgentEventPayload) {
     return {
         threadId: event.threadId || event.thread_id || "",
@@ -1506,16 +1606,19 @@ function eventScope(event: AgentEventPayload) {
     };
 }
 
+/** 事件作用域 + 指定 itemId 的快捷 scope 封装，供事件分支构造规范消息。 */
 function scopeEventChatItem(event: AgentEventPayload, item: AgentChatItem, itemId: string) {
     const scope = eventScope(event);
     return scopeChatItem({ ...item, itemId }, scope.threadId, scope.turnId);
 }
 
+/** 根据剩余审批与等待状态推导活动栏文案，避免审批消失后状态停留在「等待审批」。 */
 function approvalActivity(pendingApprovals: AgentPendingApproval[], waiting: boolean, fallback: string) {
     if (pendingApprovals.length) return rt("awaitingApproval");
     return waiting ? rt("codexRunning") : fallback;
 }
 
+/** 把 canvas_create_attachment_nodes 的入参转成加图节点 ops：附件从 Agent 服务取回并上传到素材库。 */
 async function attachmentNodeOps(endpoint: string, token: string, clientId: string, value: unknown): Promise<CanvasAgentOp[]> {
     const nodes = Array.isArray(value) ? value : [];
     if (!nodes.length) throw new Error(rt("noImageAttachments"));
@@ -1551,6 +1654,7 @@ function createId() {
     return randomId();
 }
 
+/** 生成随消息落库的附件元数据：超大图降采样到预览尺寸，控制历史消息体积。 */
 async function createMessageAttachmentMetadata(item: AgentAttachment) {
     const url = Math.max(item.width, item.height) > MESSAGE_PREVIEW_LONG_EDGE || item.dataUrl.length > MESSAGE_PREVIEW_MAX_LENGTH
         ? await upscaleDataUrl(item.dataUrl, { targetLongEdge: MESSAGE_PREVIEW_LONG_EDGE, algorithm: "high" })
@@ -1562,6 +1666,7 @@ function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
 }
 
+/** 把 Agent 生成的图片（dataUrl 或本地路径）上传素材库并返回消息附件结构。 */
 async function importGeneratedImages(endpoint: string, token: string, item: AgentEventItem) {
     const sources = Array.from(generatedImageSources(item));
     return await Promise.all(
@@ -1579,6 +1684,7 @@ async function importGeneratedImages(endpoint: string, token: string, item: Agen
     );
 }
 
+// 递归收集事件结果里的图片引用：data URL 或根路径下的图片文件（排除含换行的误匹配）。
 function generatedImageSources(value: unknown, result = new Set<string>()) {
     if (typeof value === "string") {
         if (value.startsWith("data:image/") || (/^\/.+\.(?:avif|gif|jpe?g|png|webp)$/i.test(value) && !value.includes("\n"))) result.add(value);

@@ -3,6 +3,7 @@ import { Button, Modal, Segmented, Slider } from "antd";
 import { RotateCcw, WandSparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+/** 视角调整参数：水平角/俯仰角（度）、相机距离、是否广角，最终拼进生成提示词。 */
 export type CanvasImageAngleParams = {
     horizontalAngle: number;
     pitchAngle: number;
@@ -10,6 +11,7 @@ export type CanvasImageAngleParams = {
     wideAngle: boolean;
 };
 
+// 默认参数：俯仰略微抬高、中距，视觉上更容易看出立体变化。
 const defaultParams: CanvasImageAngleParams = {
     horizontalAngle: 0,
     pitchAngle: 9,
@@ -17,10 +19,15 @@ const defaultParams: CanvasImageAngleParams = {
     wideAngle: false,
 };
 
+/**
+ * 图片视角调整弹窗：左侧用 CSS 3D transform 实时预览效果，右侧调节水平角、
+ * 俯仰角、相机距离与镜头（标准/广角）；确认后把参数交给父层发起 AI 重新生成。
+ */
 export function CanvasNodeAngleDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (params: CanvasImageAngleParams) => void }) {
     const { t } = useTranslation();
     const [params, setParams] = useState(defaultParams);
 
+    // 每次打开（或换图）都重置为默认参数。
     useEffect(() => {
         if (open) setParams(defaultParams);
     }, [dataUrl, open]);
@@ -74,6 +81,7 @@ export function CanvasNodeAngleDialog({ dataUrl, open, onClose, onConfirm }: { d
     );
 }
 
+/** 带数值回显的参数滑杆行：label + 滑杆 + 右侧数值（整数不带小数位）。 */
 function AngleSlider({ label, value, min, max, step, suffix = "", onChange }: { label: string; value: number; min: number; max: number; step: number; suffix?: string; onChange: (value: number) => void }) {
     return (
         <div className="grid grid-cols-[88px_1fr_72px] items-center gap-4">
@@ -87,6 +95,10 @@ function AngleSlider({ label, value, min, max, step, suffix = "", onChange }: { 
     );
 }
 
+/**
+ * 预览用的 CSS transform：把参数按经验系数映射到 rotateY/rotateX/scale。
+ * 相机距离越近（数值小）放大越多；广角额外缩小模拟视野变宽；整体夹在 0.72~1.08 防止溢出。
+ */
 function previewTransform(params: CanvasImageAngleParams) {
     const scale = 1.08 - params.cameraDistance * 0.035 + (params.wideAngle ? -0.08 : 0);
     return `perspective(520px) rotateY(${params.horizontalAngle * -0.45}deg) rotateX(${params.pitchAngle * 0.35}deg) scale(${Math.max(0.72, Math.min(1.08, scale))})`;

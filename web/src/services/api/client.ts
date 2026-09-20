@@ -111,6 +111,11 @@ async function execute<T>(path: string, options: ApiRequestOptions, canRetry: bo
     throw error;
 }
 
+/**
+ * 统一 API 请求客户端：自动补 /api/v1 前缀、注入 Bearer、解析统一错误结构，
+ * 并处理 access token 过期的单飞刷新与请求重放。所有资源客户端（api/ 目录）都基于它。
+ * @param path 以 / 开头的接口路径（如 /canvases）；/admin 开头走管理面前缀 /api/admin。
+ */
 export async function apiRequest<T>(path: string, options?: ApiRequestOptions): Promise<T> {
     return execute<T>(path, options || {}, true);
 }
@@ -137,7 +142,11 @@ async function performRefresh(): Promise<SessionPayload | null> {
     }
 }
 
-// 同一时刻只允许一个刷新在飞，其余并发 401 排队等同一个结果。
+/**
+ * 静默刷新会话：凭 refresh cookie 换新 access token。
+ * 同一时刻只允许一个刷新在飞，其余并发 401 排队等同一个结果。
+ * @returns 刷新成功返回新会话；失败（含网络错误）返回 null 并清空登录态。
+ */
 export function refreshSession(): Promise<SessionPayload | null> {
     if (!refreshInFlight) {
         refreshInFlight = performRefresh().finally(() => {

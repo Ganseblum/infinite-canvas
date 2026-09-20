@@ -8,6 +8,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
+/** 视频生成设置弹层 props：变更按「配置键 → 字符串值」回传。 */
 type CanvasVideoSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
@@ -15,6 +16,10 @@ type CanvasVideoSettingsPopoverProps = {
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
+/**
+ * 视频生成设置入口按钮 + Portal 弹层：按钮上摘要分辨率/尺寸/时长/模式，
+ * 点击弹出共享 VideoSettingsPanel。手写 Portal 定位，避免画布 transform 容器下定位失真。
+ */
 export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
@@ -22,6 +27,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
 
+    // 打开期间跟随按钮位置（resize/scroll 失效 fixed 基准），点击面板外关闭。
     useEffect(() => {
         if (!open) return;
         const syncPosition = () => setButtonRect(buttonRef.current?.getBoundingClientRect() || null);
@@ -59,6 +65,10 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     );
 }
 
+/**
+ * 视频设置面板的 Portal 容器：按按钮 rect 与 placement 手动定位，
+ * 水平方向夹在视口 margin 内；顶部放置时限制 maxHeight 防止溢出屏幕。
+ */
 function VideoSettingsPortal({
     buttonRect,
     panelRef,
@@ -79,6 +89,7 @@ function VideoSettingsPortal({
     const margin = 12;
     const alignRight = placement?.endsWith("Right");
     const alignCenter = placement === "top" || placement === "bottom";
+    // 水平对齐：*Right 右对齐按钮、top/bottom 居中、其余左对齐。
     const left = alignCenter ? buttonRect.left + buttonRect.width / 2 - width / 2 : alignRight ? buttonRect.right - width : buttonRect.left;
     const topPlacement = placement?.startsWith("top");
     const style = {
@@ -96,6 +107,7 @@ function VideoSettingsPortal({
     } as const;
 
     return createPortal(
+        // 阻断面板内指针事件冒泡，避免拖动画布/触发节点交互。
         <div
             ref={panelRef}
             className="canvas-image-settings-popover"

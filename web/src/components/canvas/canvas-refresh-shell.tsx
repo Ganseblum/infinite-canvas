@@ -1,3 +1,4 @@
+/** 画布刷新时的占位骨架：用纯 CSS 摆出工具栏/小地图/侧栏剪影，避免闪白屏。 */
 export function CanvasRefreshShell() {
     return (
         <main className="relative h-full min-h-0 overflow-hidden bg-background text-foreground">

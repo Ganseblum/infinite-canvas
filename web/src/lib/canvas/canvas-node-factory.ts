@@ -6,6 +6,10 @@ import type { UploadedFile } from "@/services/media-ingest";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type Position } from "@/types/canvas";
 
+/**
+ * 创建画布节点：按注册表规格补默认尺寸/标题/元数据，
+ * position 传的是「放置点」，实际左上角向左上偏移半宽半高使节点以该点居中。
+ */
 export function createCanvasNode(type: CanvasNodeTypeId, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
     const spec = getNodeSpec(type);
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -36,10 +40,12 @@ export function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
     return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
 }
 
+// 参考图取可用地址：优先 storageKey（服务端媒体），其次 url；裸 data URL 不能作参考传后端。
 export function referenceUrl(image: ReferenceImage) {
     return image.storageKey || image.url || (!image.dataUrl.startsWith("data:") ? image.dataUrl : undefined);
 }
 
+// 生成节点元数据快照：把当时的模型/参数固化进节点，重放与展示都以节点 metadata 为准。
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
     return {
         generationType: type,
@@ -52,6 +58,7 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
     };
 }
 
+// 生成节点元数据快照：把当时的模型/参数固化进节点，重放与展示都以节点 metadata 为准。
 export function buildAudioGenerationMetadata(config: AiConfig): CanvasNodeMetadata {
     return {
         model: config.model,
@@ -62,6 +69,8 @@ export function buildAudioGenerationMetadata(config: AiConfig): CanvasNodeMetada
     };
 }
 
+// 应用配置面板的参数补丁；改了 size 且节点还是空内容时，按新比例同步调整节点宽高，
+// 并平移 position 使节点中心保持不动（position 是左上角）。
 export function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {
     const safePatch = patch || {};
     const next = { ...node, metadata: { ...node.metadata, ...safePatch } };

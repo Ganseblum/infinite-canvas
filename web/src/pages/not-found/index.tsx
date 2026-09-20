@@ -2,6 +2,7 @@ import { Home } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
+/** 404 页入口：居中提示页面不存在，并提供返回首页入口。 */
 export default function NotFound() {
     const { t } = useTranslation();
     return (

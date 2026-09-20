@@ -3,13 +3,21 @@ import { animate, motion, useInView, useMotionValue, useReducedMotion, useTransf
 
 import { cn } from "@/lib/utils";
 
+// 扫光色带的默认配色。
 const DEFAULT_COLORS = ["#c679c4", "#fa3d1d", "#ffb005", "#e1e1fe", "#0358f7"];
+// 色带半宽（按容器宽度百分比）：扫光经过处显示彩色渐变，其余区域保持文字色或透明。
 const BAND_HALF = 17;
+// 扫光从视口外左侧进入、完全移出右侧结束，保证入场出场都不露边。
 const SWEEP_START = -BAND_HALF;
 const SWEEP_END = 100 + BAND_HALF;
 
+// easeInOutCubic：缓入缓出，让扫光起停更自然。
 const sweepEase = (t: number) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
 
+/**
+ * 构造扫光位置 pos 处的横向渐变背景：色带前是文字色、色带内是彩色渐变、
+ * 色带后是透明（配合 background-clip:text 实现文字随扫光逐渐显现）。
+ */
 function buildGradient(pos: number, colors: string[], textColor: string) {
     const bandStart = pos - BAND_HALF;
     const bandEnd = pos + BAND_HALF;
@@ -32,6 +40,7 @@ function buildGradient(pos: number, colors: string[], textColor: string) {
     return `linear-gradient(90deg, ${parts.join(", ")})`;
 }
 
+/** 用隐藏的克隆元素离屏测量每段文本的实际宽度，避免测量过程影响布局。 */
 function measureWidths(el: HTMLElement, texts: string[]) {
     const ghost = el.cloneNode() as HTMLElement;
     Object.assign(ghost.style, {
@@ -108,12 +117,18 @@ export interface DiaTextRevealProps extends Omit<HTMLMotionProps<"span">, "ref" 
     fixedWidth?: boolean;
 }
 
+/**
+ * 文字扫光渐显组件：一段彩色渐变色带扫过文字，经过处着色、其余处隐藏，
+ * 扫完后整体呈现 textColor。多段文本可轮播（repeat），可进视口才播放（startOnView）。
+ */
 export function DiaTextReveal({ text, colors = DEFAULT_COLORS, textColor = "var(--foreground)", duration = 1.5, delay = 0, repeat = false, repeatDelay = 0.5, startOnView = true, once = true, className, fixedWidth = false, ...props }: DiaTextRevealProps) {
     const texts = Array.isArray(text) ? text : [text];
     const isMulti = texts.length > 1;
     const prefersReducedMotion = useReducedMotion();
 
     const spanRef = useRef<HTMLSpanElement>(null);
+    // 用 ref 镜像最新 props：动画回调（animate 的 onComplete 等）闭包只创建一次，
+    // 读 ref 才能拿到当前值而不必重启动画。
     const optsRef = useRef({
         colors,
         textColor,
@@ -152,6 +167,7 @@ export function DiaTextReveal({ text, colors = DEFAULT_COLORS, textColor = "var(
         const el = spanRef.current;
         if (!el || !isMulti) return;
         setMeasuredWidths(measureWidths(el, texts));
+    // 仅在文本内容真正变化时重新测量，避免 text 数组引用变化触发无意义重测。
     }, [Array.isArray(text) ? text.join("\0") : text]);
 
     playRef.current = () => {
@@ -178,11 +194,13 @@ export function DiaTextReveal({ text, colors = DEFAULT_COLORS, textColor = "var(
     };
 
     useEffect(() => {
+        // 用户偏好减少动效时直接呈现最终态，不播扫光。
         if (prefersReducedMotion) {
             sweepPos.set(SWEEP_END);
             return;
         }
         if (startOnView && !isInView) return;
+        // once 模式下播放过就不再重播（滚出再滚回视口也不重放）。
         if (once && hasPlayedRef.current) return;
         hasPlayedRef.current = true;
         playRef.current();
@@ -193,6 +211,7 @@ export function DiaTextReveal({ text, colors = DEFAULT_COLORS, textColor = "var(
         };
     }, [isInView, startOnView, once, prefersReducedMotion, sweepPos]);
 
+    // 固定宽度模式取最宽文本，避免轮播时布局抖动；否则按当前文本宽度做补间动画。
     const fixedW = isMulti && fixedWidth && measuredWidths.length > 0 ? Math.max(...measuredWidths) : undefined;
 
     const animatedW = isMulti && !fixedWidth && measuredWidths[activeIndex] != null ? measuredWidths[activeIndex] : undefined;

@@ -51,6 +51,7 @@ export async function fetchMediaDownload(url: string, signal?: AbortSignal): Pro
     return response.blob();
 }
 
+/** 读取媒体元信息（字节数/类型/校验和），404 时返回 null。HEAD /api/v1/media/{storageKey}。 */
 export async function headMedia(storageKey: string, signal?: AbortSignal): Promise<MediaHead | null> {
     const response = await mediaFetch(mediaUrl(storageKey), { method: "HEAD", signal }, true).catch((error: unknown) => {
         if (error instanceof ApiError && error.code === "NOT_FOUND") return null;
@@ -64,6 +65,7 @@ export async function headMedia(storageKey: string, signal?: AbortSignal): Promi
     };
 }
 
+/** 拉取媒体二进制，404 返回 null。GET /api/v1/media/{storageKey}。 */
 export async function getMediaBlob(storageKey: string, signal?: AbortSignal): Promise<Blob | null> {
     const response = await mediaFetch(mediaUrl(storageKey), { method: "GET", signal }, true).catch((error: unknown) => {
         if (error instanceof ApiError && error.code === "NOT_FOUND") return null;
@@ -73,11 +75,13 @@ export async function getMediaBlob(storageKey: string, signal?: AbortSignal): Pr
     return response.blob();
 }
 
+/** 上传/覆盖媒体二进制，服务端返回规范化的 MediaObject。PUT /api/v1/media/{storageKey}。 */
 export async function putMedia(storageKey: string, blob: Blob, signal?: AbortSignal): Promise<MediaObject> {
     const response = await mediaFetch(mediaUrl(storageKey), { method: "PUT", body: blob, headers: { "Content-Type": blob.type || "application/octet-stream" }, signal }, true);
     return (await response.json()) as MediaObject;
 }
 
+/** 删除服务端媒体。DELETE /api/v1/media/{storageKey}。 */
 export async function deleteMedia(storageKey: string) {
     await mediaFetch(mediaUrl(storageKey), { method: "DELETE" }, true);
 }

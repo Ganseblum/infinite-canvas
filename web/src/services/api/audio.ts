@@ -9,6 +9,10 @@ type RequestOptions = { signal?: AbortSignal };
 
 export type GeneratedAudio = { url: string; storageKey: string; bytes: number; mimeType: string };
 
+/**
+ * 语音合成：POST /api/v1/ai/audio/speech，返回服务端落盘的音频地址与元信息。
+ * 报价过期（QUOTE_STALE）会静默重新报价一次，再次过期交给统一错误处理提示用户。
+ */
 export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<GeneratedAudio> {
     const model = (config.model || "").trim();
     if (!model) throw new Error(i18n.t("apiErrors.modelNotSupported"));

@@ -8,10 +8,15 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import type { ContextMenuState } from "@/types/canvas";
 import type { VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 
+/**
+ * 画布节点右键菜单：视频节点追加「取帧」组（首帧/末帧/当前帧），
+ * 节点菜单提供分组/取消分组/复制/删除。fixed 定位在右键坐标处。
+ */
 export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, canUngroup, onClose, onCaptureVideoFrame, onDuplicate, onGroup, onUngroup, onDelete }: { menu: ContextMenuState; canCaptureVideoFrame: boolean; canGroup?: boolean; canUngroup?: boolean; onClose: () => void; onCaptureVideoFrame: (position: VideoFramePosition) => void; onDuplicate: () => void; onGroup?: () => void; onUngroup?: () => void; onDelete: () => void }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
+    // 点击菜单外即关闭；antd 弹层（如 Tooltip）内的点击不关闭，避免交互冲突。
     useEffect(() => {
         const close = (event: PointerEvent) => {
             const target = event.target;
@@ -44,6 +49,7 @@ export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, ca
     );
 }
 
+/** 菜单项按钮：整行宽、图标 + 文字，danger 时红字。 */
 function MenuButton({ icon, label, onClick, danger = false }: { icon: ReactNode; label: string; onClick?: () => void; danger?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 

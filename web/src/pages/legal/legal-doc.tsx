@@ -1,5 +1,6 @@
 import { Alert, Tag, Typography } from "antd";
 
+/** 法务文档的单个章节：标题 + 若干占位段落。 */
 export type LegalSection = {
     heading: string;
     paragraphs: string[];

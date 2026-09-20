@@ -16,6 +16,7 @@ import { StatusAlerts } from "./components/status-alerts";
 import { UsageSection } from "./components/usage-section";
 import { useMeQuery } from "./use-me";
 
+// 右侧各区块的锚点导航配置：id 与各 section 的 DOM id 对应，key 对应文案命名空间。
 const SECTIONS = [
     { id: "profile-basics", key: "basic" },
     { id: "profile-credits", key: "credits" },
@@ -25,6 +26,9 @@ const SECTIONS = [
     { id: "profile-danger", key: "danger" },
 ] as const;
 
+/** 个人中心页入口：拉取 me 信息后按「账号卡 + 锚点导航 | 各功能区块」两栏布局，
+ * 未登录给登录引导，加载中给骨架屏。
+ */
 export default function ProfilePage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
@@ -96,6 +100,7 @@ export default function ProfilePage() {
                         </div>
                     </>
                 ) : unauthenticated || meQuery.isError ? null : (
+                    // 请求还在进行且未出错时，先用骨架屏占位。
                     <div className="mt-6 grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
                         <Skeleton active paragraph={{ rows: 5 }} />
                         <Skeleton active paragraph={{ rows: 14 }} />

@@ -20,6 +20,9 @@ function bindErrorMessage(error: unknown) {
     return getApiErrorMessage(error);
 }
 
+/** 活动中心页入口：每日签到卡片 + 邀请返点卡片（复制邀请码 / 绑定好友邀请码）。
+ * 签到或绑定成功后同步失效活动、用户、点数相关缓存。
+ */
 export default function ActivityPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -47,6 +50,7 @@ export default function ActivityPage() {
         mutationFn: () => bindInviteCode(inviteCode.trim()),
         onSuccess: async (result) => {
             message.success(
+                // 服务端按是否发放奖励区分文案：有奖励报点数，无奖励仅确认绑定。
                 result.inviteeRewardMicros > 0 ? `绑定成功，你获得 ${formatPoints(result.inviteeRewardMicros)} 点数` : "邀请码绑定成功",
             );
             setInviteCode("");

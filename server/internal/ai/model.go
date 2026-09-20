@@ -21,6 +21,7 @@ func NewModelHandler(db *gorm.DB, promotionEnabled func() bool) *ModelHandler {
 	return &ModelHandler{catalog: service.NewCatalogService(db, promotionEnabled)}
 }
 
+// List 返回平台模型目录，capability 为可选过滤参数，非法取值报 400。
 func (h *ModelHandler) List(c *gin.Context) {
 	models, err := h.catalog.ListModels(c.Request.Context(), c.Query("capability"))
 	if err != nil {

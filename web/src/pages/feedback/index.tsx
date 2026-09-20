@@ -7,11 +7,13 @@ import { useTranslation } from "react-i18next";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { FEEDBACK_CATEGORIES, closeFeedbackTicket, getFeedbackTicket, listMyFeedbackTickets, replyFeedbackTicket, createFeedbackTicket, type FeedbackTicket } from "@/services/api/feedback";
 
+/** 工单详情抽屉的数据结构：工单本体 + 时间正序的回复列表（isStaff 区分客服/用户）。 */
 type TicketDetail = {
     ticket: FeedbackTicket;
     replies: { id: string; isStaff: boolean; content: string; createdAt: string }[];
 };
 
+/** 反馈工单页入口：我的工单列表（状态筛选 + 分页）、新建工单弹窗、详情抽屉内追回复与结单。 */
 export default function FeedbackPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -30,12 +32,14 @@ export default function FeedbackPage() {
         queryFn: ({ signal }) => listMyFeedbackTickets({ page, size, status: statusFilter }, signal),
     });
 
+    // 详情查询仅在抽屉打开（detailId 存在）时发起。
     const detailQuery = useQuery({
         queryKey: ["feedback", "detail", detailId],
         queryFn: ({ signal }) => getFeedbackTicket(detailId!, signal),
         enabled: !!detailId,
     });
 
+    // 新建/回复/结单都只需让整个 feedback 缓存失效，由各查询自行重拉。
     const invalidate = () => queryClient.invalidateQueries({ queryKey: ["feedback"] });
 
     const createMutation = useMutation({
@@ -68,6 +72,7 @@ export default function FeedbackPage() {
         onError: (error) => message.error(getApiErrorMessage(error)),
     });
 
+    // 工单状态到 Tag 颜色/文案的映射；依赖 t，语言切换时重建。
     const statusTag: Record<string, { color: string; label: string }> = useMemo(
         () => ({
             open: { color: "gold", label: t("feedback.status.open") },
@@ -193,6 +198,17 @@ export default function FeedbackPage() {
     );
 }
 
+/** 抽屉内的会话视图：客服消息靠左、用户回复靠右的气泡布局，底部为回复输入与结单操作。
+ * 回复输入框内容由父级托管，避免抽屉开关时丢失草稿。
+ * @param detail 工单详情（工单本体 + 回复列表）
+ * @param replyContent 回复输入内容（受控于父级）
+ * @param onReplyChange 更新回复内容
+ * @param replying 回复请求进行中
+ * @param onReply 发送回复
+ * @param closing 结单请求进行中
+ * @param onCloseTicket 关闭（结单）工单
+ * @param statusTag 状态到 Tag 颜色/文案的映射
+ */
 function FeedbackConversation({
     detail,
     replyContent,

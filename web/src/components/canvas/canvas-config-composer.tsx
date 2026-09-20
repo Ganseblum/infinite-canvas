@@ -11,33 +11,43 @@ import type { NodeGenerationInput } from "./canvas-node-generation";
 import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
 import type { CanvasNodeData } from "@/types/canvas";
 
+/** 配置节点提示词编辑器的 props。 */
 type CanvasConfigComposerProps = {
-    nodeId: string;
-    nodes: CanvasNodeData[];
-    value: string;
-    inputs: NodeGenerationInput[];
+    nodeId: string; // 当前配置节点 id。
+    nodes: CanvasNodeData[]; // 全部节点，供引用条展示上游详情。
+    value: string; // 编辑器序列化后的文本（引用为 @[node:id] 占位符）。
+    inputs: NodeGenerationInput[]; // 可引用的上游资源输入。
     connectedNodes?: CanvasNodeData[];
     onChange: (value: string) => void;
     onClose: () => void;
-    onDisconnectReference?: (fromNodeId: string, toNodeId: string) => void;
-    onStartReferenceSelection?: (nodeId: string) => void;
+    onDisconnectReference?: (fromNodeId: string, toNodeId: string) => void; // 引用条上断开某条连线。
+    onStartReferenceSelection?: (nodeId: string) => void; // 进入点选节点的引用选择模式。
 };
 
+/** 编辑器内容 token：纯文本或一个引用节点。 */
 type Token =
     | { type: "text"; value: string }
     | { type: "reference"; nodeId: string };
 
+/** @ 提及候选菜单的激活状态。 */
 type MentionState = {
     query: string;
 };
 
+/** 引用占位符 @[node:<id>] 的匹配模式，序列化与解析共用。 */
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 
+/**
+ * 配置节点的提示词编辑器（contentEditable 富文本）。
+ * 引用以不可编辑 chip 形式嵌入，序列化回 @[node:id] 占位符；
+ * 输入 @ 唤起候选菜单（方向键/回车/Escape 操作），Backspace/Delete 整块删除 chip；
+ * 中文输入法合成期间不触发序列化，避免光标跳动。
+ */
 export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNodes = [], onChange, onClose, onDisconnectReference, onStartReferenceSelection }: CanvasConfigComposerProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
-    const composingRef = useRef(false);
+    const composingRef = useRef(false); // IME 合成中标记，合成期间跳过 input 同步。
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -50,6 +60,8 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
         return inputs.filter((input) => `${resourceLabel(input, inputs)} ${input.title} ${input.type === "group" ? "" : input.text || ""}`.toLowerCase().includes(query));
     }, [inputs, mention]);
 
+    // 外部 value 变化（含自己 onChange 的回流）时整体重建编辑器 DOM；
+    // 本组件不是聚焦敏感型（选中/光标不在此保留），重建是安全的。
     useEffect(() => {
         if (document.activeElement === editorRef.current) return;
         const editor = editorRef.current;
@@ -73,6 +85,7 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
         syncMention();
     };
 
+    // 光标前的文本以 @ 结尾时唤起候选菜单（query 为 @ 之后的半个词）。
     const syncMention = () => {
         const text = textBeforeCaret();
         const match = /@([^\s@]*)$/.exec(text);
@@ -89,6 +102,7 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
         setActiveIndex(0);
     };
 
+    // 在光标处插入引用 chip：先删掉 @ 草稿，再插 chip 与空格并复位光标。
     const insertReference = (input: NodeGenerationInput) => {
         const editor = editorRef.current;
         if (!editor) return;
@@ -175,11 +189,14 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
                         }
                         if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
                             event.preventDefault();
+                            // 等浏览器完成 DOM 变更后再序列化，读到的是最终内容。
                             requestAnimationFrame(syncFromEditor);
                             return;
                         }
+                        // 浏览器要按键后才移动光标，下一帧再计算光标前的 @ 草稿。
                         requestAnimationFrame(syncMention);
                     }}
+                    // 延迟关闭：给 chip 点击等先触发 blur 后的处理留出时间窗口。
                     onBlur={() => window.setTimeout(closeMention, 120)}
                 />
                 {mention && candidates.length ? <MentionMenu inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
@@ -190,6 +207,7 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
 
 }
 
+/** @ 提及候选菜单：portal 到编辑器下方，键盘高亮项自动滚入视野。 */
 function MentionMenu({ inputs, allInputs, activeIndex, theme, onSelect }: { inputs: NodeGenerationInput[]; allInputs: NodeGenerationInput[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (input: NodeGenerationInput) => void }) {
     const selectedRef = useRef(false);
     const activeItemRef = useRef<HTMLButtonElement | null>(null);
@@ -199,6 +217,7 @@ function MentionMenu({ inputs, allInputs, activeIndex, theme, onSelect }: { inpu
     }, [activeIndex, inputs]);
 
     const selectInput = (input: NodeGenerationInput) => {
+        // onMouseDown 与 onClick 都会触发选择，标记防止重复插入。
         if (selectedRef.current) return;
         selectedRef.current = true;
         onSelect(input);
@@ -230,6 +249,7 @@ function MentionMenu({ inputs, allInputs, activeIndex, theme, onSelect }: { inpu
     );
 }
 
+/** 引用资源的小预览：分组图标 / 图片缩略图 / 视频首帧 / 类型图标。 */
 function ResourcePreview({ input }: { input: NodeGenerationInput }) {
     if (input.type === "group") return <span className="grid size-9 shrink-0 place-items-center"><Group className="size-4" /></span>;
     if (input.type === "image" && input.image) return <img src={input.image.dataUrl} alt="" className="size-9 rounded-md object-cover" />;
@@ -242,10 +262,14 @@ function ResourcePreview({ input }: { input: NodeGenerationInput }) {
     );
 }
 
+/**
+ * 用原生 DOM 创建引用 chip：contentEditable=false 保证 chip 原子性
+ * （不会被光标拆开），图片 chip 点击可预览大图。
+ */
 function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationInput[], theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
-    wrapper.dataset.referenceNodeId = input.nodeId;
+    wrapper.dataset.referenceNodeId = input.nodeId; // 序列化时据此还原成 @[node:id]。
     wrapper.className = "mx-px inline-flex h-7 max-w-40 items-center justify-center overflow-hidden rounded-md border px-1 text-xs leading-none align-middle";
     Object.assign(wrapper.style, chipStyle(theme));
     if (input.type === "image" && input.image) {
@@ -270,6 +294,7 @@ function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationI
     return wrapper;
 }
 
+/** 编辑器 DOM → 文本：chip 还原为 @[node:id]，<br> 还原为换行，并清掉零宽字符。 */
 function serializeEditor(editor: HTMLElement) {
     return serializeNodes(editor.childNodes).replace(/\uFEFF/g, "");
 }
@@ -298,6 +323,7 @@ function removeActiveMention() {
     range.deleteContents();
 }
 
+/** 删除光标紧邻的整个 chip（Backspace 向前 / Delete 向后），返回是否命中。 */
 function deleteAdjacentReference(key: string) {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !selection.isCollapsed) return false;
@@ -313,6 +339,7 @@ function deleteAdjacentReference(key: string) {
     return true;
 }
 
+/** 找到光标位置相邻（前/后）的引用 chip 元素，跳过空白文本节点。 */
 function adjacentReferenceNode(range: Range, key: string) {
     const container = range.startContainer;
     const offset = range.startOffset;
@@ -332,6 +359,7 @@ function findReferenceSibling(node: Node, previous: boolean, includeSelf = false
     return current instanceof HTMLElement && current.dataset.referenceNodeId ? current : null;
 }
 
+/** 取光标之前到编辑器开头的文本，用于匹配 @ 草稿。 */
 function textBeforeCaret() {
     const selection = window.getSelection();
     if (!selection?.rangeCount) return "";
@@ -356,6 +384,7 @@ function placeCaretAtEnd(element: HTMLElement) {
     selection?.addRange(range);
 }
 
+/** 把 value 按引用占位符切成文本/引用 token 序列。 */
 function parseComposerTokens(value: string): Token[] {
     const tokens: Token[] = [];
     let lastIndex = 0;
@@ -369,6 +398,7 @@ function parseComposerTokens(value: string): Token[] {
     return tokens;
 }
 
+/** 资源展示名：同类型多个引用时按顺序编号（如 图片1、图片2）。 */
 function resourceLabel(input: NodeGenerationInput, inputs: NodeGenerationInput[]) {
     const sameTypeInputs = inputs.filter((item) => item.type === input.type);
     const index = Math.max(0, sameTypeInputs.findIndex((item) => item.nodeId === input.nodeId));

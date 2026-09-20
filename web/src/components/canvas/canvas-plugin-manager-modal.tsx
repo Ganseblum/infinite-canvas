@@ -9,6 +9,11 @@ import { fetchOfficialPlugins, hasUpgrade, type OfficialPluginEntry } from "@/li
 import { useThemeStore } from "@/stores/use-theme-store";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 
+/**
+ * 画布插件管理弹窗：三个 Tab——官方注册表（可安装/升级）、本地内置插件、
+ * 第三方（按 URL 安装）。所有安装/启用/升级/卸载直接调用 plugin-loader，
+ * 结果写回 plugin store；官方列表在首次打开时懒加载一次。
+ */
 export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -23,6 +28,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     const [officialError, setOfficialError] = useState<string | null>(null);
 
     const recordById = useMemo(() => new Map(plugins.map((item) => [item.id, item])), [plugins]);
+    // 本地插件无升级/卸载；第三方与官方分开归组展示。
     const localPlugins = useMemo(() => plugins.filter((item) => item.local), [plugins]);
     const thirdPartyPlugins = useMemo(() => plugins.filter((item) => !item.local && !item.official), [plugins]);
 
@@ -39,6 +45,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     }, []);
 
     // Fetch the official registry when opening the panel, but only if it has not been loaded yet.
+    // 打开弹窗时懒加载官方注册表；已有数据或上次失败（officialError）时不自动重试，避免弹窗期间反复请求。
     useEffect(() => {
         if (open && official.length === 0 && !loadingOfficial && !officialError) void loadOfficial();
     }, [open, official.length, loadingOfficial, officialError, loadOfficial]);
@@ -70,6 +77,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         }
     };
 
+    /** 按插件执行一个异步动作并统一提示成功/失败，busyId 控制行内 loading。 */
     const runOnPlugin = async (record: InstalledPlugin, action: () => Promise<void>, successText: string) => {
         setBusyId(record.id);
         try {
@@ -84,6 +92,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
 
     // Installed plugin actions: enable toggle plus update/uninstall for non-local plugins.
     // Highlight the update action when a newer remote version is available.
+    // 已安装插件的操作区：启用开关；非本地插件另有升级与卸载（二次确认）。
     const installedControls = (record: InstalledPlugin, upgradable = false) => (
         <>
             <Switch size="small" checked={record.enabled} loading={busyId === record.id} onChange={(checked) => runOnPlugin(record, () => setPluginEnabled(record, checked), t(checked ? "canvas.plugins.enabled" : "canvas.plugins.disabled"))} />
@@ -107,6 +116,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
 
     // Add a green dot at the icon's top-right corner when an update is available.
     // A card-colored box shadow separates the dot visually from the icon.
+    // 有新版本时在图标右上角加绿点，用底色描边与图标区分。
     const withUpgradeDot = (icon: ReactNode) => (
         <span className="relative inline-flex">
             {icon}
@@ -114,12 +124,14 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         </span>
     );
 
+    /** 版本号小标签。 */
     const versionTag = (version: string) => (
         <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: theme.toolbar.activeBg, color: theme.node.muted }}>
             v{version}
         </span>
     );
 
+    /** 空态提示占位。 */
     const emptyHint = (text: string) => (
         <div className="py-10 text-center text-sm" style={{ color: theme.node.muted }}>
             {text}
@@ -127,6 +139,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     );
 
     // Shared plugin row: icon, title with name and version, description, and actions.
+    // 通用插件行：图标 + 名称/版本 + 描述 + 右侧操作区。
     const row = (key: string, icon: ReactNode, name: string, version: string, subtitle: string | undefined, right: ReactNode) => (
         <div key={key} className="flex items-center gap-3 rounded-xl border px-3 py-2.5" style={{ borderColor: theme.node.stroke, background: theme.node.fill }}>
             <span className="grid size-9 shrink-0 place-items-center rounded-lg text-base" style={{ background: theme.toolbar.activeBg, color: theme.node.muted }}>
@@ -147,6 +160,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         </div>
     );
 
+    /** 官方插件 Tab：注册表列表，已安装的显示版本升级路径（旧 → 新）与操作区。 */
     const officialTab = (
         <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -195,6 +209,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
 
     const localTab = <div className="thin-scrollbar max-h-[52vh] space-y-2 overflow-auto">{localPlugins.map((record) => row(record.id, <Puzzle className="size-4" />, record.name, record.version, record.description || record.url, installedControls(record)))}</div>;
 
+    /** 第三方插件 Tab：URL 安装输入框 + 已安装的第三方插件列表。 */
     const thirdPartyTab = (
         <div className="space-y-3">
             <div className="flex gap-2">

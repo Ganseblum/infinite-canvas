@@ -134,6 +134,7 @@ func (s *SiteSettingService) CommunityEnabled() bool { return s.Bool(SettingComm
 // CheckinEnabled 签到开关与单次赠送点数。
 func (s *SiteSettingService) CheckinEnabled() bool { return s.Bool(SettingCheckinEnabled, true) }
 
+// CheckinRewardMicros 单次签到赠送点数，默认 20000 微元（0.02 元）。
 func (s *SiteSettingService) CheckinRewardMicros() int64 {
 	return s.Int64(SettingCheckinRewardMicros, 20000)
 }
@@ -141,10 +142,12 @@ func (s *SiteSettingService) CheckinRewardMicros() int64 {
 // InviteEnabled 邀请返利开关与双方赠送点数。
 func (s *SiteSettingService) InviteEnabled() bool { return s.Bool(SettingInviteEnabled, true) }
 
+// InviteRewardMicros 邀请人返利，默认 100000 微元（0.1 元）。
 func (s *SiteSettingService) InviteRewardMicros() int64 {
 	return s.Int64(SettingInviteRewardMicros, 100000)
 }
 
+// InviteeRewardMicros 被邀请人奖励，默认 50000 微元（0.05 元）。
 func (s *SiteSettingService) InviteeRewardMicros() int64 {
 	return s.Int64(SettingInviteeRewardMicros, 50000)
 }

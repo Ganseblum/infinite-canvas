@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 
 import { fetchPostList, fetchTopics, siteUrl } from "@/lib/blog-api";
 
+/** sitemap：静态页 + 全部栏目 + 分页遍历全部已发布文章（含 lastModified）。 */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrl();
   const entries: MetadataRoute.Sitemap = [
@@ -25,6 +26,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
           priority: 0.8,
         });
       }
+      // 50 页硬上限：分页异常时兜底，避免死循环抓取
       if (list.posts.length < list.size || page >= 50) break;
       page++;
     }

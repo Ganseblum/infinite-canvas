@@ -1,6 +1,9 @@
 import { mediaUrl } from "@/services/api/media";
 import type { AssetItem } from "@/services/data/types";
 
+// 素材字段取值工具：data 是服务端保留的自由键值对象，这里统一兜底空值，
+// 列表卡片、Agent 工具与导出都从这些取值函数读，避免直接戳 data 的内部键名。
+
 function dataString(asset: AssetItem, key: string) {
     const value = asset.data?.[key];
     return typeof value === "string" ? value : "";

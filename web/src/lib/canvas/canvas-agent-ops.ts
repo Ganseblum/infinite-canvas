@@ -4,6 +4,10 @@ import i18n from "@/i18n";
 import { getNodeSpec, isRegisteredNodeType } from "@/lib/canvas/node-registry";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ViewportTransform } from "@/types/canvas";
 
+/**
+ * 画布 Agent 指令集：Agent 面板与画布页（含插件宿主）共用这一组原子操作，
+ * 全部为纯函数语义——传入快照返回新快照，不直接改画布状态。
+ */
 export type CanvasAgentOp =
     | { type: "add_node"; id?: string; nodeType?: CanvasNodeTypeId; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata }
     | { type: "update_node"; id: string; patch?: Partial<CanvasNodeData>; metadata?: CanvasNodeMetadata }
@@ -14,6 +18,7 @@ export type CanvasAgentOp =
     | { type: "select_nodes"; ids: string[] }
     | { type: "run_generation"; nodeId: string; mode?: "text" | "image" | "video" | "audio"; prompt?: string };
 
+/** 画布某一时刻的完整快照：节点、连线、选中集与视口，Agent ops 的作用对象。 */
 export type CanvasAgentSnapshot = {
     projectId: string;
     title: string;
@@ -23,6 +28,7 @@ export type CanvasAgentSnapshot = {
     viewport: ViewportTransform;
 };
 
+/** 把 ops 列表汇总成「新增节点 2，删除节点 1」式的一句话，用于消息标题与日志。 */
 export function summarizeCanvasAgentOps(ops?: CanvasAgentOp[]) {
     const counts = (Array.isArray(ops) ? ops : []).reduce<Record<string, number>>((acc, op) => {
         if (!op?.type) return acc;
@@ -34,6 +40,11 @@ export function summarizeCanvasAgentOps(ops?: CanvasAgentOp[]) {
         .join("，");
 }
 
+/**
+ * 在快照上依序应用 ops 并返回新快照（纯函数，不改入参）。
+ * 关键约束：add_node 未给 type 时退回文本节点、位置缺省按 index 阶梯排布；
+ * delete_node 会级联清理相关连线与选中态；connect_nodes 幂等（重复连线忽略）。
+ */
 export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasAgentOp[]) {
     let nodes = snapshot.nodes;
     let connections = snapshot.connections;

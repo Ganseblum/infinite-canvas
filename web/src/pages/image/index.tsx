@@ -35,18 +35,22 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
 
+/** 单张生成结果：生成后即时展示的图片数据。 */
 type GeneratedImage = {
     id: string;
     dataUrl: string;
+    /** 有值表示已上传服务端，下载走取件链接；无值则用 dataUrl 直存。 */
     storageKey?: string;
     durationMs: number;
     width: number;
     height: number;
     bytes: number;
     mimeType?: string;
+    /** 服务端生成记录 id，用于提交评分反馈。 */
     generationId?: string;
 };
 
+/** 结果网格中的单个槽位：pending → success / failed。 */
 type GenerationResult = {
     id: string;
     status: "pending" | "success" | "failed";
@@ -54,6 +58,7 @@ type GenerationResult = {
     error?: string;
 };
 
+/** 生成记录条目：由服务端 GenerationItem 归一化而来，供历史面板展示与回填预览。 */
 type GenerationLog = {
     id: string;
     createdAt: number;
@@ -74,17 +79,24 @@ type GenerationLog = {
     thumbnails: string[];
 };
 
+/** 记录里留存的生成参数子集，回填预览时用于还原工作台配置。 */
 type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
+// 结果卡片操作按钮：文字过长时截断、图标不收缩，保证三列等宽。
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
 
+/**
+ * 图片生成工作台页：左侧生成历史、中间提示词与参考图、右侧结果网格。
+ * 每次生成按张数并发多路单图请求，逐张回填；生成记录只由服务端写入，页面负责展示与回填。
+ */
 export default function ImagePage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const { download: downloadMedia, isDownloading } = useMediaDownload();
     const [ratings, setRatings] = useState<Record<string, 1 | -1 | undefined>>({});
+    // 提交/取消评分；rating 为 null 表示删除已有反馈。
     const rateGeneration = async (id: string, rating: GenerationRatingValue, meta?: { labels?: string; note?: string }) => {
         if (!id) return;
         try {
@@ -102,6 +114,7 @@ export default function ImagePage() {
         }
     };
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // dragenter/leave 在子元素间移动会成对触发，用深度计数判断是否真正离开拖拽区。
     const dragDepthRef = useRef(0);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -142,6 +155,7 @@ export default function ImagePage() {
     const model = useResolvedModel(effectiveConfig.imageModel || effectiveConfig.model, "image");
     const supportsReferenceImage = modelSupportsFeature(model, "referenceImage");
     const canGenerate = Boolean(prompt.trim());
+    // 张数钳制在 1–10，防止配置里出现异常值。
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
 
     useEffect(() => {
@@ -182,6 +196,7 @@ export default function ImagePage() {
         }
     };
 
+    /** 生成主流程：校验 → 固化快照 → 并发占位 → 逐张回填 → 刷新余额与历史。 */
     const generate = async () => {
         const agentTaskId = agentTaskIdRef.current;
         agentTaskIdRef.current = undefined;
@@ -343,6 +358,7 @@ export default function ImagePage() {
         setDeleteConfirmOpen(false);
     };
 
+    /** 回填历史记录到工作台：还原提示词、参考图与生成参数，并把结果放入结果区。 */
     const previewGenerationLog = async (log: GenerationLog) => {
         setPreviewLog(log);
         setLogsOpen(false);
@@ -355,6 +371,7 @@ export default function ImagePage() {
         setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
     };
 
+    /** 固化本次生成的提示词/模型/参考图快照，避免生成过程中界面状态变化影响请求。 */
     const buildRequestSnapshot = () => {
         const text = prompt.trim();
         if (!text) {
@@ -368,6 +385,7 @@ export default function ImagePage() {
         return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
+    /** 单路生成：按是否有参考图选择 edit/generation 接口，结果按槽位回填，失败抛给调用方。 */
     const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
         const itemStartedAt = performance.now();
         try {
@@ -597,6 +615,7 @@ export default function ImagePage() {
     );
 }
 
+/** 生成参数设置区：模型选择 + 尺寸/质量/张数面板（桌面内嵌、移动端抽屉复用同一组件）。 */
 function GenerationSettings({ config, model, updateConfig }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -614,6 +633,7 @@ function GenerationSettings({ config, model, updateConfig }: { config: AiConfig;
     );
 }
 
+/** 成图卡片：预览元信息、评分与入库/加参考图/下载操作。 */
 function ResultImageCard({
     image,
     index,
@@ -668,6 +688,7 @@ function ResultImageCard({
     );
 }
 
+/** 生成中占位卡片。 */
 function PendingImageCard() {
     const { t } = useTranslation();
     return (
@@ -687,6 +708,7 @@ function PendingImageCard() {
     );
 }
 
+/** 失败卡片：展示错误信息并提供单张重试。 */
 function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => void }) {
     const { t } = useTranslation();
     return (
@@ -706,10 +728,12 @@ function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => voi
     );
 }
 
+/** 不可变更新结果数组中指定槽位的字段。 */
 function updateResultAt(results: GenerationResult[], index: number, next: Partial<GenerationResult>) {
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
 }
 
+/** 生成历史面板：列表多选删除、滚动到底自动加载下一页。 */
 function LogPanel({
     logs,
     selectedLogIds,
@@ -742,6 +766,7 @@ function LogPanel({
     useEffect(() => {
         const target = loadMoreRef.current;
         if (!target || !hasMore || loadingMore) return;
+        // 提前 120px 触发加载，减少滚动到底的等待感。
         const observer = new IntersectionObserver(
             (entries) => {
                 if (entries[0]?.isIntersecting) onLoadMore();
@@ -795,6 +820,7 @@ function LogPanel({
     );
 }
 
+/** 单条历史记录卡片：标题、缩略图、成功/失败计数与耗时。 */
 function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
     const { t } = useTranslation();
     const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
@@ -845,6 +871,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
+/** 在数组内把 index 元素与相邻 offset 位交换，越界时原样返回。 */
 function moveListItem<T>(items: T[], index: number, offset: number) {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= items.length) return items;
@@ -853,6 +880,7 @@ function moveListItem<T>(items: T[], index: number, offset: number) {
     return next;
 }
 
+/** 参考图左右调序按钮（仅一张时不显示）。 */
 function ReferenceOrderButtons({ index, total, onMove }: { index: number; total: number; onMove: (offset: number) => void }) {
     if (total <= 1) return null;
     return (
@@ -863,6 +891,7 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
     );
 }
 
+/** 服务端 GenerationItem → 页面展示用 GenerationLog；storageKey 统一转取件地址。 */
 function toGenerationLog(item: GenerationItem): GenerationLog {
     const result = (item.result || {}) as Partial<Pick<GenerationLog, "title" | "time" | "references" | "successCount" | "failCount" | "imageCount" | "size" | "quality" | "images">>;
     const config = (item.config || {}) as Partial<GenerationLogConfig>;

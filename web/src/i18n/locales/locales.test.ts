@@ -1,3 +1,4 @@
+// 语言包一致性测试：校验中英包 key 集合完全对称、顶层无重复 key。
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 

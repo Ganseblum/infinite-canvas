@@ -17,6 +17,8 @@ type CreditAccount struct {
 	UpdatedAt       time.Time `gorm:"comment:余额最近变动时间"`
 }
 
+// CreditTransaction 是点数流水表（credit_transactions）：只追加，每次余额变动一行，
+// 各桶余额恒等于该桶流水之和；BalanceAfterMicros 记变动后余额，供逐笔对账。
 type CreditTransaction struct {
 	ID                    uuid.UUID  `gorm:"type:char(36);primaryKey;comment:流水主键"`
 	UserID                uuid.UUID  `gorm:"type:char(36);index;not null;comment:流水所属用户"`
@@ -53,6 +55,8 @@ type CreditPackage struct {
 	Sort        int    `gorm:"not null;default:0;comment:展示排序，数值小的排前面"`
 }
 
+// Order 是充值订单表（orders）：价格与权益天数在建单时从档位快照到订单行，
+// 支付到账只认本地快照金额，回调与主动查询都不允许覆盖。
 type Order struct {
 	ID              uuid.UUID  `gorm:"type:char(36);primaryKey;comment:订单主键"`
 	UserID          uuid.UUID  `gorm:"type:char(36);index:idx_order_user_created,priority:1;index:idx_order_status_created,priority:1;not null;comment:下单用户"`
@@ -90,6 +94,9 @@ type ModelCatalog struct {
 	UpdatedAt         time.Time      `gorm:"comment:最近更新时间"`
 }
 
+// ModelPricePromotion 是模型限时折扣活动（model_price_promotions）：
+// MatchParams 与请求参数全等命中才应用折扣；同模型多条同时命中时
+// 按具体度与优先级只取一条，不叠加。
 type ModelPricePromotion struct {
 	ID          uuid.UUID      `gorm:"type:char(36);primaryKey;comment:促销主键"`
 	ModelID     uuid.UUID      `gorm:"type:char(36);not null;index;comment:适用的模型，指向 model_catalogs"`

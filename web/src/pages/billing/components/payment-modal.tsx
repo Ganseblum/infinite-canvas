@@ -8,9 +8,16 @@ import { formatMoney, formatPoints } from "@/lib/credits-format";
 import { getOrder, type CreateOrderResponse } from "@/services/api/orders";
 import { useAuthStore } from "@/stores/use-auth-store";
 
+// 二维码支付轮询节奏：每 3 秒查一次订单状态；超过 10 分钟未支付停止轮询，提示超时。
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
+/** 支付弹窗：按渠道支付形态分二维码、跳转、clientSecret 三种展示；
+ * 二维码形态自动轮询订单状态，检测到已支付后提示并刷新 me/点数/订单缓存。
+ * @param open 弹窗是否打开
+ * @param data createOrder 返回的订单与支付信息；为 null 时不渲染内容
+ * @param onClose 关闭弹窗回调
+ */
 export function PaymentModal({ open, data, onClose }: { open: boolean; data: CreateOrderResponse | null; onClose: () => void }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -18,17 +25,20 @@ export function PaymentModal({ open, data, onClose }: { open: boolean; data: Cre
     const copyText = useCopyText();
     const userId = useAuthStore((state) => state.user?.id ?? null);
     const [pollingExpired, setPollingExpired] = useState(false);
+    // 记录已处理过「已支付」提示的订单 id，避免轮询期间重复弹提示、重复失效缓存。
     const paidHandledRef = useRef<string | null>(null);
 
     const orderId = data?.order.id ?? "";
     const paymentType = data?.payment.type;
     const isQrcode = paymentType === "qrcode";
 
+    // 切换订单或重新打开弹窗时，重置轮询超时与已支付去重标记。
     useEffect(() => {
         setPollingExpired(false);
         paidHandledRef.current = null;
     }, [orderId, open]);
 
+    // 二维码形态起一个 10 分钟总时钟，到点后停止轮询并展示超时提示。
     useEffect(() => {
         if (!open || !isQrcode) return;
         const timer = window.setTimeout(() => setPollingExpired(true), POLL_TIMEOUT_MS);
@@ -39,6 +49,7 @@ export function PaymentModal({ open, data, onClose }: { open: boolean; data: Cre
         queryKey: ["order", userId, orderId],
         queryFn: ({ signal }) => getOrder(orderId, signal),
         enabled: open && isQrcode && !!orderId,
+        // pending 时按固定间隔轮询；已支付或已超时则停止。
         refetchInterval: (query) => {
             if (pollingExpired) return false;
             const current = query.state.data;
@@ -46,8 +57,10 @@ export function PaymentModal({ open, data, onClose }: { open: boolean; data: Cre
         },
     });
 
+    // 弹窗数据或轮询结果任一显示已支付即认为支付成功。
     const orderPaid = data?.order.status === "paid" || orderQuery.data?.status === "paid";
 
+    // 支付成功只处理一次：提示 + 刷新余额/流水/订单相关缓存。
     useEffect(() => {
         if (!open || !orderPaid || !orderId || paidHandledRef.current === orderId) return;
         paidHandledRef.current = orderId;
@@ -57,6 +70,7 @@ export function PaymentModal({ open, data, onClose }: { open: boolean; data: Cre
         void queryClient.invalidateQueries({ queryKey: ["orders", userId] });
     }, [open, orderPaid, orderId, message, queryClient, t, userId]);
 
+    // 供跳转/clientSecret 形态手动刷新：支付在服务端异步完成，用户回到页面点一下对齐状态。
     const refreshStatus = async () => {
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["orders", userId] }),

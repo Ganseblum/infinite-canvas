@@ -7,17 +7,22 @@ import { getApiErrorMessage } from "@/lib/api-error";
 import type { MeUser } from "@/services/api/account";
 import { updateProfile } from "@/services/api/account";
 
+/** 基本信息表单的取值结构。 */
 type ProfileFormValues = {
     displayName: string;
     avatarUrl?: string;
 };
 
+/** 个人中心基本信息区块：昵称、头像 URL 编辑与邮箱验证状态展示。
+ * @param user GET /me 返回的用户资料
+ */
 export function ProfileSection({ user }: { user: MeUser }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const queryClient = useQueryClient();
     const [form] = Form.useForm<ProfileFormValues>();
 
+    // 保存成功会刷新 me 查询，这里把最新资料同步回表单，避免展示陈旧值。
     useEffect(() => {
         form.setFieldsValue({ displayName: user.displayName || "", avatarUrl: user.avatarUrl || "" });
     }, [form, user.displayName, user.avatarUrl]);

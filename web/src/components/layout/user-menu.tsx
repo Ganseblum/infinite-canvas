@@ -14,6 +14,11 @@ import { useAuthStore } from "@/stores/use-auth-store";
 // 自定义角色的管理员不会在主站看到入口（宁可少给入口，也不多给）。
 const adminConsoleUrl = ADMIN_BASE_URL.replace(/\/+$/, "");
 
+/**
+ * 顶栏用户菜单：未登录渲染「登录」链接；已登录渲染头像下拉菜单
+ * （账号信息、未验证邮箱提醒、个人资料/点数/反馈入口、管理后台、退出登录）。
+ * booting 阶段不渲染，避免登录态未定时闪现「登录」按钮。
+ */
 export function UserMenu() {
     const { message } = App.useApp();
     const { t } = useTranslation();

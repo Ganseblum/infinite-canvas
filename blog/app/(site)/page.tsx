@@ -29,12 +29,18 @@ function HomeJsonLd({ total }: { total: number }) {
   return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />;
 }
 
+/**
+ * 首页（/）：Hero 头条 + 手记列表（分页 / 栏目筛选）+ 栏目索引。
+ * 数据经 fetchPostList / fetchTopics 从 Go 内网拉取，ISR 300s 兜底过期，
+ * Go 发布/下架后回调 /api/revalidate 失效 posts / topics 标签；分页与筛选由 searchParams 驱动。
+ */
 export default async function HomePage({ searchParams }: { searchParams: Promise<{ page?: string; topic?: string }> }) {
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
   const topic = params.topic;
 
   const [list, topics] = await Promise.all([fetchPostList({ page, topic }), fetchTopics()]);
+  // 列表第一条作为本期头条（Hero 引导 + 大卡），其余进网格
   const [featured, ...rest] = list.posts;
   const totalPages = Math.max(1, Math.ceil(list.total / list.size));
 

@@ -4,6 +4,12 @@ import { useTranslation } from "react-i18next";
 
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
+/**
+ * 提示词源编辑抽屉：新增或编辑一个远程 JSON 提示词源（内置源不可编辑）。
+ * 保存前校验名称必填、URL 与主页均为 http(s) 地址；draft 为 null 时不渲染。
+ * @param source 被编辑的源；null 表示新增模式（drawer 仍以 open 控制显隐）
+ * @param onSave 校验通过后回传整理过的源数据
+ */
 export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { open: boolean; source: PromptSource | null; onSave: (source: PromptSource) => void; onClose: () => void }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -79,6 +85,7 @@ export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { op
     );
 }
 
+/** 校验为合法的 http/https URL（new URL 也接受 ftp: 等协议，这里显式限定）。 */
 function isHttpUrl(value: string) {
     try {
         return ["http:", "https:"].includes(new URL(value).protocol);

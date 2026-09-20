@@ -44,6 +44,8 @@ type SaveGeneratedMediaInput struct {
 // ErrMediaQuotaExceeded 表示产物超过档位上限或单文件上限。
 var ErrMediaQuotaExceeded = errors.New("存储空间不足")
 
+// Save 写入对象并落 media_files 行与用量计数：同 storageKey 已有记录时按差额记账，
+// 事务失败时补偿删除已写对象，不留无索引的孤儿文件。
 func (s *MediaWriteService) Save(ctx context.Context, input SaveGeneratedMediaInput) (*model.MediaFile, error) {
 	if input.MaxBytes > 0 && int64(len(input.Data)) > input.MaxBytes {
 		return nil, ErrMediaQuotaExceeded

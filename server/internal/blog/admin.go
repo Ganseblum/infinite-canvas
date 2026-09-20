@@ -17,6 +17,8 @@ import (
 // 博客管理面端点（17 个）：路由与权限点在 admin 包 RegisterRoutes 注册，
 // 本文件只实现 handler。内容变更统一触发按需再验证。
 
+// postWriteReq 文章新建/更新共用的写请求；不含 status 字段，
+// 状态迁移只能走 publish/unpublish 专用端点。
 type postWriteReq struct {
 	Slug        string `json:"slug"`
 	Title       string `json:"title"`
@@ -124,6 +126,7 @@ func parseUintParam(c *gin.Context) (uint, bool) {
 	return id, true
 }
 
+// strconvAtoiUint 解析非零纯数字串；超过 1<<31 视为非法，防主键溢出。
 func strconvAtoiUint(s string) (uint, error) {
 	var n uint64
 	for _, r := range s {
@@ -319,6 +322,7 @@ func (h *AdminHandler) DeletePost(c *gin.Context) {
 
 // ========== 栏目管理 ==========
 
+// topicWriteReq 栏目新建/更新共用的写请求。
 type topicWriteReq struct {
 	Slug        string `json:"slug"`
 	Name        string `json:"name"`
@@ -327,6 +331,7 @@ type topicWriteReq struct {
 	Sort        int    `json:"sort"`
 }
 
+// validateTopicWrite 校验栏目写请求，返回规整后的字段；口径同 validatePostWrite。
 func validateTopicWrite(req topicWriteReq) (topicWriteReq, map[string]string) {
 	req.Slug, req.Name = strings.TrimSpace(req.Slug), strings.TrimSpace(req.Name)
 	req.EnName = strings.TrimSpace(req.EnName)

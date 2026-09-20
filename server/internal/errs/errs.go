@@ -1,3 +1,6 @@
+// Package errs 定义全服务统一的业务错误码：每个 AppError 绑定 HTTP 状态码与
+// 用户可读文案，Abort 负责按 { error: { code, message, ... } } 形状写出响应。
+// handler 不自行拼错误响应，一律复用包级单例或其 With* 副本。
 package errs
 
 import (

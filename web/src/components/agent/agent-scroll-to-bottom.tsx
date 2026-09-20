@@ -3,6 +3,10 @@ import { ChevronDown } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 
+/**
+ * 「回到底部」悬浮按钮：绝对定位在滚动容器底部中间，供聊天时间线与日志视图复用。
+ * 只负责展示与点击回调，跟随/置底的判断逻辑由调用方维护。
+ */
 export function AgentScrollToBottom({
     theme,
     title,

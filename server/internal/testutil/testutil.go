@@ -155,14 +155,18 @@ func LastEmailToken(t *testing.T, logs *SyncBuffer) string {
 	return rest[:end]
 }
 
+// DoJSON 发送带 JSON 体的请求，不带鉴权头。
 func DoJSON(r http.Handler, method, path string, body any, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	return DoJSONWithToken(r, method, path, body, "", cookies...)
 }
 
+// DoAuthJSON 发送带 Bearer access token 的 JSON 请求。
 func DoAuthJSON(r http.Handler, method, path, accessToken string, body any, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	return DoJSONWithToken(r, method, path, body, accessToken, cookies...)
 }
 
+// DoJSONWithToken 是 DoJSON / DoAuthJSON 的共享实现：body 非 nil 时序列化为
+// JSON 并带 Content-Type，accessToken 非空时写 Authorization 头。
 func DoJSONWithToken(r http.Handler, method, path string, body any, accessToken string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	var reader io.Reader
 	if body != nil {
@@ -369,6 +373,7 @@ func DecodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	return body
 }
 
+// DecodeItems 解析分页响应里的 items 数组；缺 items 或元素不是对象直接 Fatal。
 func DecodeItems(t *testing.T, w *httptest.ResponseRecorder) []map[string]any {
 	t.Helper()
 	body := DecodeBody(t, w)

@@ -17,6 +17,10 @@ export type ApiErrorInit = {
     phase?: string;
 };
 
+/**
+ * 前端统一的接口错误类型：任何请求失败都抛它，调用方按 code 分支处理，
+ * 展示文案走 getApiErrorMessage 三级解析。
+ */
 export class ApiError extends Error {
     readonly code: string;
     readonly status: number;

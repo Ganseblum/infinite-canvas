@@ -22,6 +22,7 @@ const (
 	BillingModeCredits   = "credits"
 	BillingModeFreeTrial = "free_trial"
 
+	// quoteTTL 报价凭证有效期：价格与促销随时可能变化，凭证必须短命。
 	quoteTTL = 5 * time.Minute
 )
 
@@ -147,6 +148,7 @@ type quoteTokenPayload struct {
 	ExpiresAt        time.Time   `json:"expiresAt"`
 }
 
+// canonicalParams 生成参数指纹：键排序后拼接再取哈希，键序不影响结果。
 func canonicalParams(params QuoteParams) string {
 	keys := make([]string, 0, len(params))
 	for key := range params {
@@ -172,6 +174,7 @@ func (s *QuoteService) sign(payload quoteTokenPayload) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw) + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 }
 
+// verify 验签并解码凭证；格式、签名、载荷任何一项不合法都归一为 ErrQuoteStale。
 func (s *QuoteService) verify(token string) (quoteTokenPayload, error) {
 	var payload quoteTokenPayload
 	rawPart, sigPart, ok := splitToken(token)

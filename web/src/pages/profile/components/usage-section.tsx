@@ -4,12 +4,18 @@ import { useTranslation } from "react-i18next";
 import { formatBytes } from "@/lib/image-utils";
 import type { PlanDetail, UsageSummary } from "@/services/api/account";
 
+/** 个人中心存储用量区块：进度条 + 单文件大小上限与保留期说明。
+ * @param plan 当前套餐的配额定义
+ * @param usage 服务端返回的用量统计，可能尚未加载
+ */
 export function UsageSection({ plan, usage }: { plan: PlanDetail; usage?: UsageSummary }) {
     const { t } = useTranslation();
     const limit = plan.storageBytes;
     const used = usage?.storageBytes ?? 0;
     const ratio = usage && limit > 0 ? used / limit : 0;
+    // 保留一位小数展示百分比，且封顶 100 防止超额时进度条溢出。
     const percent = usage ? Math.min(100, Math.round(ratio * 1000) / 10) : 0;
+    // 用量达到 90% 即视为接近上限，进度条变红并提示清理。
     const nearLimit = ratio >= 0.9;
 
     return (

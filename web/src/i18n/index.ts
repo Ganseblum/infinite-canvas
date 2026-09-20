@@ -1,3 +1,5 @@
+// i18next 初始化入口：注册中英两个语言包，默认与回退语言均为中文；
+// 用户语言选择持久化在 localStorage，同步初始化（initAsync: false）避免首帧缺翻译。
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 

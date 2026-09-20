@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { APP_VERSION } from "@/constant/env";
 
+// CHANGELOG 条目类型 → 标签颜色；中英两套写法都要识别（历史条目可能是英文）。
 function getTagColor(type: string) {
     if (type === "新增" || type === "Added") return "green";
     if (type === "修复" || type === "Fixed") return "red";
@@ -13,6 +14,7 @@ function getTagColor(type: string) {
     return "default";
 }
 
+// 类型原文 → 文案 key；未登记的类型原样展示。
 function releaseTypeLabel(type: string, t: TFunction) {
     const key = ({ 新增: "added", 修复: "fixed", 调整: "changed", 优化: "optimized", 文档: "docs" } as Record<string, string>)[type];
     return key ? t(`version.types.${key}`) : type;
@@ -23,6 +25,10 @@ type VersionReleaseModalProps = {
     style?: CSSProperties;
 };
 
+/**
+ * 版本号按钮 + 更新日志弹窗：按钮常显当前版本，发现新版本时带绿点提醒；
+ * 弹窗展示当前/最新版本与 CHANGELOG 时间线，可手动检查最新 release。
+ */
 export function VersionReleaseModal({ className, style }: VersionReleaseModalProps) {
     const { t } = useTranslation();
     const { open, setOpen, openReleaseModal, latestVersion, releases, checking, hasNewVersion, checkLatestRelease } = useVersionCheck();

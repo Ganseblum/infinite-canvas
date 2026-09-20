@@ -19,8 +19,13 @@ import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
+// 项目卡片每页数量。
 const PAGE_SIZE = 12;
 
+/**
+ * 画布项目列表页：项目卡片网格、搜索/排序/分页、新建、zip 导入与批量导出删除。
+ * 支持 Agent 引导参数（?mode=new|recent|choose），列表就绪后自动建新或打开最近项目。
+ */
 export default function CanvasPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -45,6 +50,7 @@ export default function CanvasPage() {
     const mode = searchParams.get("mode");
     const agentMode = mode === "new" || mode === "recent" || mode === "choose";
     const agentQuery = agentMode ? `?${searchParams.toString()}` : "";
+    // 进入项目详情；携带 Agent 引导 hash 时用 replace，避免列表页残留在历史记录里。
     const enterProject = (id: string) => {
         const agentHash = hasAgentUrlBootstrap(window.location.hash) ? window.location.hash : "";
         navigate(`/canvas/${id}${agentQuery}${agentHash}`, { replace: Boolean(agentHash) });
@@ -70,6 +76,7 @@ export default function CanvasPage() {
         return () => clearTimeout(timer);
     }, [clearSelectedIds, keyword]);
 
+    // Agent 引导（?mode=new/recent）：列表加载完成后自动建新画布或直接打开最近一个，只执行一次。
     useEffect(() => {
         if (autoOpenRef.current || (mode !== "new" && mode !== "recent") || !canvasesQuery.isSuccess) return;
         autoOpenRef.current = true;

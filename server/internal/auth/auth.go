@@ -1,3 +1,6 @@
+// Package auth 提供认证原语：bcrypt 密码哈希、HS256 会话与媒体令牌的签发
+// 校验、随机令牌生成与摘要。令牌校验失败只分过期与无效两类，由调用方
+// 映射为不同错误码。
 package auth
 
 import (
@@ -34,6 +37,7 @@ const (
 	MediaScope = "media"
 )
 
+// HashPassword 用 bcrypt（cost 12）哈希密码。
 func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
@@ -42,10 +46,12 @@ func HashPassword(password string) (string, error) {
 	return string(hash), nil
 }
 
+// CheckPassword 校验明文密码与 bcrypt 哈希是否匹配。
 func CheckPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
+// AccessClaims 是平台 access token 的 claims：用户 ID、角色与可选 scope。
 type AccessClaims struct {
 	Sub   string `json:"sub"`
 	Role  string `json:"role"`
@@ -53,6 +59,7 @@ type AccessClaims struct {
 	jwt.RegisteredClaims
 }
 
+// IssueAccessToken 签发 HS256 access token（15 分钟），业务接口鉴权用。
 func IssueAccessToken(user *model.PlatformUser, secret []byte) (string, error) {
 	now := time.Now()
 	claims := AccessClaims{
@@ -67,6 +74,8 @@ func IssueAccessToken(user *model.PlatformUser, secret []byte) (string, error) {
 	return token.SignedString(secret)
 }
 
+// ParseAccessToken 验签并解析 access token：过期返回 ErrTokenExpired，
+// 其余任何失败（含 scope=media 的媒体令牌）返回 ErrInvalidToken。
 func ParseAccessToken(tokenStr string, secret []byte) (*AccessClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &AccessClaims{}, func(t *jwt.Token) (interface{}, error) {
 		if t.Method != jwt.SigningMethodHS256 {
@@ -139,6 +148,7 @@ func ParseMediaToken(tokenStr string, secret []byte) (*MediaClaims, error) {
 	return claims, nil
 }
 
+// 令牌校验失败的两类口径：过期可提示重新登录，无效一律拒绝。
 var (
 	ErrTokenExpired = errors.New("token expired")
 	ErrInvalidToken = errors.New("invalid token")
@@ -155,6 +165,7 @@ func NewRefreshToken() (plain string, hash string, err error) {
 	return plain, HashToken(plain), nil
 }
 
+// HashToken 返回令牌明文的 sha256 base64url 摘要；数据库只存该哈希，泄库也无法直接登录。
 func HashToken(plain string) string {
 	sum := sha256.Sum256([]byte(plain))
 	return base64.RawURLEncoding.EncodeToString(sum[:])

@@ -11,10 +11,12 @@ import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-ang
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
+/** 从 data URL 或 mime 里推断图片扩展名，推断不出按 png。 */
 export function imageExtension(dataUrl: string) {
     return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
 }
 
+/** 音频 mime → 文件扩展名，默认 mp3。 */
 export function audioExtension(mimeType?: string) {
     if (mimeType?.includes("wav")) return "wav";
     if (mimeType?.includes("opus")) return "opus";
@@ -24,6 +26,7 @@ export function audioExtension(mimeType?: string) {
     return "mp3";
 }
 
+/** 汇总各类型参考素材的可用地址：统一优先 storageKey，缺省退回原始 url。 */
 export function generationReferenceUrls(context: { referenceImages: ReferenceImage[]; referenceVideos: Array<{ storageKey?: string; url?: string }>; referenceAudios?: Array<{ storageKey?: string; url?: string }> }) {
     return [
         ...context.referenceImages.map(referenceUrl).filter((url): url is string => Boolean(url)),
@@ -32,6 +35,7 @@ export function generationReferenceUrls(context: { referenceImages: ReferenceIma
     ];
 }
 
+// 编辑模式下还原节点保存的参考图列表；任一 reference 失效返回 null 让调用方提示重新选择。
 export function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     if (metadata.generationType !== "edit") return [];
     if (!metadata.references?.length) return null;
@@ -74,10 +78,12 @@ export function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
     }));
 }
 
+/** 张数字符串钳制到 1–15 并取整，空/非法值按 1 处理。 */
 export function getGenerationCount(count: string) {
     return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
 }
 
+/** 统计上游输入的资源构成（组节点展开后按类型计数），供生成入口展示与提示词拼装。 */
 export function getInputSummary(inputs: NodeGenerationInput[]) {
     const resources = [...new Map(inputs.flatMap((input) => (input.type === "group" ? input.children : [input])).map((input) => [input.nodeId, input])).values()];
     return {
@@ -88,6 +94,10 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
     };
 }
 
+/**
+ * 合成生成配置：节点上保存的参数优先，其次全局配置，最后默认值；
+ * 模型按能力回落解析，且 size/分辨率/时长/张数都会按目录约束钳制到合法值。
+ */
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
     const model = resolveModelForCapability(node?.metadata?.model, mode, defaultModel);
@@ -124,6 +134,7 @@ export function hasResumableVideoTask(node: CanvasNodeData) {
     return node.type === CanvasNodeType.Video && Boolean(node.metadata?.videoTaskId) && !node.metadata?.content;
 }
 
+// 页面刷新/断线后把 loading 状态复位为错误；仅有进行中的视频任务（可轮询续跑）保持原状。
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) =>
         node.metadata?.status === "loading"
@@ -143,10 +154,12 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     );
 }
 
+/** 判断错误是否为用户主动取消（AbortError 或统一取消文案）。 */
 export function isGenerationCanceled(error: unknown) {
     return error instanceof Error && (error.message === i18n.t("common.requestCanceled") || error.name === "AbortError");
 }
 
+/** 沿连线向上游 BFS，找到第一个 config 节点（重试/续跑时借它的参数重新生成）。 */
 export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const queue = connections.filter((connection) => connection.toNodeId === nodeId).map((connection) => connection.fromNodeId);
     const visited = new Set<string>();
@@ -161,6 +174,7 @@ export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], con
     return null;
 }
 
+/** 把某个图片节点包装成单张参考图（图生图「以上游结果为底图」场景），非图片节点返回空。 */
 export function sourceNodeReferenceImages(node: CanvasNodeData | null) {
     if (!node || node.type !== CanvasNodeType.Image || !node.metadata?.content) return [];
     return [
@@ -178,6 +192,7 @@ export function isAudioFile(file: File) {
     return file.type.startsWith("audio/") || /\.(mp3|wav)$/i.test(file.name);
 }
 
+/** 生成视角描述文案（如「右转 30° 俯视 15° 距离 5.0 广角」），拼进提示词让模型理解视角。 */
 export function buildAngleLabel(params: CanvasImageAngleParams) {
     const horizontal =
         params.horizontalAngle === 0

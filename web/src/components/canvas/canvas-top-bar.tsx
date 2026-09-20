@@ -11,6 +11,10 @@ import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
 
+/**
+ * 画布顶部栏：极简扁平风格悬浮层，含侧栏开关、项目菜单、标题行内编辑、
+ * 保存状态、Agent 状态与快捷键说明弹窗。所有业务动作由父层回调注入。
+ */
 export function CanvasTopBar({
     title,
     titleDraft,
@@ -36,13 +40,13 @@ export function CanvasTopBar({
     saveState,
     onRetrySave,
 }: {
-    title: string;
-    titleDraft: string;
+    title: string; // 当前项目标题（已提交值）。
+    titleDraft: string; // 标题编辑中的草稿值，由父层持有。
     isTitleEditing: boolean;
     onTitleDraftChange: (value: string) => void;
-    onStartTitleEditing: () => void;
-    onFinishTitleEditing: () => void;
-    onCancelTitleEditing: () => void;
+    onStartTitleEditing: () => void; // 双击标题进入编辑。
+    onFinishTitleEditing: () => void; // 失焦/回车/点击外部时提交。
+    onCancelTitleEditing: () => void; // Esc 取消编辑。
     canUndo: boolean;
     canRedo: boolean;
     onHome: () => void;
@@ -54,10 +58,10 @@ export function CanvasTopBar({
     onOpenPlugins: () => void;
     onUndo: () => void;
     onRedo: () => void;
-    agentOpen: boolean;
-    compactAgentStatus: { connected: boolean; enabled: boolean; activity: string };
+    agentOpen: boolean; // Agent 侧边面板是否展开（按钮高亮态）。
+    compactAgentStatus: { connected: boolean; enabled: boolean; activity: string }; // Agent 连接状态的紧凑展示信息。
     onToggleAgent: () => void;
-    saveState: CanvasSaveState;
+    saveState: CanvasSaveState; // 自动保存状态：保存中/已保存/失败。
     onRetrySave: () => void;
 }) {
     const colorTheme = useThemeStore((state) => state.theme);
@@ -68,6 +72,7 @@ export function CanvasTopBar({
     const sidePanelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
     const toggleSidePanel = useCanvasSidePanelStore((state) => state.togglePanel);
 
+    // 标题编辑中点击输入框以外的任意位置（捕获阶段）即提交。
     useEffect(() => {
         if (!isTitleEditing) return;
         const close = (event: PointerEvent) => {
@@ -79,6 +84,7 @@ export function CanvasTopBar({
 
     return (
         <>
+            {/* 悬浮顶栏本体：外层不做命中（pointer-events-none），左右两列单独恢复命中。 */}
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between pl-1 pr-4">
                 <div className="pointer-events-auto flex min-w-0 items-center gap-2">
                     <Tooltip title={sidePanelOpen ? t("canvas.collapsePanel") : t("canvas.expandPanel")}>
@@ -183,6 +189,7 @@ export function CanvasTopBar({
     );
 }
 
+/** 菜单项文案 + 右侧灰色快捷键提示。 */
 function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
     return (
         <span className="flex min-w-36 items-center justify-between gap-8">
@@ -192,6 +199,7 @@ function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
     );
 }
 
+/** Agent 连接状态指示：绿点已连接 / 黄点连接中（附带活动文案） / 灰点未启用，点击切换 Agent 面板。 */
 function CompactAgentStatus({ status, onClick }: { status: { connected: boolean; enabled: boolean; activity: string }; onClick: () => void }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
@@ -206,6 +214,7 @@ function CompactAgentStatus({ status, onClick }: { status: { connected: boolean;
     );
 }
 
+/** 自动保存状态：idle 不展示，saving/saved 弱化提示，error 变为可点击重试。 */
 function SaveStatus({ state, onRetry }: { state: CanvasSaveState; onRetry: () => void }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
@@ -225,6 +234,7 @@ function SaveStatus({ state, onRetry }: { state: CanvasSaveState; onRetry: () =>
     );
 }
 
+/** 快捷键说明行：左侧键帽序列（+ 连接），右侧功能说明。 */
 function Shortcut({ keys, value }: { keys: string[]; value: string }) {
     return (
         <div className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-6 rounded-lg px-1 py-1.5">

@@ -15,40 +15,46 @@ import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin"
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { useTranslation } from "react-i18next";
 
+/** 缩放手柄所在的四个角之一。 */
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+// 选中、连线目标、分组拖放等高亮统一使用的蓝色，不随画布主题变化。
 const selectionBlue = "#2f80ff";
 
+/**
+ * 画布节点组件的 props。
+ * 事件回调由画布页注入并负责更新 store，本组件只渲染外壳与内容，不直接改节点数据。
+ */
 type CanvasNodeProps = {
-    data: CanvasNodeData;
-    scale: number;
+    data: CanvasNodeData; // 节点数据：位置、尺寸、类型与 metadata。
+    scale: number; // 画布缩放系数，用于把屏幕位移换算回世界坐标。
     isSelected: boolean;
-    isRelated: boolean;
-    isFocusRelated: boolean;
-    isConnectionTarget: boolean;
-    isConnecting: boolean;
-    referenceSelectionState?: "target" | "disabled" | "available";
+    isRelated: boolean; // 与选中节点直接相连，弱高亮展示。
+    isFocusRelated: boolean; // 关注路径上的关联节点，与选中同等高亮。
+    isConnectionTarget: boolean; // 拖拽连线悬停时作为可连接目标。
+    isConnecting: boolean; // 正在拖拽连线，显示两侧连接点。
+    referenceSelectionState?: "target" | "disabled" | "available"; // 引用选择模式：target=等待选中的目标，disabled=不可选，available=可选。
     showPanel: boolean;
     showImageInfo: boolean;
-    mentionReferences?: CanvasResourceReference[];
-    pluginHost?: CanvasPluginHost;
-    registryVersion?: number;
+    mentionReferences?: CanvasResourceReference[]; // 文本编辑时 @ 可引用的资源候选。
+    pluginHost?: CanvasPluginHost; // 插件宿主，存在时为插件节点构建运行上下文。
+    registryVersion?: number; // 节点注册表版本号，仅用于驱动重渲染。
     renderPanel?: (node: CanvasNodeData) => ReactNode;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     groupChildCount?: number;
     isGroupDropTarget?: boolean;
     batchExpanded?: boolean;
     onMouseDown: (event: React.MouseEvent, nodeId: string) => void;
-    onSelectCapture?: (event: React.MouseEvent, nodeId: string) => void;
+    onSelectCapture?: (event: React.MouseEvent, nodeId: string) => void; // 捕获阶段触发，抢在节点内部交互之前完成选中。
     onHoverStart: (nodeId: string) => void;
     onHoverEnd: (nodeId: string) => void;
-    onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
+    onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void; // handleType 标记从输入侧还是输出侧开始连线。
     onResizeStart: (nodeId: string) => void;
-    onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onResize: (nodeId: string, width: number, height: number, position?: Position) => void; // position 为从左/上角缩放时同步移动后的节点原点。
     onResizeEnd: (nodeId: string) => void;
     onContentChange: (nodeId: string, content: string) => void;
     onTitleChange: (nodeId: string, title: string) => void;
-    onToggleBatch?: (nodeId: string) => void;
-    onSetBatchPrimary?: (nodeId: string, itemId: string) => void;
+    onToggleBatch?: (nodeId: string) => void; // 展开/收起批量子项。
+    onSetBatchPrimary?: (nodeId: string, itemId: string) => void; // 把某个子项设为主展示项。
     onDuplicateBatchImage?: (node: CanvasNodeData, imageId: string) => void;
     onDownloadBatchImage?: (node: CanvasNodeData, imageId: string) => void;
     onRetryBatchImage?: (node: CanvasNodeData, imageId: string) => void;
@@ -59,17 +65,18 @@ type CanvasNodeProps = {
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
 
+/** NodeContent 与各内置内容渲染器共享的 props。 */
 type NodeContentRendererProps = {
     node: CanvasNodeData;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     isEditingContent: boolean;
     textareaRef: React.RefObject<HTMLTextAreaElement | null>;
-    isBatchRoot: boolean;
+    isBatchRoot: boolean; // 批量生成（多图/多文本）的根节点。
     batchCount: number;
     batchExpanded: boolean;
     scale: number;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
-    pluginContext?: CanvasNodeContext | null;
+    pluginContext?: CanvasNodeContext | null; // 插件节点运行上下文，缺失时渲染「缺少插件」占位。
     onContentChange: (nodeId: string, content: string) => void;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
@@ -84,6 +91,12 @@ type NodeContentRendererProps = {
     groupChildCount: number;
 };
 
+/**
+ * 画布节点外壳组件（React.memo，仅相关 props 变化才重渲染）。
+ * 负责：按世界坐标定位节点、选中/关联态描边、标题双击编辑、四角缩放拖拽
+ * （图片/视频默认锁定宽高比，最小 220x160）、左右连线手柄、引用选择遮罩、
+ * 底部面板插槽（renderPanel）；节点内容由 NodeContent 分发渲染。
+ */
 export const CanvasNode = React.memo(function CanvasNode({
     data,
     scale,
@@ -127,6 +140,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const { t } = useTranslation();
     const [hovered, setHovered] = useState(false);
     const definition = getNodeDefinition(data.type);
+    // 插件节点上下文随节点数据/主题/缩放实时重建，供插件内容读取最新状态。
     const pluginContext = useMemo<CanvasNodeContext | null>(() => (pluginHost ? buildNodeContext(pluginHost, data, theme, scale, isSelected) : null), [pluginHost, data, theme, scale, isSelected]);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -135,19 +149,23 @@ export const CanvasNode = React.memo(function CanvasNode({
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
     const isGroup = data.type === CanvasNodeType.Group;
+    // 批量生成的子项数量（图片取 images、文本取 texts），>1 时按批次根节点渲染。
     const batchCount = data.type === CanvasNodeType.Image ? data.metadata?.images?.length || 0 : data.type === CanvasNodeType.Text ? data.metadata?.texts?.length || 0 : 0;
     const isBatchRoot = batchCount > 1;
     // Nodes with the interaction/move toggle ignore content pointer events in move mode and allow interaction in interactive mode.
     // forceInteractive states such as editing stay interactive, as do empty nodes so their upload and generation actions remain usable.
+    // 支持「交互/移动」开关的节点：移动模式下内容不响应指针，交互模式下恢复；编辑等强制交互态与空节点始终可交互。
     const supportsInteractionToggle = Boolean(definition?.interactionToggle);
     const forceInteractive = supportsInteractionToggle ? Boolean(definition?.forceInteractive?.(data)) : false;
     const contentInteractive = !supportsInteractionToggle || forceInteractive || !data.metadata?.content ? true : Boolean(data.metadata?.interactive);
     // Transparent nodes such as SVGs blend into the canvas while retaining outlines for selected or related states.
+    // 透明背景节点（如 SVG）：融入画布，仅保留选中/关联态的描边。
     const transparentBg = Boolean(definition?.transparentBackground);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const imageBorderColor = isActive ? selectionBlue : isRelated ? theme.node.muted : "transparent";
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
+    // 缩放拖拽的起点数据放 ref 里，mousemove 高频更新不会触发重渲染。
     const resizeRef = useRef({
         isResizing: false,
         corner: "bottom-right" as ResizeCorner,
@@ -178,6 +196,7 @@ export const CanvasNode = React.memo(function CanvasNode({
         if (title !== data.title) onTitleChange(data.id, title);
     }, [data.id, data.title, onTitleChange, t, titleDraft]);
 
+    // 标题编辑中点击输入框以外的任意位置（捕获阶段）即结束编辑。
     useEffect(() => {
         if (!isEditingTitle) return;
         const handleOutsidePointerDown = (event: PointerEvent) => {
@@ -193,6 +212,7 @@ export const CanvasNode = React.memo(function CanvasNode({
         const textarea = textareaRef.current;
         if (!textarea) return;
 
+        // 文本内容滚动时阻止滚轮冒泡，避免同时缩放画布。
         const handleWheel = (event: WheelEvent) => event.stopPropagation();
         textarea.addEventListener("wheel", handleWheel, { passive: false });
         return () => textarea.removeEventListener("wheel", handleWheel);
@@ -205,6 +225,7 @@ export const CanvasNode = React.memo(function CanvasNode({
         textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
     }, [isEditingContent]);
 
+    // 内容编辑中点击 textarea 以外的位置（捕获阶段）即退出编辑。
     useEffect(() => {
         if (!isEditingContent) return;
 
@@ -220,13 +241,14 @@ export const CanvasNode = React.memo(function CanvasNode({
         return () => window.removeEventListener("pointerdown", handleOutsidePointerDown, true);
     }, [isEditingContent]);
 
+    // 拖拽缩放：屏幕位移除以 scale 换算回世界坐标；从左/上角拖动时按新尺寸平移原点，保持对边不动。
     const handleResizeMove = useCallback(
         (event: MouseEvent) => {
             if (!resizeRef.current.isResizing) return;
 
             const dx = (event.clientX - resizeRef.current.startX) / scale;
             const dy = (event.clientY - resizeRef.current.startY) / scale;
-            const minWidth = 220;
+            const minWidth = 220; // 节点最小尺寸，避免缩到无法操作。
             const minHeight = 160;
             const startRight = resizeRef.current.startLeft + resizeRef.current.startWidth;
             const startBottom = resizeRef.current.startTop + resizeRef.current.startHeight;
@@ -236,6 +258,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             const rawHeight = Math.max(minHeight, resizeRef.current.startHeight + (fromTop ? -dy : dy));
             let width = rawWidth;
             let height = rawHeight;
+            // 锁定比例：以位移更大的轴为准推算另一轴，再夹回最小尺寸。
             if (resizeRef.current.keepRatio) {
                 const ratio = resizeRef.current.ratio;
                 if (Math.abs(dx) >= Math.abs(dy)) {
@@ -281,6 +304,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             startTop: data.position.y,
             startWidth: data.width,
             startHeight: data.height,
+            // 图片默认锁比例（除非开启自由变形），视频始终锁比例，插件节点按定义声明。
             keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video || Boolean(definition?.keepAspectRatio?.(data)),
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
         };
@@ -322,6 +346,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 else onContextMenu(event, data.id);
             }}
         >
+            {/* 顶部标题条：仅选中/悬停/编辑标题时出现，双击进入重命名。 */}
             {!referenceSelectionState && (isSelected || hovered || isEditingTitle) && (
                 <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     {isEditingTitle ? (
@@ -358,6 +383,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </div>
             )}
 
+            {/* 节点主体：背景/描边/阴影随状态变化；双击按类型触发查看图片或进入文本编辑。 */}
             <div
                 className="relative h-full w-full overflow-visible rounded-3xl border-2"
                 style={{
@@ -437,20 +463,27 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </div>
                 ) : null}
 
-                {!referenceSelectionState ? <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} /> : null}
+                {/* 四角缩放手柄（透明热区），引用选择模式下隐藏。 */}
+            {!referenceSelectionState ? <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} /> : null}
                 {!referenceSelectionState ? <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} /> : null}
                 {!referenceSelectionState ? <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} /> : null}
                 {!referenceSelectionState ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
             </div>
 
+            {/* 左右连线手柄：左侧固定为输入端；右侧是否输出由节点定义决定（Config 节点没有输出端）。 */}
             {!referenceSelectionState && !isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!referenceSelectionState && (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? <ConnectionHandleDot side="right" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
+            {/* 节点下方面板插槽：内容由父层 renderPanel 提供（配置/生成面板）。 */}
             {showPanel && !isGroup && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[600px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>
     );
 });
 
+/**
+ * 节点内容分发：按优先级选择渲染器——Config 自定义渲染、批量图片根、批量文本、
+ * 加载中、错误态、内置类型渲染器，最后是插件内容或「缺少插件」占位。
+ */
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot && props.node.type === CanvasNodeType.Image) return <ImageNodeContent {...props} />;
@@ -470,6 +503,7 @@ function NodeContent(props: NodeContentRendererProps) {
     return <MissingPluginContent theme={props.theme} type={props.node.type} />;
 }
 
+// 内置节点类型 → 内容渲染器映射表。
 const nodeContentRenderers = {
     [CanvasNodeType.Text]: TextContent,
     [CanvasNodeType.Image]: ImageNodeContent,
@@ -479,6 +513,7 @@ const nodeContentRenderers = {
     [CanvasNodeType.Group]: GroupNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
+/** 分组节点内容：只显示标题与子节点数量，子节点仍画在画布上。 */
 function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererProps) {
     const { t } = useTranslation();
     return (
@@ -494,6 +529,7 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
     );
 }
 
+/** 生成中占位：旋转圈 + 「生成中」文案。 */
 function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
     const { t } = useTranslation();
     return (
@@ -504,6 +540,7 @@ function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
     );
 }
 
+/** 生成失败占位：错误详情 + 重试按钮。 */
 function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
     const { t } = useTranslation();
     return (
@@ -526,6 +563,7 @@ function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "
     );
 }
 
+/** 插件缺失占位：类型未注册时渲染提示卡片。 */
 function MissingPluginContent({ theme, type }: Pick<NodeContentRendererProps, "theme"> & { type: string }) {
     const { t } = useTranslation();
     return (
@@ -537,6 +575,7 @@ function MissingPluginContent({ theme, type }: Pick<NodeContentRendererProps, "t
     );
 }
 
+/** 文本节点内容：编辑态用 @ 引用输入框，展示态滚动显示主文本；批量根可展开子文本卡片。 */
 function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, batchExpanded, onContentChange, onStopEditing, onToggleBatch, onSetBatchPrimary }: NodeContentRendererProps) {
     const { t } = useTranslation();
     const fontSize = node.metadata?.fontSize || 14;
@@ -607,12 +646,17 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
     );
 }
 
+/**
+ * 批量文本展开后的子卡片。
+ * 布局：每行最多 4 张，主文本占最后一格，子卡片按序填满其余格子并向上展开。
+ */
 function ExpandedTextCard({ node, text, index, onSetPrimary }: { node: CanvasNodeData; text: CanvasNodeText; index: number; onSetPrimary: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const count = node.metadata?.texts?.length || 0;
     const columns = Math.min(count, 4);
     const rows = Math.ceil(count / columns);
+    // 主文本固定占最后一格（rootSlot），子卡片序号越过该格时后移一位。
     const rootSlot = (rows - 1) * columns;
     const slot = index >= rootSlot ? index + 1 : index;
     const x = (slot % columns) * (node.width + 18);
@@ -655,6 +699,7 @@ function ExpandedTextCard({ node, text, index, onSetPrimary }: { node: CanvasNod
     );
 }
 
+/** 文本批次子槽位状态：加载中转圈、失败显示错误详情、空槽提示暂无内容。 */
 function TextSlotStatus({ text }: { text: CanvasNodeText }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -668,6 +713,7 @@ function TextSlotStatus({ text }: { text: CanvasNodeText }) {
     );
 }
 
+/** 图片节点内容：无图且非批量根显示空态，否则进入批量图片渲染。 */
 function ImageNodeContent(props: NodeContentRendererProps) {
     if (!props.node.metadata?.content && !props.isBatchRoot) return <EmptyImageContent {...props} />;
 
@@ -687,6 +733,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
     );
 }
 
+/** 空图片节点占位。 */
 function EmptyImageContent({ theme }: NodeContentRendererProps) {
     const { t } = useTranslation();
     return (
@@ -699,6 +746,7 @@ function EmptyImageContent({ theme }: NodeContentRendererProps) {
     );
 }
 
+/** 视频节点内容：有内容用原生 video 播放，否则显示空态。 */
 function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
     const { t } = useTranslation();
     if (!node.metadata?.content)
@@ -711,6 +759,7 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-video={node.id} data-canvas-no-zoom />;
 }
 
+/** 音频节点内容：标题行 + 原生 audio 播放控件。 */
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
     const { t } = useTranslation();
     if (!node.metadata?.content)
@@ -731,6 +780,10 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
     );
 }
 
+/**
+ * 图片节点渲染：主图优先取 WebP 本地预览（后台按需生成）；
+ * 批量根可展开子图卡片，右上角切换展开/收起，悬浮出现下载等操作。
+ */
 function ImageContent({
     node,
     scale,
@@ -824,6 +877,7 @@ function ImageContent({
     );
 }
 
+/** 批量图片展开后的子卡片：格子布局与 ExpandedTextCard 相同，悬浮提供下载/复制/设为主图。 */
 function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, onDuplicate, onDownload, onRetry, onDelete }: { node: CanvasNodeData; image: CanvasNodeImage; index: number; scale: number; onView: () => void; onSetPrimary: () => void; onDuplicate: () => void; onDownload: () => void; onRetry: () => void; onDelete: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -896,6 +950,7 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
     );
 }
 
+/** 批次失败槽位的重试/删除操作，placement 决定靠左还是靠右。 */
 function BatchImageFailureActions({ placement, onRetry, onDelete }: { placement: "left" | "right"; onRetry: () => void; onDelete: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -912,6 +967,7 @@ function BatchImageFailureActions({ placement, onRetry, onDelete }: { placement:
     );
 }
 
+/** 图片槽位状态：失败显示错误详情，否则显示生成中转圈。 */
 function ImageSlotStatus({ image }: { image?: CanvasNodeImage }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -924,6 +980,7 @@ function ImageSlotStatus({ image }: { image?: CanvasNodeImage }) {
     );
 }
 
+/** 图片信息条：节点右下角展示原始尺寸与文件大小。 */
 function ImageInfoBar({ node }: { node: CanvasNodeData }) {
     const width = Math.round(node.metadata?.naturalWidth || node.width);
     const height = Math.round(node.metadata?.naturalHeight || node.height);
@@ -938,6 +995,7 @@ function ImageInfoBar({ node }: { node: CanvasNodeData }) {
     );
 }
 
+/** 批次根的纸叠外框：主内容下方叠最多 3 层卡片营造堆叠感，展开子项后隐藏。 */
 function BatchFrame({ batchCount, batchExpanded, children }: { batchCount: number; batchExpanded: boolean; children: ReactNode }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchRoot = batchCount > 1;
@@ -965,6 +1023,7 @@ function BatchFrame({ batchCount, batchExpanded, children }: { batchCount: numbe
         </div>
     );
 }
+/** 缩放手柄：无视觉的透明热区，按角位定位并显示对应方向的缩放光标。 */
 function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; onMouseDown: (event: React.MouseEvent, corner: ResizeCorner) => void }) {
     const positionClass = {
         "top-left": "-left-[14px] -top-[14px] cursor-nwse-resize",
@@ -976,6 +1035,7 @@ function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; onMouseDo
     return <div className={`absolute z-50 size-7 ${positionClass}`} onMouseDown={(event) => onMouseDown(event, corner)} />;
 }
 
+/** 连线手柄：12x12 大热区内一个小圆点，仅悬停/选中/连线时可交互。 */
 function ConnectionHandleDot({ side, visible, onMouseDown }: { side: "left" | "right"; visible: boolean; onMouseDown: (event: React.MouseEvent) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 

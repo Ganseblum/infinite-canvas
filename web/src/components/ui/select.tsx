@@ -4,12 +4,14 @@ import { Select as SelectPrimitive } from "radix-ui"
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
+/** 下拉选择器根组件：仅透传给 Radix Select.Root，控制选中值与受控状态。 */
 function Select({
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />
 }
 
+/** 选项分组容器：内部通常配合 SelectLabel 使用。 */
 function SelectGroup({
   className,
   ...props
@@ -23,12 +25,16 @@ function SelectGroup({
   )
 }
 
+/** 选中值展示位：Radix 会把当前选中项文本渲染进来，未选中时显示 placeholder。 */
 function SelectValue({
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Value>) {
   return <SelectPrimitive.Value data-slot="select-value" {...props} />
 }
 
+/**
+ * 触发器按钮：展示当前选中值，点击展开下拉面板。
+ */
 function SelectTrigger({
   className,
   size = "default",
@@ -36,7 +42,9 @@ function SelectTrigger({
   children,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Trigger> & {
+  /** 触发器高度档位：sm 用于工具栏等紧凑场景。 */
   size?: "sm" | "default"
+  /** 隐藏右侧下拉箭头：在自定义触发器内容已带图标时使用。 */
   hideChevron?: boolean
 }) {
   return (
@@ -59,6 +67,10 @@ function SelectTrigger({
   )
 }
 
+/**
+ * 下拉面板内容：默认 item-aligned（面板锚定在触发器上、宽度自适应），
+ * 传 position="popper" 时浮层脱离触发器、按视口翻转，并带动效位移。
+ */
 function SelectContent({
   className,
   children,
@@ -92,6 +104,7 @@ function SelectContent({
   )
 }
 
+/** 分组标题文字。 */
 function SelectLabel({
   className,
   ...props
@@ -105,6 +118,7 @@ function SelectLabel({
   )
 }
 
+/** 单个选项：右侧渲染选中对勾指示器，文字由 SelectPrimitive.ItemText 输出。 */
 function SelectItem({
   className,
   children,
@@ -129,6 +143,7 @@ function SelectItem({
   )
 }
 
+/** 选项之间的分隔线。 */
 function SelectSeparator({
   className,
   ...props
@@ -142,6 +157,7 @@ function SelectSeparator({
   )
 }
 
+/** 面板顶部滚动提示按钮：仅在还有上方内容可滚时由 Radix 自动显示。 */
 function SelectScrollUpButton({
   className,
   ...props
@@ -161,6 +177,7 @@ function SelectScrollUpButton({
   )
 }
 
+/** 面板底部滚动提示按钮：仅在还有下方内容可滚时由 Radix 自动显示。 */
 function SelectScrollDownButton({
   className,
   ...props

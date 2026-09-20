@@ -15,6 +15,8 @@ import { getAntThemeConfig } from "@/lib/app-theme";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+// 查询全局默认：数据 30s 内视为新鲜不重拉；失败不自动重试（请求多是用户显式触发的生成/列表操作）；
+// 窗口重新聚焦不刷新，避免来回切窗口打断本地优先的体验。
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
@@ -29,6 +31,10 @@ const queryClient = new QueryClient({
 // 避免 A 登出后 B 登录仍看到 A 的邮箱、点数、订单、画布与素材。只清这些键，公共数据（档位、模型、提示词等）缓存不受影响。
 const USER_SCOPED_QUERY_KEY_PREFIXES = [["me"], ["credits"], ["orders"], ["order"], ["canvases"], ["canvas"], ["assets"], ["generations"]];
 
+/**
+ * 应用全局 Provider 壳：antd 主题/语言、Pro 组件暗色、React Query 与客户端初始化。
+ * 额外负责账号切换时的查询缓存清理（见 USER_SCOPED_QUERY_KEY_PREFIXES）。
+ */
 export function AppProviders({ children }: { children: ReactNode }) {
     const { i18n, t } = useTranslation();
     const theme = useThemeStore((state) => state.theme);

@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { localForageStorage } from "@/lib/localforage-storage";
 
+/** 已安装插件记录：source 缓存插件代码供离线启用，url 保留安装来源供升级重取。 */
 export type InstalledPlugin = {
     id: string;
     name: string;
@@ -23,6 +24,11 @@ type PluginStore = {
     remove: (id: string) => void;
 };
 
+/**
+ * 插件管理 store：管已安装/内置发现的插件清单与启停状态，
+ * 插件管理页读写，plugin-loader 启动时据此加载。
+ * persist 到 IndexedDB（localforage，键 infinite-canvas:plugin_store），含插件源码缓存。
+ */
 export const usePluginStore = create<PluginStore>()(
     persist(
         (set) => ({

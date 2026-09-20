@@ -5,6 +5,10 @@ import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import i18n from "@/i18n";
 import type { PromptSource } from "./prompt-source-presets";
 
+// 提示词聚合层：把各提示词源的数据拉取、缓存（IndexedDB，TTL 1 小时）、
+// 关键词/分类/标签过滤与分页收敛成统一接口。提示词数据全部来自浏览器侧拉取，
+// 不经过后端；「源状态」也按本地缓存记录。
+
 export type Prompt = RawPrompt & {
     sourceId: string;
     category: string;
@@ -136,6 +140,7 @@ async function getAllPrompts(): Promise<Prompt[]> {
     return settled.flat();
 }
 
+/** 聚合全部启用源的提示词并按条件过滤分页；tags 从「未按标签过滤」的全集里收集。 */
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
     const items = await getAllPrompts();
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -153,12 +158,14 @@ export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROM
     };
 }
 
+/** 读取单个源的提示词（走缓存，过期后台刷新）。 */
 export async function fetchSourcePrompts(sourceId: string): Promise<Prompt[]> {
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
     if (!source) throw new Error(i18n.t("prompts.sourceMissing"));
     return getSourcePrompts(source);
 }
 
+/** 强制刷新单个源，失败抛最近一次错误。 */
 export async function refreshSource(sourceId: string): Promise<PromptSourceRefreshResult> {
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
     if (!source) throw new Error(i18n.t("prompts.sourceMissing"));
@@ -167,11 +174,13 @@ export async function refreshSource(sourceId: string): Promise<PromptSourceRefre
     return result;
 }
 
+/** 刷新全部启用源并汇总成功/失败数量。 */
 export async function refreshAllSources(): Promise<PromptSourceRefreshSummary> {
     const results = await Promise.all(enabledSources().map(getOrStartRefresh));
     return summarizeRefresh(results);
 }
 
+/** 只刷新「到期」的源：上次成功已超过 maxAgeMs、上次失败或源的配置有变更。 */
 export async function refreshDueSources(maxAgeMs: number): Promise<PromptSourceRefreshSummary> {
     const sources = await Promise.all(
         enabledSources().map(async (source) => {
@@ -184,6 +193,7 @@ export async function refreshDueSources(maxAgeMs: number): Promise<PromptSourceR
     return summarizeRefresh(results);
 }
 
+/** 各源的状态快照（条数/最近成功时间/最近错误），设置页展示用。 */
 export async function fetchPromptSourceStatuses(): Promise<Record<string, PromptSourceStatus>> {
     const entries = await Promise.all(
         usePromptSourceStore.getState().sources.map(async (source) => {

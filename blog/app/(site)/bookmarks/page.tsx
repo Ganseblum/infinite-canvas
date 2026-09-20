@@ -6,6 +6,10 @@ import type { BlogPost } from "@/lib/blog-api";
 import { authFetch } from "@/lib/auth-client";
 
 // 我的收藏：登录后可见自己的收藏列表（401 提示登录）。纯 client 页。
+/**
+ * 收藏页三态：unauthorized（401）引导登录、posts === null 加载中、其余渲染收藏列表。
+ * 纯 client 页，只在挂载后经同域代理拉一次自己的收藏，不做翻页与自动刷新。
+ */
 export default function BookmarksPage() {
   const [posts, setPosts] = useState<BlogPost[] | null>(null);
   const [total, setTotal] = useState(0);

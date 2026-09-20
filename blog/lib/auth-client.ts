@@ -2,6 +2,7 @@
 
 // 博客侧登录态：accessToken 存 localStorage，互动请求带 Bearer 头。
 // 会话与主应用同一套 Go 认证域；博客子域通过同域代理登录，cookie 也会落在博客域。
+// localStorage 在 SSR / 隐私模式下访问会抛异常，所有读写都包 try/catch 静默降级。
 const KEY = "blog-access-token";
 
 export function getToken(): string | null {

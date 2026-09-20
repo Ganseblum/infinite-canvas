@@ -30,6 +30,7 @@ func NewOpenAI(baseURL, apiKey string, client *http.Client) *OpenAIProvider {
 	return &OpenAIProvider{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, Client: client}
 }
 
+// endpoint 已带 /v1 或 /v1beta 后缀时原样拼接，否则补 /v1（params.go 头部说明的刻意修正）。
 func (p *OpenAIProvider) endpoint(path string) string {
 	base := p.BaseURL
 	if strings.HasSuffix(base, "/v1") || strings.HasSuffix(base, "/v1beta") {
@@ -47,6 +48,7 @@ func (p *OpenAIProvider) newRequest(ctx context.Context, method, url string, bod
 	return req, nil
 }
 
+// doJSON 统一发 JSON 请求：响应体截断到 64MB 防异常上游撑爆内存，非 2xx 归一成 ErrUpstream。
 func (p *OpenAIProvider) doJSON(ctx context.Context, method, path string, payload any) ([]byte, error) {
 	var body io.Reader
 	if payload != nil {
@@ -873,6 +875,8 @@ func newSSEReader(source io.Reader) *sseReader {
 	return &sseReader{reader: &stringsReader{source: source}}
 }
 
+// Next 返回下一个 data 行及其所属 event 名。SSE 以空行分隔事件，event 名只对紧随其后的
+// data 行生效，因此遇到空行要重置，避免上一事件的 event 名串到无 event 前缀的数据行。
 func (r *sseReader) Next() (string, string, error) {
 	for {
 		line, err := r.readLine()

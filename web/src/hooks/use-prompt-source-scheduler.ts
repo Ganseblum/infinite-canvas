@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { refreshDueSources } from "@/services/api/prompts";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 
+// 轮询周期：每分钟检查一次是否有源到期需要刷新，实际刷新频率由源的 intervalMinutes 决定。
 const CHECK_INTERVAL_MS = 60_000;
 
 /** Periodically update only the sources whose last successful refresh is due. */

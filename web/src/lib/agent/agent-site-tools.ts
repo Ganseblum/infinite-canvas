@@ -15,6 +15,10 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 // Execute site-level Agent tools in the browser: canvas lists, workbench generation, prompt search, and asset operations.
 // Canvas and asset data now live on the server, so these tools call the resource clients directly.
 
+/**
+ * 站内 Agent 工具定义：画布列表、生成状态、工作台图像/视频配置与生成、
+ * 提示词搜索、素材查询与新增。数据在服务端，实现直接调用对应资源客户端。
+ */
 export const SITE_TOOL_NAMES = ["canvas_list_projects", "generation_get_status", "workbench_image_get_config", "workbench_image_generate", "workbench_video_get_config", "workbench_video_generate", "prompts_search", "assets_list", "assets_add"] as const;
 
 export type SiteToolName = (typeof SITE_TOOL_NAMES)[number];
@@ -27,6 +31,7 @@ function siteText(key: string, options?: Record<string, unknown>) {
     return i18n.t(`agent.siteTools.${key}`, options);
 }
 
+// 工具面板标签按需 i18n，用 getter 保持响应语言切换。
 export const SITE_TOOL_LABELS: Record<SiteToolName, string> = {
     get canvas_list_projects() {
         return siteText("canvasList");
@@ -75,6 +80,11 @@ type GenerationStatusItem = {
     error?: string;
 };
 
+/**
+ * 执行一个站内工具并把结果序列化成 Agent 可读的 JSON。
+ * @param navigate 路由跳转句柄：工作台生成类工具会先导航到对应页面再派发命令。
+ * @param context.canvasSnapshot 当前画布快照，生成状态工具据此汇报节点级进度。
+ */
 export async function runSiteTool(name: SiteToolName, input: SiteToolInput, navigate: NavigateFunction, context: SiteToolContext = {}): Promise<unknown> {
     switch (name) {
         case "canvas_list_projects":

@@ -17,6 +17,7 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
+/** 全站根布局：顶栏 / 页脚包裹所有路由，各页 head 由静态 metadata 或 generateMetadata 提供。 */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   // 主题防闪（FOUC）：渲染前按 localStorage > 系统偏好落 data-theme，暗色为默认。
   const themeInit = `(function(){try{var t=localStorage.getItem("blog-theme");if(!t){t=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();`;

@@ -34,6 +34,7 @@ const SECTIONS: LegalSection[] = [
     },
 ];
 
+/** 服务条款页入口：把约定章节交给共用法务骨架渲染。 */
 export default function TermsPage() {
     return <LegalDoc title="服务条款" sections={SECTIONS} />;
 }

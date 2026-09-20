@@ -1,5 +1,6 @@
 import { Boxes, CreditCard, FileText, ImagePlus, Images, Maximize2, Settings2, Video, Users, CalendarCheck } from "lucide-react";
 
+// 顶部导航的工具入口清单：slug 对应路由路径与 i18n 文案键，顺序即展示顺序。
 export const navigationTools = [
     {
         slug: "canvas",

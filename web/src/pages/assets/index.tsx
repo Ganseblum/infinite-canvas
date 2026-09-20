@@ -20,6 +20,7 @@ import { uploadImage } from "@/services/media-ingest";
 import { cn } from "@/lib/utils";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 
+/** 素材新建/编辑表单的取值结构：文本素材用 content/coverUrl，图片素材走 imageDraft。 */
 type AssetFormValues = {
     kind: AssetKind;
     title: string;
@@ -30,11 +31,17 @@ type AssetFormValues = {
     content?: string;
 };
 
+/** 表单里已选图片的草稿：上传成功后的预览与落库所需元信息；null 表示未选择。 */
 type ImageDraft = { url: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } | null;
 
+// 类型筛选可选项；「all」表示不过滤。
 const kindOptions = ["all", "text", "image", "video"] as const;
+// 分页大小可选项。
 const PAGE_SIZES = [10, 20, 50, 100];
 
+/** 「我的素材」页入口：关键字/类型/标签筛选的网格列表 + 新建/编辑弹窗 + 详情抽屉 +
+ * 导入导出 zip + 发布到社区。筛选条件全部交给服务端查询。
+ */
 export default function AssetsPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -44,6 +51,7 @@ export default function AssetsPage() {
     const [form] = Form.useForm<AssetFormValues>();
     const [publishForm] = Form.useForm<{ title: string; description: string; tags: string }>();
     const [publishAsset, setPublishAsset] = useState<AssetItem | null>(null);
+    // 复刻来源：从工作台通过 ?remix= 带过来的原作品信息，发布时随作品透传。
     const [remixSource, setRemixSourceState] = useState<RemixSource | null>(null);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
@@ -108,6 +116,7 @@ export default function AssetsPage() {
     const saveAsset = async () => {
         const values = await form.validateFields();
         const data: Record<string, unknown> = { source: values.source?.trim(), note: values.note?.trim() };
+        // 文本素材带正文与可选封面；图片素材必须先上传得到 imageDraft，再写尺寸与 MIME。
         if (values.kind === "text") {
             data.content = (values.content || "").trim();
             const cover = values.coverUrl?.trim();
@@ -120,6 +129,7 @@ export default function AssetsPage() {
             data.width = imageDraft.width;
             data.height = imageDraft.height;
             data.mimeType = imageDraft.mimeType;
+            // 没有 storageKey 说明是旧数据（外链 url），保留原始 url 字段。
             if (!imageDraft.storageKey) data.url = imageDraft.url;
         }
         const payload = { kind: values.kind, title: values.title.trim(), tags: values.tags || [], storageKey: values.kind === "text" ? undefined : imageDraft?.storageKey, bytes: values.kind === "text" ? 0 : imageDraft?.bytes || 0, data };
@@ -142,6 +152,7 @@ export default function AssetsPage() {
     const readImageFile = async (file?: File) => {
         if (!file || !file.type.startsWith("image/")) return;
         try {
+            // 选图后立即上传，拿到 storageKey 与尺寸再进草稿；标题为空时用文件名兜底。
             const image = await uploadImage(file);
             setImageDraft({ url: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType });
             if (!form.getFieldValue("title")) form.setFieldValue("title", file.name);
@@ -157,6 +168,7 @@ export default function AssetsPage() {
 
     const downloadAsset = async (asset: AssetItem) => {
         if (asset.kind === "text") return;
+        // 从 MIME 推断扩展名（去掉 "+xml" 之类的后缀），推断不出时按类型兜底。
         const ext = assetMimeType(asset).split("/")[1]?.split("+")[0] || (asset.kind === "video" ? "mp4" : "png");
         const filename = `${asset.title || "asset"}.${ext}`;
         if (asset.storageKey) {
@@ -181,6 +193,7 @@ export default function AssetsPage() {
     const importAssetZip = async (file?: File) => {
         if (!file) return;
         try {
+            // 逐条顺序创建，保证失败时能定位到具体素材并保留已导入的部分。
             const importedAssets = await readAssetPackage(file);
             for (const asset of importedAssets) await createAsset(asset);
             await refreshAssets();
@@ -193,6 +206,7 @@ export default function AssetsPage() {
         }
     };
 
+    // 公共站点设置：只用来判断社区开关；低频数据缓存 5 分钟。
     const publicSettingsQuery = useQuery({
         queryKey: ["settings", "public"],
         queryFn: ({ signal }) => getPublicSettings(signal),
@@ -346,6 +360,7 @@ export default function AssetsPage() {
                 </div>
             </main>
 
+            {/* 社区功能未开启时不渲染发布弹窗。 */}
             {publicSettingsQuery.data && !publicSettingsQuery.data.communityEnabled ? null : (
                 <Modal
                     title={t("assets.publishTitle")}
@@ -512,6 +527,16 @@ export default function AssetsPage() {
     );
 }
 
+/** 素材网格卡片：封面 + 标题/来源 + 摘要 + 标签，底部按素材类型暴露查看/编辑/复制/下载/发布/删除操作。
+ * @param asset 素材记录
+ * @param downloading 该素材是否正在下载（用于按钮 loading）
+ * @param onOpen 打开详情抽屉
+ * @param onEdit 打开编辑弹窗（视频素材不可编辑，由内部隐藏按钮）
+ * @param onCopy 复制文本素材正文
+ * @param onDownload 下载媒体素材
+ * @param onDelete 请求删除（外部弹确认框）
+ * @param onPublish 打开发布到社区弹窗
+ */
 function AssetCard({
     asset,
     downloading,
@@ -606,6 +631,13 @@ function AssetCard({
     );
 }
 
+/** 素材详情抽屉：大图/视频预览、完整文本、尺寸与字节数、备注及复制/下载操作。
+ * @param asset 要展示的素材；为 null 时抽屉关闭
+ * @param downloading 下载按钮 loading 态
+ * @param onClose 关闭抽屉
+ * @param onCopy 复制文本素材正文
+ * @param onDownload 下载媒体素材
+ */
 function AssetDrawer({ asset, downloading, onClose, onCopy, onDownload }: { asset: AssetItem | null; downloading: boolean; onClose: () => void; onCopy: (asset: AssetItem) => void; onDownload: (asset: AssetItem) => void }) {
     const { t } = useTranslation();
     const cover = asset ? assetCoverUrl(asset) : "";
@@ -668,6 +700,7 @@ function AssetDrawer({ asset, downloading, onClose, onCopy, onDownload }: { asse
     );
 }
 
+/** 卡片摘要：文本素材展示正文，媒体素材展示「尺寸 · 大小 · MIME」。 */
 function assetSummary(asset: AssetItem) {
     if (asset.kind === "text") return assetText(asset);
     return `${assetWidth(asset)}x${assetHeight(asset)} · ${formatBytes(asset.bytes)} · ${assetMimeType(asset)}`;

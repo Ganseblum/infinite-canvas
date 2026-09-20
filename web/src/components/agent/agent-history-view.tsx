@@ -6,6 +6,10 @@ import { useTranslation } from "react-i18next";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { AgentThreadSummary } from "@/stores/use-agent-store";
 
+/**
+ * 历史会话列表：展示工作区路径、线程列表与全选/删除/刷新/新建操作。
+ * 行点击恢复对应线程；断线或会话执行中（busy）时恢复操作整体禁用。
+ */
 export function AgentHistoryView({
     theme,
     threads,
@@ -32,9 +36,11 @@ export function AgentHistoryView({
     onDeleteThreads: (threadIds: string[]) => void;
 }) {
     const { i18n, t } = useTranslation();
+    // 勾选集合用 Set 存线程 id；全选/反选直接整体重建，删除操作以勾选集合为准。
     const [selectedIds, setSelectedIds] = useState(() => new Set<string>());
     const selectedThreads = threads.filter((thread) => selectedIds.has(thread.id));
     const allSelected = Boolean(threads.length) && selectedThreads.length === threads.length;
+    // 恢复线程的前置条件：已连接且没有进行中的加载/会话任务。
     const canResume = connected && !loading && !busy;
     const toggleThread = (threadId: string) => {
         setSelectedIds((current) => {
@@ -128,6 +134,7 @@ export function AgentHistoryView({
     );
 }
 
+/** 线程时间戳（秒级 Unix）→ 本地化时间字符串；无时间返回空串。 */
 function formatThreadTime(value: number | undefined, locale: string) {
     if (!value) return "";
     return new Date(value * 1000).toLocaleString(locale);

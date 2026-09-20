@@ -1,3 +1,5 @@
+// Package mail 发送注册验证、密码重置等站点邮件：smtp 驱动走真实 SMTP，
+// log 驱动把整封邮件打进日志（本地联调与测试取令牌的来源）。
 package mail
 
 import (
@@ -20,6 +22,7 @@ const (
 	maxInFlight  = 8
 )
 
+// Config 是邮件驱动的配置项，取值来自 config 包的同名环境变量。
 type Config struct {
 	Driver     string // smtp | log
 	Host       string
@@ -31,6 +34,7 @@ type Config struct {
 	AppBaseURL string
 }
 
+// Mailer 按 cfg.Driver 投递邮件；sem 是发送槽位，限制同时打开的 SMTP 连接数。
 type Mailer struct {
 	cfg Config
 	sem chan struct{}
@@ -40,12 +44,14 @@ func New(cfg Config) *Mailer {
 	return &Mailer{cfg: cfg, sem: make(chan struct{}, maxInFlight)}
 }
 
+// Message 是一封待发邮件，Body 为 UTF-8 纯文本。
 type Message struct {
 	To      string
 	Subject string
 	Body    string
 }
 
+// Send 立即返回、异步投递：排队超时或发送失败只记日志，不向调用方反馈结果。
 func (m *Mailer) Send(msg Message) {
 	if m.cfg.Driver == "log" {
 		slog.Info("邮件(日志驱动)", "to", msg.To, "subject", msg.Subject, "body", msg.Body)

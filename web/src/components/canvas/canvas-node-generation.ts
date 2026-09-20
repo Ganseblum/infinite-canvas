@@ -7,17 +7,22 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 
+/**
+ * 节点生成的上下文：组装好的提示词 + 上游引用资源（图/视频/音频）与各类计数。
+ * 由 Config/生成面板在发起 AI 生成前构建。
+ */
 export type NodeGenerationContext = {
-    prompt: string;
+    prompt: string; // 最终提示词：原提示词追加文本资源块后的结果。
     referenceImages: ReferenceImage[];
     referenceVideos: ReferenceVideo[];
     referenceAudios: ReferenceAudio[];
-    textCount: number;
+    textCount: number; // 上游文本节点数量（仅统计，不作为引用发送）。
     imageCount: number;
     videoCount: number;
     audioCount: number;
 };
 
+/** 单个上游资源节点的输入描述，携带对应类型的引用数据。 */
 type NodeGenerationResourceInput = {
     nodeId: string;
     type: "text" | "image" | "video" | "audio";
@@ -28,6 +33,7 @@ type NodeGenerationResourceInput = {
     audio?: ReferenceAudio;
 };
 
+/** 分组节点输入：children 是组内各成员展开后的资源。 */
 type NodeGenerationGroupInput = {
     nodeId: string;
     type: "group";
@@ -37,6 +43,11 @@ type NodeGenerationGroupInput = {
 
 export type NodeGenerationInput = NodeGenerationResourceInput | NodeGenerationGroupInput;
 
+/**
+ * 构建生成上下文的统一入口。
+ * Config 节点带 @ 引用 token 时按 composer 模式只取被引用的资源并替换 token；
+ * 否则把全部上游节点的文本追加到提示词末尾、媒体全部作为引用发送。
+ */
 export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string): NodeGenerationContext {
     const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
     const sourceNode = nodes.find((node) => node.id === nodeId);
@@ -45,6 +56,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     }
 
     const resourceInputs = flattenGenerationInputs(inputs);
+    // 全量模式：文本按序编号为【文本 1】块追加到提示词，媒体按序收集为引用列表。
     let textIndex = 0;
     const upstreamText = resourceInputs.flatMap((input) => (input.text ? [textBlock(generationLabel("text", textIndex++), input.text)] : [])).join("\n\n");
     const referenceImages = resourceInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
@@ -63,6 +75,11 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     };
 }
 
+/**
+ * composer 引用模式：把提示词里的 `@[node:节点ID]` token 原地替换为资源标签
+ * （文本展开为【文本 N】块附在末尾，图/视频/音频作为引用发送）。
+ * 没有 token 时返回零引用，表示提示词没有显式引用任何上游节点。
+ */
 function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
     const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
     const selectedInputs: NodeGenerationResourceInput[] = [];
@@ -70,7 +87,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     const textBlocks: string[] = [];
     const counts = { image: 0, video: 0, audio: 0, text: 0 };
     let hasToken = false;
-    let lastIndex = 0;
+    let lastIndex = 0; // 上一段 token 之后的偏移，用于逐段拼接替换结果。
     let nextPrompt = "";
 
     for (const match of prompt.matchAll(/@\[node:([^\]]+)\]/g)) {
@@ -79,6 +96,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
         nextPrompt += prompt.slice(lastIndex, match.index);
         const input = inputByNodeId.get(match[1]);
         if (input) {
+            // 同一 token 多次出现或组内多资源时复用已分配的编号，避免重复计数。
             const labels = flattenGenerationInputs([input]).map((resource) => {
                 let label = labelByNodeId.get(resource.nodeId);
                 if (!label) {
@@ -95,6 +113,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     }
 
     nextPrompt += prompt.slice(lastIndex);
+    // 文本资源不进引用列表，统一展开成编号文本块拼在提示词末尾。
     if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
     const referenceImages = selectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = selectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
@@ -125,6 +144,10 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     };
 }
 
+/**
+ * 收集上游引用面板中可选的资源节点（含分组），返回带类型的生成输入列表。
+ * 分组节点展开为 children；组内没有资源时整组丢弃。
+ */
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
     return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
         if (node.type === CanvasNodeType.Group) {
@@ -135,11 +158,17 @@ export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[
     });
 }
 
+/** 摊平分组并按 nodeId 去重，保证同一资源只出现一次。 */
 function flattenGenerationInputs(inputs: NodeGenerationInput[]) {
     const resources = inputs.flatMap((input) => (input.type === "group" ? input.children : [input]));
     return [...new Map(resources.map((input) => [input.nodeId, input])).values()];
 }
 
+/**
+ * 读取单个节点的可生成资源：优先按原生类型（图/视频/音频节点）读取，
+ * 其次看插件节点定义声明的 resource，最后兜底读文本（content/prompt）。
+ * 返回空数组表示该节点没有可用资源。
+ */
 function readNodeGenerationResource(node: CanvasNodeData): NodeGenerationResourceInput[] {
     const image = readReferenceImage(node);
     if (image) return [{ nodeId: node.id, type: "image", title: node.title, image }];
@@ -156,6 +185,7 @@ function readNodeGenerationResource(node: CanvasNodeData): NodeGenerationResourc
     return text ? [{ nodeId: node.id, type: "text", title: node.title, text }] : [];
 }
 
+/** 组装 OpenAI 兼容的多模态 user 消息：有引用图时用 image_url 分段，否则纯文本。 */
 export function buildNodeResponseMessages(context: NodeGenerationContext): AiTextMessage[] {
     if (!context.referenceImages.length) {
         return [{ role: "user", content: context.prompt }];
@@ -169,20 +199,24 @@ export function buildNodeResponseMessages(context: NodeGenerationContext): AiTex
     ];
 }
 
+/** 发送前把引用图的原始来源统一转成 dataUrl（按需动态加载转换工具，避免常驻依赖）。 */
 export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {
     const { imageToDataUrl } = await import("@/services/media-ingest");
     return { ...context, referenceImages: await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) }))) };
 }
 
+/** 读取节点的文本内容：文本节点用 content，其余节点（含 Config）用 prompt 字段。 */
 function readNodeTextInput(node: CanvasNodeData) {
     if (node.type === CanvasNodeType.Text) return node.metadata?.content || node.metadata?.prompt || "";
     return node.metadata?.prompt || "";
 }
 
+/** 文本资源块：【文本 N】 标签 + 内容，附在提示词末尾。 */
 function textBlock(label: string, text: string) {
     return `【${label}】\n${text}`;
 }
 
+/** 按类型生成引用标签：图片用图1/图2，视频/音频/文本用对应 i18n 文案 + 序号。 */
 function generationLabel(type: NodeGenerationResourceInput["type"], index: number) {
     if (type === "image") return imageReferenceLabel(index);
     if (type === "video") return i18n.t("canvas.configNode.videoReferences") + ` ${index + 1}`;
@@ -190,6 +224,7 @@ function generationLabel(type: NodeGenerationResourceInput["type"], index: numbe
     return i18n.t("canvas.composer.resources.text", { index: index + 1 });
 }
 
+/** 从图片节点 metadata 读取引用图（dataUrl 形式），无内容返回 null。 */
 function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
     if (node.type !== CanvasNodeType.Image || !node.metadata?.content) return null;
     return {
@@ -201,6 +236,7 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
     };
 }
 
+/** 从视频节点 metadata 读取引用视频（url 形式），无内容返回 null。 */
 function readReferenceVideo(node: CanvasNodeData): ReferenceVideo | null {
     if (node.type !== CanvasNodeType.Video || !node.metadata?.content) return null;
     return {
@@ -216,6 +252,7 @@ function readReferenceVideo(node: CanvasNodeData): ReferenceVideo | null {
     };
 }
 
+/** 从音频节点 metadata 读取引用音频（url 形式），无内容返回 null。 */
 function readReferenceAudio(node: CanvasNodeData): ReferenceAudio | null {
     if (node.type !== CanvasNodeType.Audio || !node.metadata?.content) return null;
     return {

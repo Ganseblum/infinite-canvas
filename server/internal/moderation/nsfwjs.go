@@ -103,6 +103,7 @@ func (p *NSFWJSProvider) Moderate(ctx context.Context, req Request) (Result, err
 	return p.ModerateImage(ctx, req)
 }
 
+// isNSFWLabel 判定 NSFWJS 五分类中的成人内容标签（normal、drawings 之外）。
 func isNSFWLabel(name string) bool {
 	switch name {
 	case "porn", "hentai", "sexy":
@@ -184,6 +185,7 @@ func (p *DetoxifyProvider) ModerateText(ctx context.Context, req Request) (Resul
 	}, nil
 }
 
+// Moderate 仅接受文本送审，其余类型报错。
 func (p *DetoxifyProvider) Moderate(ctx context.Context, req Request) (Result, error) {
 	if req.ContentType != ContentText {
 		return Result{}, fmt.Errorf("Detoxify 只处理文本")
@@ -191,6 +193,7 @@ func (p *DetoxifyProvider) Moderate(ctx context.Context, req Request) (Result, e
 	return p.ModerateText(ctx, req)
 }
 
+// toxicityLabel 把 Detoxify 标签归一到项目风险标签；未识别的标签按 toxic 兜底（宁可误拒）。
 func toxicityLabel(name string) string {
 	switch name {
 	case "threat":

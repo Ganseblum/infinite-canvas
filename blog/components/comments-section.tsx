@@ -6,12 +6,13 @@ import { authFetch } from "@/lib/auth-client";
 
 // 评论区：列表公开可读（游客可见 visible），发评/回复/点赞需登录（401 提示登录）。
 // 评论正文是短 Markdown，服务端渲染为 contentHtml（goldmark 同源管线）。
+// 评论条目：服务端渲染好的视图模型，正文直接吃 contentHtml。
 type CommentItem = {
   id: string;
-  replyToId?: string;
-  replyToName?: string;
-  contentHtml: string;
-  status: string;
+  replyToId?: string; // 被回复评论 id，有值即楼中楼
+  replyToName?: string; // 被回复人昵称，仅展示用
+  contentHtml: string; // 服务端 goldmark 渲染后的 HTML（输入是短 Markdown）
+  status: string; // visible / hidden（管理员隐藏占位）/ quarantined（审核隔离待放行）
   pinned: boolean;
   likeCount: number;
   liked: boolean;
@@ -19,8 +20,14 @@ type CommentItem = {
   createdAt: string;
 };
 
+// 主站注册入口（博客子域不承载注册）；未配置时退化为 "#"。
 const LOGIN_URL = process.env.NEXT_PUBLIC_LOGIN_URL ?? "#";
 
+/**
+ * 评论区组件。所有写操作（发评/点赞/删除）成功后都整表重拉而不是本地插入/改写：
+ * 先发后审、置顶、隐藏占位与排序都以服务端状态为唯一权威；
+ * 401 统一落在底部提示行引导登录，接口失败不阻塞列表展示。
+ */
 export default function CommentsSection({ postSlug, initialTotal }: { postSlug: string; initialTotal: number }) {
   const [items, setItems] = useState<CommentItem[] | null>(null);
   const [total, setTotal] = useState(initialTotal);
@@ -61,10 +68,12 @@ export default function CommentsSection({ postSlug, initialTotal }: { postSlug: 
     const out = (await res.json()) as { comment: { status: string } };
     setContent("");
     setReplyTo(null);
+    // 命中审核进隔离时不本地插入新评论，提示等待放行；无论哪种状态都重拉列表对齐服务端
     setHint(out.comment.status === "quarantined" ? "评论已提交，正在等待审核放行。" : "");
     void load();
   };
 
+  // 评论点赞与文章点赞共用 reactions 端点，按 targetType 区分目标
   const likeComment = async (cm: CommentItem) => {
     const res = await authFetch(`/api/v1/blog/reactions`, {
       method: cm.liked ? "DELETE" : "POST",
@@ -77,6 +86,7 @@ export default function CommentsSection({ postSlug, initialTotal }: { postSlug: 
     void load();
   };
 
+  // 删除入口对每条评论都渲染，能否删除由服务端校验；非 401 的失败（如无权限）静默忽略
   const deleteComment = async (cm: CommentItem) => {
     const res = await authFetch(`/api/v1/blog/comments/${cm.id}`, { method: "DELETE" });
     if (res.status === 401) {

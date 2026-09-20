@@ -9,8 +9,10 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
+/** 音频设置弹层可修改的配置键。 */
 export type CanvasAudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioInstructions";
 
+/** 音频生成设置弹层 props：变更按上述键回传。 */
 type CanvasAudioSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: CanvasAudioSettingKey, value: string) => void;
@@ -18,6 +20,10 @@ type CanvasAudioSettingsPopoverProps = {
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
+/**
+ * 音频生成设置入口按钮 + Portal 弹层：按钮上摘要音色/格式/语速，
+ * 点击弹出共享 AudioSettingsPanel。手写 Portal 定位，避免画布 transform 容器下定位失真。
+ */
 export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft" }: CanvasAudioSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
@@ -25,6 +31,7 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
 
+    // 打开期间跟随按钮位置（resize/scroll 失效 fixed 基准），点击面板外关闭。
     useEffect(() => {
         if (!open) return;
         const syncPosition = () => setButtonRect(buttonRef.current?.getBoundingClientRect() || null);
@@ -62,6 +69,10 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
     );
 }
 
+/**
+ * 音频设置面板的 Portal 容器：按按钮 rect 与 placement 手动定位，
+ * 水平方向夹在视口 margin 内；顶部放置时限制 maxHeight 防止溢出屏幕。
+ */
 function AudioSettingsPortal({
     buttonRect,
     panelRef,
@@ -82,6 +93,7 @@ function AudioSettingsPortal({
     const margin = 12;
     const alignRight = placement?.endsWith("Right");
     const alignCenter = placement === "top" || placement === "bottom";
+    // 水平对齐：*Right 右对齐按钮、top/bottom 居中、其余左对齐。
     const left = alignCenter ? buttonRect.left + buttonRect.width / 2 - width / 2 : alignRight ? buttonRect.right - width : buttonRect.left;
     const topPlacement = placement?.startsWith("top");
     const style = {
@@ -99,6 +111,7 @@ function AudioSettingsPortal({
     } as const;
 
     return createPortal(
+        // 阻断面板内指针事件冒泡，避免拖动画布/触发节点交互。
         <div
             ref={panelRef}
             className="canvas-image-settings-popover"

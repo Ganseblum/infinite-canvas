@@ -10,9 +10,14 @@ import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
+/**
+ * 节点的上游引用条：把直连（及分组内）的上游资源节点展示为缩略图列表，
+ * 悬浮预览大图，右上角 X 断开连线，「+」进入引用选择模式。
+ */
 export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDisconnect, onStartSelection }: { nodeId: string; nodes: CanvasNodeData[]; connectedNodes: CanvasNodeData[]; onDisconnect?: (fromNodeId: string, toNodeId: string) => void; onStartSelection?: (nodeId: string) => void }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    // 分组连线先展开成组内资源节点，每个引用保留其来源连线（用于断开）。
     const references = connectedNodes.flatMap((sourceNode) => (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes) : [sourceNode]).map((node) => ({ node, sourceNodeId: sourceNode.id })));
     return (
         <div className="mb-2">
@@ -27,6 +32,7 @@ export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDiscon
     );
 }
 
+/** 单个引用缩略图：图片/视频直接渲染封面，其余按类型显示图标；悬浮弹出预览。 */
 function ReferenceItem({ node, onRemove }: { node: CanvasNodeData; onRemove: () => void }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -48,6 +54,7 @@ function ReferenceItem({ node, onRemove }: { node: CanvasNodeData; onRemove: () 
     );
 }
 
+/** 引用悬浮预览：按资源类型展示大图/播放器/文本内容。 */
 function ReferencePreview({ node, content }: { node: CanvasNodeData; content?: string }) {
     const { t } = useTranslation();
     const resource = getNodeDefinition(node.type)?.resource?.(node);

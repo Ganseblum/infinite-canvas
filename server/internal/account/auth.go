@@ -34,10 +34,14 @@ const (
 )
 
 var (
+	// EmailRe 是注册与找回邮箱的宽松格式校验，只挡明显非法输入，
+	// 真实可达性靠验证邮件确认。
 	EmailRe    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 	usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
 )
 
+// AuthHandler 处理认证端点：注册、登录、刷新、登出、邮箱验证与密码找回。
+// 会话 = 短期 HS256 access token（前端内存）+ 30 天 refresh cookie + 媒体 cookie。
 type AuthHandler struct {
 	db           *gorm.DB
 	identity     *identity.Service
@@ -143,6 +147,8 @@ type registerReq struct {
 	Password string `json:"password"`
 }
 
+// Register 注册即登录：用户、平台账本与免费配额在同一事务内创建，
+// 成功后直接下发会话。
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req registerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -262,6 +268,7 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
+// Login 支持邮箱或用户名登录，连续失败按账号维度锁定（见 failLim 配置）。
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -311,6 +318,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, sessionPayload(user, h.planFor(user), accessToken))
 }
 
+// Refresh 校验 refresh cookie 并轮换：旧令牌撤销、新令牌下发；已撤销令牌
+// 被复用视为凭据泄漏，撤销该用户全部会话。
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	cookie, err := c.Cookie(RefreshCookieName)
 	if err != nil || cookie == "" {
@@ -376,6 +385,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, sessionPayload(user, h.planFor(user), accessToken))
 }
 
+// Logout 撤销当前 refresh token 并清空会话 cookie，幂等。
 func (h *AuthHandler) Logout(c *gin.Context) {
 	cookie, err := c.Cookie(RefreshCookieName)
 	if err == nil && cookie != "" {
@@ -492,6 +502,7 @@ type verifyEmailReq struct {
 	Token string `json:"token"`
 }
 
+// VerifyEmail 消费一次性邮件令牌并把邮箱置为已验证；无效、已用或过期一律 TOKEN_INVALID。
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	var req verifyEmailReq
 	if err := c.ShouldBindJSON(&req); err != nil || req.Token == "" {
@@ -538,6 +549,7 @@ type forgotReq struct {
 	Email string `json:"email"`
 }
 
+// ForgotPassword 签发重置密码邮件；响应恒为 204，不暴露邮箱是否存在。
 func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	var req forgotReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -568,6 +580,7 @@ type resetReq struct {
 	Password string `json:"password"`
 }
 
+// ResetPassword 消费一次性重置令牌改密，并强制该用户所有设备重新登录。
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var req resetReq
 	if err := c.ShouldBindJSON(&req); err != nil || req.Token == "" {

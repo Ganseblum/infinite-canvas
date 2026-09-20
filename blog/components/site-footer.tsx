@@ -1,3 +1,4 @@
+/** 全站页脚：外链、版权与「到底」落款，纯静态无状态。 */
 export default function SiteFooter() {
   return (
     <footer>

@@ -7,12 +7,14 @@ import { ApiError, getApiErrorMessage } from "@/lib/api-error";
 import { isPasswordByteLengthValid } from "@/lib/password";
 import { changePassword } from "@/services/api/account";
 
+/** 修改密码弹窗表单的取值结构。 */
 type PasswordFormValues = {
     oldPassword: string;
     newPassword: string;
     confirmPassword: string;
 };
 
+/** 个人中心安全区块：修改密码入口与弹窗表单（旧密码 + 新密码 + 确认）。 */
 export function SecuritySection() {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -27,6 +29,7 @@ export function SecuritySection() {
             form.resetFields();
         },
         onError: (error) => {
+            // 旧密码错误定位到对应输入框内提示，其余错误走全局 toast。
             if (error instanceof ApiError && error.code === "INVALID_CREDENTIALS") {
                 form.setFields([{ name: "oldPassword", errors: [getApiErrorMessage(error)] }]);
                 return;
@@ -71,6 +74,7 @@ export function SecuritySection() {
                         label={t("profile.security.next")}
                         rules={[
                             { required: true, message: t("profile.security.nextRequired") },
+                            // 服务端按字节长度限制密码，前端按同一口径预校验，避免提交后才发现超长。
                             { validator: (_, value: string) => (!value || isPasswordByteLengthValid(value) ? Promise.resolve() : Promise.reject(new Error(t("profile.security.nextLength")))) },
                         ]}
                     >

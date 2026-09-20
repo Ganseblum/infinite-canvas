@@ -1,3 +1,7 @@
+// Package account 是认证与身份面：注册登录、会话签发与轮换、邮箱验证、
+// 密码找回、个人资料、数据导出、免费赠送与注销冷静期，另含本服务对外
+// 的 OIDC Provider。对外路由由 routes.go 的 MountAuthRoutes 与 main.go
+// 挂载的 me/oidc 分组组成。
 package account
 
 import (
@@ -23,6 +27,8 @@ import (
 	"github.com/infinite-canvas/server/internal/service"
 )
 
+// AccountHandler 处理 /api/me 侧的身份接口：资料读写、数据导出、改密、
+// 免费赠送领取与注销冷静期。聚合点数、会员、存储用量等服务做一次性展示。
 type AccountHandler struct {
 	db         *gorm.DB
 	cfg        *config.Config
@@ -51,6 +57,8 @@ func NewAccountHandler(db *gorm.DB, cfg *config.Config, grant *service.FreeGrant
 
 // latestPaidUntil 返回该用户最新订阅的 period_end；无订阅时为 nil。
 // paidUntil 键的值来源由 credits.paid_until 迁移到订阅周期（D6）。
+// GetMe 一次聚合当前用户档案、有效档位、点数余额、存储用量、媒体到期与
+// 注销状态；存储用量超过档位上限时置 readOnly。
 func (h *AccountHandler) GetMe(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
 	var user model.PlatformUser
@@ -245,6 +253,7 @@ type updateMeReq struct {
 	AvatarURL   *string `json:"avatarUrl"`
 }
 
+// UpdateMe 局部更新展示名与头像，两个字段都不传按 400 处理。
 func (h *AccountHandler) UpdateMe(c *gin.Context) {
 	var req updateMeReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -278,6 +287,7 @@ type changePasswordReq struct {
 	NewPassword string `json:"newPassword"`
 }
 
+// ChangePassword 校验旧密码后改密，撤销该用户全部会话并重发当前会话 cookie。
 func (h *AccountHandler) ChangePassword(c *gin.Context) {
 	var req changePasswordReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -331,6 +341,8 @@ func (h *AccountHandler) ChangePassword(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ClaimFreeGrant 领取免费赠送：开关、邮箱已验证、风控评分与每日预算层层放行，
+// 被拒也落 denied 记录；同一活动重复领取幂等返回既有结论。
 func (h *AccountHandler) ClaimFreeGrant(c *gin.Context) {
 	uid, _ := uuid.Parse(c.GetString("user_id"))
 	if !h.cfg.FreeGrantEnabled {
@@ -397,6 +409,7 @@ func (h *AccountHandler) ClaimFreeGrant(c *gin.Context) {
 	c.JSON(http.StatusOK, grantPayload(claim))
 }
 
+// recordDenied 落一条被拒的领取记录（风控/预算原因），供事后审计。
 func (h *AccountHandler) recordDenied(uid uuid.UUID, reason string) {
 	h.db.Create(&model.FreeGrantClaim{
 		ID:         uuid.New(),
@@ -453,6 +466,8 @@ func (h *AccountHandler) CancelDeletion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "active"})
 }
 
+// grantPayload 输出赠送内容：试用次数与全局试用上限（FreeImageTrialLimit=3、
+// FreeVideoTrialLimit=1）同源，grantedMicros 恒为 0——本期只登记领取，不改点数。
 func grantPayload(claim model.FreeGrantClaim) gin.H {
 	return gin.H{
 		"campaignId":    claim.CampaignID,

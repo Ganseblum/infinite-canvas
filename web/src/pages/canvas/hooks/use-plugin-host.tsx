@@ -17,6 +17,9 @@ import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/type
 
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
+/**
+ * 插件宿主参数：把画布读写能力（ref + setState）与生成配置交给插件节点使用。
+ */
 type PluginHostParams = {
     effectiveConfig: AiConfig;
     theme: CanvasTheme;
@@ -100,6 +103,7 @@ export function usePluginHost(params: PluginHostParams) {
         [applyAgentOps, pluginAi],
     );
 
+    // 渲染插件节点弹出的自定义面板；插件未定义 Panel 时返回 null。
     const renderPluginPanel = useCallback(
         (panelNode: CanvasNodeData) => {
             const Panel = getNodeDefinition(panelNode.type)?.Panel;

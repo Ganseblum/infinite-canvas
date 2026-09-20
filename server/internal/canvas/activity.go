@@ -38,6 +38,7 @@ func NewActivityHandler(db *gorm.DB, settings *service.SiteSettingService, grant
 	return &ActivityHandler{db: db, settings: settings, credits: billing.NewService(db, model.ProductCanvas), grant: grant, cfg: cfg}
 }
 
+// checkinEnabled 签到开关；站点配置未注入时默认放开。
 func (h *ActivityHandler) checkinEnabled() bool {
 	if h.settings == nil {
 		return true
@@ -45,6 +46,7 @@ func (h *ActivityHandler) checkinEnabled() bool {
 	return h.settings.CheckinEnabled()
 }
 
+// inviteEnabled 邀请返利开关；站点配置未注入时默认放开。
 func (h *ActivityHandler) inviteEnabled() bool {
 	if h.settings == nil {
 		return true
@@ -136,6 +138,7 @@ func (h *ActivityHandler) Checkin(c *gin.Context) {
 	})
 }
 
+// checkinReward 单次签到奖励（micros），站点配置未注入时用默认值。
 func (h *ActivityHandler) checkinReward() int64 {
 	if h.settings == nil {
 		return 20000
@@ -313,6 +316,8 @@ func randomInviteCode() string {
 	return base64.RawURLEncoding.EncodeToString(buffer)
 }
 
+// withinInviteDailyBudget 判断本次绑定成本是否仍在本日免费预算内；
+// 统计查询失败按拒绝处理，宁可少发也不超发。
 func (h *ActivityHandler) withinInviteDailyBudget(bindCostMicros int64) bool {
 	if h.cfg.FreeGrantDailyBudgetMicros <= 0 {
 		return false

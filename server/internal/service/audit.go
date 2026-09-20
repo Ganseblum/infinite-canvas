@@ -44,6 +44,7 @@ func (s *AuditService) Record(tx *gorm.DB, actorID uuid.UUID, action, targetType
 	return tx.Create(&entry).Error
 }
 
+// marshalSummary 序列化审计摘要；入参已是 JSON 或字节切片时直接透传，避免二次编码。
 func marshalSummary(value any) ([]byte, error) {
 	if raw, ok := value.(datatypes.JSON); ok {
 		return raw, nil

@@ -14,16 +14,22 @@ import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
+/** Config 节点下方面板的 props：配置变更以 metadata patch 形式回传父层落库。 */
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
-    isRunning: boolean;
-    inputSummary: { textCount: number; imageCount: number; videoCount: number; audioCount: number };
+    isRunning: boolean; // 生成进行中：按钮切换为「停止」。
+    inputSummary: { textCount: number; imageCount: number; videoCount: number; audioCount: number }; // 上游资源计数，展示为标签。
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string) => void;
     onStop: (nodeId: string) => void;
-    onComposerToggle: () => void;
+    onComposerToggle: () => void; // 打开 composer 引用编排弹窗。
 };
 
+/**
+ * Config 节点配置面板：按生成模式（图/文/视频/音频）展示模式切换、上游输入统计、
+ * 模型选择与对应设置弹层，底部为生成/停止按钮。
+ * 配置项写入节点 metadata，缺省回落到全局配置。
+ */
 export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigChange, onGenerate, onStop, onComposerToggle }: CanvasConfigNodePanelProps) {
     const { t } = useTranslation();
     const globalConfig = useEffectiveConfig();
@@ -33,10 +39,12 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
+    // 可生成条件：有编排提示词，或有上游输入（音频只依赖文本，作为 TTS 语料）。
     const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
+            {/* 面板标题 + 生成模式切换（Segmented 的指针事件需阻断，避免拖动节点）。 */}
             <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="shrink-0 text-sm font-semibold">{t("canvas.configNode.title")}</div>
                 <div className="cursor-default" onMouseDown={(event) => event.stopPropagation()}>
@@ -87,6 +95,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 </div>
             </div>
 
+            {/* 上游输入统计标签 + 编排入口。 */}
             <div className="mb-2 flex flex-wrap gap-1.5">
                 <InputChip label={t("canvas.configNode.prompt")} value={t("canvas.configNode.items", { count: inputSummary.textCount })} style={chipStyle} />
                 <InputChip label={t("canvas.configNode.references")} value={t("canvas.configNode.images", { count: inputSummary.imageCount })} style={chipStyle} />
@@ -98,6 +107,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 </button>
             </div>
 
+            {/* 模型选择 + 按模式渲染对应的设置弹层（配置变更转写成节点 metadata 字段）。 */}
             <div className="mb-2 grid min-w-0 cursor-default grid-cols-[minmax(0,1fr)_148px] items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
                 <ModelPicker className="canvas-compact-control h-10" value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} fullWidth />
                 {mode === "video" ? (
@@ -161,6 +171,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     );
 }
 
+/** 输入统计小标签：label + 数值。 */
 function InputChip({ label, value, style }: { label: string; value: string; style: CSSProperties }) {
     return (
         <div className="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[11px]" style={style}>
@@ -170,6 +181,7 @@ function InputChip({ label, value, style }: { label: string; value: string; styl
     );
 }
 
+/** 合成节点生效配置：节点 metadata 各字段优先，逐项回落全局配置，最后回落内置默认值。 */
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
     return {
@@ -192,6 +204,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     };
 }
 
+// 视频设置弹层的配置键 → 节点 metadata 字段映射（两套命名不同，需转写后再写回）。
 function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
@@ -200,6 +213,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     return { [key]: value };
 }
 
+// 音频设置弹层的配置键 → 节点 metadata 字段映射；其余键一律落到 audioInstructions。
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
     if (key === "audioVoice") return { audioVoice: value };
     if (key === "audioFormat") return { audioFormat: value };

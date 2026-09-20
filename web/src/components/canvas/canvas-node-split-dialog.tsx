@@ -9,10 +9,17 @@ import { useImageEditorViewport } from "@/components/canvas/use-image-editor-vie
 
 export type CanvasImageSplitParams = ImageSplitParams;
 
+// 默认 2x2 均分；网格上限 12，防止小图被切成过碎的块。
 const defaultParams: CanvasImageSplitParams = { rows: 2, columns: 2, horizontalLines: [0.5], verticalLines: [0.5] };
 const maxGridSize = 12;
+/** 当前选中的分割线，Delete 键与删除按钮作用于它。 */
 type ActiveLine = { axis: "horizontal" | "vertical"; index: number } | null;
 
+/**
+ * 图片切分弹窗：按行列数均分或自定义分割线把一张图切成多块，
+ * 分割线可拖动微调；撤销/重做基于参数快照（上限 50 步）；
+ * 确认后由父层按 params 生成子节点。
+ */
 export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (params: CanvasImageSplitParams) => void }) {
     const { t } = useTranslation();
     const [params, setParams] = useState(defaultParams);
@@ -53,12 +60,14 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         return () => dragAbortRef.current?.abort();
     }, [open]);
 
+    // 行列数变化：先存历史，再按新数量均分重建分割线。
     const update = (key: "rows" | "columns", value: string | number | null) => {
         const count = clampGrid(value ?? params[key]);
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setActive(null);
         setParams((current) => ({ ...current, [key]: count, [key === "rows" ? "horizontalLines" : "verticalLines"]: buildGridLines(count) }));
     };
+    // 新分割线插入当前最大间隙的中点，并选中它方便继续调整。
     const addLine = (axis: "horizontal" | "vertical") => {
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         const key = axis === "horizontal" ? "horizontalLines" : "verticalLines";
@@ -77,6 +86,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         });
         setActive(null);
     };
+    // 用 AbortController 管理拖拽监听：弹窗关闭或重新按下时统一 abort，防止泄漏。
     const startDrag = (axis: "horizontal" | "vertical", index: number, event: ReactPointerEvent) => {
         event.preventDefault();
         event.stopPropagation();
@@ -97,6 +107,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         setParams((current) => {
             const key = axis === "horizontal" ? "horizontalLines" : "verticalLines";
             const lines = [...(current[key] || [])];
+            // 与相邻线保持 0.01 最小间隙，避免两条线重合。
             lines[index] = clampLine(value, lines[index - 1] ?? 0, lines[index + 1] ?? 1);
             return { ...current, [key]: lines };
         });
@@ -125,6 +136,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         setRedoSize(redoRef.current.length);
     }, [params]);
 
+    // 捕获阶段拦截撤销/重做/Delete，输入框聚焦时除外，避免与画布全局快捷键冲突。
     useEffect(() => {
         if (!open) return;
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -149,6 +161,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
 
     return (
         <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden transitionName="" maskTransitionName="">
+            {/* 左侧为预览区（可缩放平移、拖动分割线），右侧为行列数与操作。 */}
             <div className="space-y-5" data-canvas-no-zoom>
                 <div>
                     <h2 className="text-xl font-semibold">{t("canvas.editors.splitTitle")}</h2>
@@ -238,6 +251,7 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
     );
 }
 
+/** 预览区上的分割线：透明宽热区接住指针，实际线条居中绘制，选中时高亮。 */
 function SplitGrid({ horizontalLines, verticalLines, active, onPointerDown }: { horizontalLines: number[]; verticalLines: number[]; active: ActiveLine; onPointerDown: (axis: "horizontal" | "vertical", index: number, event: ReactPointerEvent) => void }) {
     return (
         <div className="pointer-events-none absolute inset-0">
@@ -255,10 +269,12 @@ function SplitGrid({ horizontalLines, verticalLines, active, onPointerDown }: { 
     );
 }
 
+/** 按数量生成均分分割线位置（0~1 相对坐标）。 */
 function buildGridLines(count: number) {
     return Array.from({ length: Math.max(1, count) - 1 }, (_, index) => (index + 1) / count);
 }
 
+/** 找最大间隙的中点作为新分割线的插入位置。 */
 function findLineSpot(lines: number[]) {
     const cuts = [0, ...lines, 1].sort((a, b) => a - b);
     let spot = 0.5;
@@ -277,11 +293,13 @@ function clampLine(value: number, min: number, max: number) {
     return Math.min(max - 0.01, Math.max(min + 0.01, value));
 }
 
+/** 行/列数限制在 1~maxGridSize。 */
 function clampGrid(value: string | number) {
     const numberValue = Number(value);
     return Math.min(maxGridSize, Math.max(1, Math.round(Number.isFinite(numberValue) ? numberValue : 1)));
 }
 
+/** 深拷贝分割参数，历史快照之间互不共享数组引用。 */
 function cloneSplitParams(params: CanvasImageSplitParams) {
     return {
         ...params,
@@ -290,6 +308,7 @@ function cloneSplitParams(params: CanvasImageSplitParams) {
     };
 }
 
+/** 把当前参数压入撤销栈（上限 50 步），并清空重做栈。 */
 function pushHistory(historyRef: { current: CanvasImageSplitParams[] }, redoRef: { current: CanvasImageSplitParams[] }, params: CanvasImageSplitParams, setHistorySize: (size: number) => void, setRedoSize: (size: number) => void) {
     historyRef.current.push(cloneSplitParams(params));
     if (historyRef.current.length > 50) historyRef.current.shift();

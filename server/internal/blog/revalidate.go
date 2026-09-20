@@ -18,6 +18,8 @@ type Revalidator struct {
 	client   *http.Client
 }
 
+// NewRevalidator 构造再验证器；endpoint 为空表示前台未部署（本地单跑 Go），
+// 返回 nil，调用方对 nil 判空跳过即可。
 func NewRevalidator(endpoint, secret string) *Revalidator {
 	if endpoint == "" {
 		return nil

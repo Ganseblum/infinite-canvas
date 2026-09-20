@@ -9,9 +9,15 @@ import { AgentApprovalCard, AgentChatMessage, AgentCommandGroup, AgentPendingToo
 import { agentMessageToChatMessage, currentPlanMessage, isPlanMessage, latestPlanMessage, toolCallDetail, toolName, workingActivity } from "./agent-event-formatters";
 import { AgentScrollToBottom } from "./agent-scroll-to-bottom";
 
+// 距底部 48px 内视为「贴底」：贴底时新消息自动跟随滚动，否则显示回到底部按钮。
 const SCROLL_BOTTOM_THRESHOLD = 48;
+// 历史消息默认不完整渲染（content-visibility 跳过屏外内容），估算高度用于滚动条占位。
 const historyMessageStyle = { contentVisibility: "auto", containIntrinsicSize: "0 80px" } as const;
 
+/**
+ * 聊天时间线：渲染消息流、待确认工具卡片与运行中状态。
+ * 贴底跟随逻辑：用户主动上滚即停止跟随，内容高度变化（流式输出）时仅在贴底时自动滚动。
+ */
 export function AgentChatTimeline({
     theme,
     pendingTool,
@@ -58,10 +64,12 @@ export function AgentChatTimeline({
         setShowScrollToBottom(false);
     }, []);
     useEffect(() => {
+        // 每次消息/审批/工具状态变化后：贴底则瞬时滚到底，否则刷新「回到底部」按钮的可见性。
         const frame = requestAnimationFrame(() => (followMessagesRef.current ? scrollToBottom("auto") : updateScrollState()));
         return () => cancelAnimationFrame(frame);
     }, [messages, pendingApprovals, pendingTool, scrollToBottom, updateScrollState, waiting]);
     useEffect(() => {
+        // 流式输出会改变内容高度但可能不触发消息列表变化，ResizeObserver 兜底保持跟随。
         const content = contentRef.current;
         if (!content) return;
         let frame = 0;
@@ -102,6 +110,7 @@ export function AgentChatTimeline({
     );
 }
 
+/** 任务进度条：任务进行中显示当前轮计划，空闲时显示最后一轮的完成态。 */
 export function AgentTaskProgress({ theme, busy }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; busy: boolean }) {
     const { t } = useTranslation();
     const plan = useAgentStore((state) => busy ? currentPlanMessage(state.messages) : latestPlanMessage(state.messages));
@@ -131,8 +140,10 @@ const AgentCommandGroupRow = memo(function AgentCommandGroupRow({ items, theme }
     );
 });
 
+// 时间线条目：普通消息，或同 thread/turn 内连续命令消息合并成的命令组。
 type AgentTimelineEntry = { type: "message"; item: AgentChatItem } | { type: "commands"; id: string; items: AgentChatItem[] };
 
+/** 把消息流按 thread/turn 归属把连续的命令执行消息折叠成命令组；计划消息单独由进度条展示，跳过。 */
 function groupTimelineMessages(messages: AgentChatItem[]) {
     const timeline: AgentTimelineEntry[] = [];
     let commands: AgentChatItem[] = [];
@@ -163,6 +174,7 @@ function isCommandMessage(item: AgentChatItem) {
     return item.role === "tool" && item.detail && typeof item.detail === "object" && (item.detail as { kind?: unknown }).kind === "command";
 }
 
+/** 最近一次 token 用量条。 */
 export function AgentUsageBar({ usage, theme }: { usage: AgentTokenUsage; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     return (
@@ -175,6 +187,7 @@ export function AgentUsageBar({ usage, theme }: { usage: AgentTokenUsage; theme:
     );
 }
 
+/** 用量数字：用弹簧动画平滑过渡到新值，避免流式更新时数字跳变。 */
 function UsageNumber({ label, value, color }: { label: string; value: number; color: string }) {
     const spring = useSpring(value, { stiffness: 110, damping: 24, mass: 0.7 });
     const text = useTransform(spring, (current) => Math.round(current).toLocaleString());

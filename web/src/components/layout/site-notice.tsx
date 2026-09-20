@@ -10,6 +10,7 @@ export function SiteNotice() {
     const settingsQuery = useQuery({
         queryKey: ["settings", "public"],
         queryFn: ({ signal }) => getPublicSettings(signal),
+        // 公告/维护提示 5 分钟内不重拉；但回焦点时刷新，保证运营改动能较快被用户看到。
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });

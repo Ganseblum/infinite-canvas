@@ -12,6 +12,10 @@ import { cn } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
 
+/**
+ * 全局顶部导航：Logo + 导航工具入口 + AI 助手开关 + 用户状态。
+ * 画布详情页（/canvas/:id）自带顶栏，这里整体隐藏；同时托管移动端抽屉与全局配置弹窗。
+ */
 export function AppTopNav() {
     const { t } = useTranslation();
     const { pathname } = useLocation();
@@ -23,11 +27,14 @@ export function AppTopNav() {
     const connectAgent = useAgentStore((state) => state.connectAgent);
     const togglePanel = useAgentStore((state) => state.togglePanel);
     const panelOpen = useAgentStore((state) => state.panelOpen);
+    // 画布详情页有自己的顶部工具栏，不再叠加全局导航。
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
+    // 取路径首段并与导航工具表比对，得到当前激活的工具（非工具页为 undefined）。
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
 
     useEffect(() => {
+        // 每次挂载只自动连一次：配置了 token 且未连接时静默连接本地 Agent，失败不弹提示。
         if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
         autoConnectRef.current = true;
         connectAgent({ silent: true });

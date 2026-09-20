@@ -9,8 +9,12 @@ import type { DeletionState } from "@/services/api/account";
 import { cancelAccountDeletion, requestAccountDeletion } from "@/services/api/deletion";
 import { useAuthStore } from "@/stores/use-auth-store";
 
+/** 注销账号表单的取值结构：仅需要密码做二次确认。 */
 type DeletionFormValues = { password: string };
 
+/** 个人中心危险操作区块：申请注销（密码二次确认）或撤销已排期的注销。
+ * @param deletion GET /me 返回的注销状态；处于 pending 时展示冷静期倒计时
+ */
 export function DangerZone({ deletion }: { deletion?: DeletionState }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -21,6 +25,7 @@ export function DangerZone({ deletion }: { deletion?: DeletionState }) {
 
     const scheduledAt = deletion?.status === "pending" ? deletion.scheduledAt : null;
     const pending = !!scheduledAt;
+    // 用小时差向上取整换算剩余天数，剩余不足一天仍显示 1 天。
     const remainingDays = scheduledAt ? Math.max(0, Math.ceil(dayjs(scheduledAt).diff(dayjs(), "hour") / 24)) : 0;
 
     const cancelMutation = useMutation({
@@ -41,6 +46,7 @@ export function DangerZone({ deletion }: { deletion?: DeletionState }) {
             await queryClient.invalidateQueries({ queryKey: ["me", userId] });
         },
         onError: (error) => {
+            // 密码错误定位到输入框内提示，其余错误走全局 toast。
             if (error instanceof ApiError && error.code === "INVALID_CREDENTIALS") {
                 form.setFields([{ name: "password", errors: [getApiErrorMessage(error)] }]);
                 return;

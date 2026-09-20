@@ -7,21 +7,35 @@ import { useTranslation } from "react-i18next";
 import { readImageMeta } from "@/lib/image-utils";
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
 
+/** 蒙版编辑的提交结果：提示词、合成好的蒙版图、是否直接触发生成。 */
 export type CanvasImageMaskEditPayload = {
     prompt: string;
     maskDataUrl: string;
     generate: boolean;
 };
 
+/** 绘制模式：画笔涂抹 / 橡皮擦除。 */
 type DrawMode = "paint" | "erase";
 type Point = { x: number; y: number };
+/** 一笔笔划：模式、笔刷大小与采样点序列，撤销/重做以笔划为单位重放。 */
 type MaskStroke = { mode: DrawMode; size: number; points: Point[] };
+/** 笔刷光标预览：屏幕坐标、大小与是否处于 Alt 调节中。 */
 type BrushPreview = { x: number; y: number; size: number; adjusting: boolean };
 
 const defaultBrushSize = 100;
+// 蒙版预览层的叠加色与透明度，导出给生图接口的蒙版图也叠加同样的颜色。
 const maskOverlayColor = "#2563eb";
 const maskOverlayAlpha = 0.4;
 
+/**
+ * 图片局部重绘（蒙版）编辑弹窗。
+ * 双画布结构：隐藏的 maskCanvas 保存黑色蒙版原稿（用于导出），
+ * previewCanvas 叠加半透明蓝色供预览；支持画笔/橡皮、Alt+拖拽调节笔刷、
+ * 撤销重做（按笔划重放）、空格/中键平移与滚轮缩放（useImageEditorViewport）。
+ *
+ * @param dataUrl 原图的 dataURL。
+ * @param onConfirm 提交回调，payload 含提示词、蒙版图与是否直接生成。
+ */
 export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (payload: CanvasImageMaskEditPayload) => void }) {
     const { t } = useTranslation();
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -41,6 +55,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     const [brushPreview, setBrushPreview] = useState<BrushPreview | null>(null);
     const viewport = useImageEditorViewport(image, open);
 
+    // 每次打开都整体重置：清空历史、恢复默认笔刷，并重新读取图片尺寸。
     useEffect(() => {
         if (!open) return;
         setPrompt("");
@@ -62,6 +77,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         clearCanvas(previewCanvasRef.current);
     }, [image]);
 
+    // 在两个画布上同步补一笔：maskCanvas 画黑色原稿，previewCanvas 画蓝色预览。
     const draw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         const point = readCanvasPoint(event.currentTarget, event.clientX, event.clientY);
         const maskCanvas = maskCanvasRef.current;
@@ -89,6 +105,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         });
     };
 
+    // Alt+左键/右键拖拽进入笔刷大小调节；否则普通落笔开始绘制。
     const startDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         if ((event.button === 0 || event.button === 2) && event.altKey) {
             event.preventDefault();
@@ -114,6 +131,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         draw(event);
     };
 
+    // Alt 调节中只更新笔刷大小；否则更新光标预览，落笔状态下继续绘制。
     const moveDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         const brushAdjust = brushAdjustRef.current;
         if (brushAdjust?.active && event.pointerId === brushAdjust.pointerId) {
@@ -135,6 +153,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         draw(event);
     };
 
+    // 抬笔把完成的笔划压入历史并清空重做栈。
     const stopDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         const brushAdjust = brushAdjustRef.current;
         if (brushAdjust?.active && event.pointerId === brushAdjust.pointerId) {
@@ -153,6 +172,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         }
     };
 
+    // 撤销/重做不反向擦除，而是按顺序重放剩余笔划（绘制顺序一致，结果确定）。
     const undoMask = useCallback(() => {
         if (drawingRef.current.active || !historyRef.current.length) return;
         const stroke = historyRef.current.pop();
@@ -183,6 +203,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         setError("");
     };
 
+    // 捕获阶段拦截 Cmd/Ctrl+Z / Shift+Z / Y，避免同窗口的画布全局撤销被误触。
     useEffect(() => {
         if (!open) return;
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -203,6 +224,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         return () => window.removeEventListener("keydown", handleKeyDown, true);
     }, [open, redoMask, undoMask]);
 
+    // 提交：校验提示词与蒙版非空后，合成蒙版图回调给父层；generate 决定是否直接生图。
     const submit = (generate: boolean) => {
         const nextPrompt = prompt.trim();
         const canvas = maskCanvasRef.current;
@@ -250,8 +272,9 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                         </div>
                     </div>
                 </div>
-                {brushPreview
-                    ? createPortal(
+            {/* 笔刷光标：portal 到 body，大小按当前视口缩放换算成屏幕像素。 */}
+            {brushPreview
+                ? createPortal(
                           <div
                               className={`pointer-events-none fixed z-[1100] rounded-full border-2 ${brushPreview.adjusting ? "border-[#fbbf24] bg-black/10" : "border-white/90 bg-black/5"} shadow-[0_0_0_1px_rgba(0,0,0,.8)]`}
                               style={{ left: brushPreview.x, top: brushPreview.y, width: Math.max(4, brushPreview.size * viewport.imageScale), aspectRatio: 1, transform: "translate(-50%, -50%)" }}
@@ -340,6 +363,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     );
 }
 
+/** 把屏幕坐标换算成 canvas 内部坐标（与 CSS 显示尺寸无关）。 */
 function readCanvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number) {
     const rect = canvas.getBoundingClientRect();
     return {
@@ -348,6 +372,7 @@ function readCanvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: nu
     };
 }
 
+/** 笔刷大小限制在 8~160 且取偶数，与滑杆步长一致。 */
 function clampBrushSize(value: number) {
     return Math.min(160, Math.max(8, Math.round(value / 2) * 2));
 }
@@ -358,6 +383,7 @@ function clearCanvas(canvas: HTMLCanvasElement | null) {
     context.clearRect(0, 0, canvas.width, canvas.height);
 }
 
+/** 单点点击画圆补点，拖动画线；两条 canvas 各自按上下文着色。 */
 function drawMaskStroke(context: CanvasRenderingContext2D, from: { x: number; y: number }, to: { x: number; y: number }, size: number) {
     if (from.x === to.x && from.y === to.y) {
         context.beginPath();
@@ -371,6 +397,7 @@ function drawMaskStroke(context: CanvasRenderingContext2D, from: { x: number; y:
     context.stroke();
 }
 
+/** 蒙版原稿画黑色；橡皮模式用 destination-out 抠掉已有笔迹。 */
 function configureStrokeContext(context: CanvasRenderingContext2D, stroke: MaskStroke) {
     context.lineCap = "round";
     context.lineJoin = "round";
@@ -380,6 +407,7 @@ function configureStrokeContext(context: CanvasRenderingContext2D, stroke: MaskS
     context.fillStyle = "#000";
 }
 
+/** 预览层与蒙版原稿同笔迹，仅颜色换成叠加蓝。 */
 function configurePreviewStrokeContext(context: CanvasRenderingContext2D, stroke: MaskStroke) {
     context.lineCap = "round";
     context.lineJoin = "round";
@@ -389,6 +417,7 @@ function configurePreviewStrokeContext(context: CanvasRenderingContext2D, stroke
     context.fillStyle = maskOverlayColor;
 }
 
+/** 清空两个画布后按顺序重放全部笔划，用于撤销/重做/重置后的恢复。 */
 function replayMask(strokes: MaskStroke[], maskCanvas: HTMLCanvasElement | null, previewCanvas: HTMLCanvasElement | null) {
     const context = maskCanvas?.getContext("2d", { willReadFrequently: true });
     const previewContext = previewCanvas?.getContext("2d");
@@ -406,6 +435,7 @@ function replayMask(strokes: MaskStroke[], maskCanvas: HTMLCanvasElement | null,
     }
 }
 
+/** 扫描像素 alpha 通道判断蒙版上是否有任何笔迹。 */
 function canvasHasPaint(canvas: HTMLCanvasElement) {
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) return false;
@@ -416,6 +446,7 @@ function canvasHasPaint(canvas: HTMLCanvasElement) {
     return false;
 }
 
+/** 合成输出图：原图 + 蒙版区域按 maskOverlayAlpha 叠加蓝色，供生图接口识别重绘区域。 */
 function buildMaskOverlay(image: HTMLImageElement, selectionCanvas: HTMLCanvasElement) {
     const canvas = document.createElement("canvas");
     canvas.width = selectionCanvas.width;

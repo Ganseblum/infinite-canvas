@@ -111,6 +111,7 @@ finished:
 	})
 }
 
+// errorCodeFor 流式 error 事件的错误码：超时统一 UPSTREAM_TIMEOUT，其余一律归一 UPSTREAM_ERROR。
 func errorCodeFor(err error, timedOut bool) string {
 	if timedOut || isTimeout(err) {
 		return "UPSTREAM_TIMEOUT"
@@ -191,6 +192,8 @@ func (s *streamSink) activity() <-chan struct{} {
 	return s.activityCh
 }
 
+// signal 非阻塞唤醒心跳循环：channel 缓冲 1，上游密集产出时多余信号直接丢弃，
+// 不会阻塞 provider 的回调 goroutine。
 func (s *streamSink) signal() {
 	select {
 	case s.activityCh <- struct{}{}:
