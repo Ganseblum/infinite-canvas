@@ -56,6 +56,8 @@ tags:
   - name: Admin-角色与权限
   - name: Admin-审计
   - name: Admin-分析
+  - name: 办公助理
+  - name: Admin-办公助理
 security:
   - bearerAuth: []
 components:
@@ -794,6 +796,52 @@ components:
               displayName: { type: string }
               requests: { type: integer, format: int64 }
               costMicros: { type: integer, format: int64 }
+    OfficeSession:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        agentId: { type: string }
+        status: { type: string, enum: [active, closed] }
+        activeRunId: { type: string, nullable: true }
+        workspacePath: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        lastRunStatus: { type: string, nullable: true }
+    OfficeMessage:
+      type: object
+      properties:
+        id: { type: string, description: 即 itemId }
+        sessionId: { type: string }
+        runId: { type: string, nullable: true }
+        role: { type: string, enum: [user, assistant] }
+        content:
+          type: object
+          description: 消息内容，携带 schemaVersion（协议版本与存储版本独立管理）
+          properties:
+            schemaVersion: { type: integer }
+            text: { type: string }
+        threadId: { type: string, description: = sessionId }
+        turnId: { type: string, nullable: true, description: = runId }
+        createdAt: { type: string }
+    OfficeArtifact:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        runId: { type: string }
+        kind: { type: string, enum: [markdown, code, html, file] }
+        name: { type: string }
+        size: { type: integer }
+        mime: { type: string }
+    OfficeError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, description: 如 credits_exhausted / run_conflict / events_expired / rate_limited }
+            message: { type: string }
   responses:
     Error400:
       description: 参数校验失败或业务校验不通过（信封见 Error schema）
@@ -3498,4 +3546,259 @@ paths:
                   total: { type: integer, format: int64 }
                   page: { type: integer }
                   size: { type: integer }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/v1/office/sessions:
+    post:
+      tags: [办公助理]
+      summary: 创建会话
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { agentId: { type: string, description: 缺省使用默认智能体 } }
+      responses:
+        '201':
+          description: 会话已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OfficeSession' }
+        '401': { $ref: '#/components/responses/Error401' }
+    get:
+      tags: [办公助理]
+      summary: 会话列表（按更新时间倒序，游标分页）
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: 会话分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/OfficeSession' } }
+                  nextCursor: { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Error401' }
+  /api/v1/office/sessions/{id}:
+    get:
+      tags: [办公助理]
+      summary: 会话详情
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: 会话详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OfficeSession' }
+        '404': { description: 会话不存在或非本人 }
+  /api/v1/office/sessions/{id}/messages:
+    get:
+      tags: [办公助理]
+      summary: 消息快照（权威数据源；?afterTurnId= 增量）
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: afterTurnId, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: 消息列表（按创建时间升序）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { items: { type: array, items: { $ref: '#/components/schemas/OfficeMessage' } } }
+    post:
+      tags: [办公助理]
+      summary: 发消息并起一次 Agent 运行（幂等：同 clientMsgId 返回既有 run）
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content, clientMsgId]
+              properties:
+                content: { type: string, description: 用户消息文本 }
+                clientMsgId: { type: string, description: 幂等键（uuid），重放返回首次结果 }
+                attachmentIds: { type: array, items: { type: string }, description: M2 起生效 }
+      responses:
+        '201':
+          description: run 已排队；通过 stream 端点订阅事件
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clientMsgId: { type: string }
+                  runId: { type: string }
+                  sessionId: { type: string }
+                  status: { type: string, enum: [queued] }
+        '200': { description: 幂等命中（同 clientMsgId），返回既有 run }
+        '400':
+          description: 点数不足
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OfficeError' }
+        '409':
+          description: 同会话已有活动 run（串行闸）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OfficeError' }
+  /api/v1/office/sessions/{id}/runs/{runId}/stream:
+    get:
+      tags: [办公助理]
+      summary: 订阅运行事件流（text/event-stream；断线按 lastSeq 重放，已清理区间返回 410）
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: runId, in: path, required: true, schema: { type: string } }
+        - { name: lastSeq, in: query, schema: { type: integer }, description: 从该 seq 之后重放；等价 Last-Event-ID 头 }
+      responses:
+        '200':
+          description: |
+            SSE 流，事件信封 {"v":1,"seq":N,"type":"...","runId":"...","ts":ms,"payload":{...}}，逐事件 `data: <json>\n\n`，`id:` 字段即 seq。
+            事件类型（M1）：run_started{model,agentName} / delta{text} / tool_call{toolCallId,name,inputPreview,status} /
+            tool_result{toolCallId,status,isError,outputPreview} / artifact{artifactId,kind,name,size}（M2 起出现） /
+            notice{level,text} / done{inputTokens,outputTokens,credits}（终态）/ error{code,message?,retryable}（终态）/
+            quota_exhausted{usedCredits}（M3）。未知 type 必须忽略（向前兼容）。
+            终态事件之后不再有事件。
+        '410':
+          description: lastSeq 落在已清理区间（事件过期），客户端应改用消息快照重建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OfficeError' }
+  /api/v1/office/runs/{runId}/cancel:
+    post:
+      tags: [办公助理]
+      summary: 取消运行（幂等：已终态返回 200）
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: runId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: 取消受理/幂等成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /api/v1/office/sessions/{id}/artifacts:
+    get:
+      tags: [办公助理]
+      summary: 会话产物列表（M2 起有数据）
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: 产物分页
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { items: { type: array, items: { $ref: '#/components/schemas/OfficeArtifact' } } }
+  /api/v1/office/artifacts/{id}:
+    get:
+      tags: [办公助理]
+      summary: 产物详情
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: 产物详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OfficeArtifact' }
+  /api/admin/office/sessions:
+    get:
+      tags: [Admin-办公助理]
+      summary: 全站会话列表（按用户/状态筛选；权限 office.read）
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        '200':
+          description: 会话分页（含用户邮箱与消息数）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/OfficeSession'
+                        - type: object
+                          properties:
+                            userEmail: { type: string }
+                            messagesCount: { type: integer }
+                  nextCursor: { type: string, nullable: true }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/office/sessions/{id}:
+    get:
+      tags: [Admin-办公助理]
+      summary: 会话详情 + 全部消息（客服查看用户对话；权限 office.read）
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: 会话与消息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session: { $ref: '#/components/schemas/OfficeSession' }
+                  messages: { type: array, items: { $ref: '#/components/schemas/OfficeMessage' } }
+        '403': { $ref: '#/components/responses/Error403' }
+  /api/admin/office/stats:
+    get:
+      tags: [Admin-办公助理]
+      summary: 运营统计（模型分布/成功率/工具调用 Top/活跃用户 Top；权限 office.read）
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: days, in: query, schema: { type: integer, enum: [7, 30], default: 7 } }]
+      responses:
+        '200':
+          description: 统计看板数据
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runsTotal: { type: integer }
+                  runsByStatus:
+                    type: object
+                    properties:
+                      succeeded: { type: integer }
+                      failed: { type: integer }
+                      cancelled: { type: integer }
+                      running: { type: integer }
+                      queued: { type: integer }
+                  runsByModel:
+                    type: array
+                    items:
+                      type: object
+                      properties: { model: { type: string }, count: { type: integer } }
+                  messagesTotal: { type: integer }
+                  sessionsTotal: { type: integer }
+                  activeUsers: { type: integer }
+                  topUsers:
+                    type: array
+                    items:
+                      type: object
+                      properties: { userId: { type: string }, email: { type: string }, runs: { type: integer }, messages: { type: integer } }
+                  toolCalls:
+                    type: array
+                    items:
+                      type: object
+                      properties: { name: { type: string }, count: { type: integer } }
         '403': { $ref: '#/components/responses/Error403' }

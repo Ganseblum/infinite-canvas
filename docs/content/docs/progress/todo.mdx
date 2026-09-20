@@ -70,3 +70,10 @@ description: 已规划的后续工作
 
 - **SQLite 单测覆盖不到 MySQL 特有错误**：字符串列长度、保留字列名两次在真库才炸。涉及新表或新列名时，必须在一台真实 MySQL 上跑一次迁移。
 - **环境变量的 fail-fast 不等于模板真的读了它**：admin 入口脚本检查过 `API_BASE_URL` 但 `index.html` 漏加载 `/config.js`，变量检查通过而应用仍打错地址。新增运行期变量要沿「注入 → 加载 → 使用」全链路核对。
+
+## 第六期（AI 办公助理）后续
+
+- M1 收口：浏览器端到端走查（用户）+ G1 独立评审门；compose/nginx 接入（office-agent + LiteLLM 服务、工作区持久卷、SSE location）；权限点 `office.read`/`office.write`（32→34）与内测角色。
+- M2：工具过程卡打磨、附件上传注入（A11）、Artifacts 事件化识别与下载（A10，含净化实测）、自建搜索工具（OQ-8 选型前置）。
+- M3：多模型能力位路由与前端过滤、GPT 翻译评测门禁、计费闭环收口（预估/run 中检测/cost 对账）、admin 管理页。
+- 契约回填：spec §3 transcript 扩展名（.jsonl→.json）、done.credits 字段偏差、sessionId 正则允许下划线——三处以实现为准回写 spec。

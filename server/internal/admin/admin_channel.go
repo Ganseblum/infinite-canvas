@@ -56,6 +56,7 @@ type channelReq struct {
 	Enabled   *bool  `json:"enabled"`
 }
 
+// CreateChannel 新增平台渠道：Key 经上游密码器加密落库（nonce+payload），审计不含 Key。
 func (h *AdminHandler) CreateChannel(c *gin.Context) {
 	if h.upstream == nil {
 		errs.Abort(c, errs.ErrInternal)

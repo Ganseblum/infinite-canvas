@@ -11,8 +11,13 @@ import (
 
 // expectedAdminRouteCount 是管理后台的路由总数：41 条既有路由 + 7 条 RBAC 路由 + 管理员建号 + 用量分析 + 反馈工单 5 条。
 // +1 条 /admin/meta（多产品后台引导，免权限点）+ 4 条会员订阅路由 + 17 条博客管理路由。
+// +3 条 AI 办公助理管理面路由（office.read 只读；office.write 本期仅注册预留，无执行点）。
 // 增删管理路由必须同步改这个数字，让漏改权限的改动无法悄悄通过。
-const expectedAdminRouteCount = 82
+const expectedAdminRouteCount = 85
+
+// reservedPermissions 是已注册但本期没有路由执行点的权限点（office.write 预留）。
+// TestEveryRegisteredPermissionIsUsedBySomeRoute 对其豁免；落地执行点后应移出本清单。
+var reservedPermissions = map[string]bool{authz.PermOfficeWrite: true}
 
 func newAdminRouteTestEngine(t *testing.T) (*gin.Engine, []adminRouteSpec) {
 	t.Helper()
@@ -78,12 +83,15 @@ func TestEveryRegisteredPermissionIsUsedBySomeRoute(t *testing.T) {
 		}
 	}
 	for _, key := range authz.Keys() {
+		if reservedPermissions[key] {
+			continue // 预留权限点暂无执行点，显式豁免
+		}
 		if !used[key] {
 			t.Fatalf("权限点 %s 没有任何管理路由使用", key)
 		}
 	}
-	if len(used) != len(authz.Keys()) {
-		t.Fatalf("路由使用的权限点数应等于注册表数量 %d, got %d", len(authz.Keys()), len(used))
+	if len(used)+len(reservedPermissions) != len(authz.Keys()) {
+		t.Fatalf("路由使用的权限点数 %d + 预留 %d 应等于注册表数量 %d", len(used), len(reservedPermissions), len(authz.Keys()))
 	}
 }
 

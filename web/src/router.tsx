@@ -17,6 +17,7 @@ import FeedbackPage from "@/pages/feedback";
 import HomePage from "@/pages/home";
 import ImagePage from "@/pages/image";
 import LoginPage from "@/pages/login";
+import OfficePage from "@/pages/office";
 import OAuthAuthorizePage from "@/pages/oauth-authorize";
 import PrivacyPage from "@/pages/legal/privacy";
 import TermsPage from "@/pages/legal/terms";
@@ -67,6 +68,7 @@ export const router = createBrowserRouter([
         // 任一路由渲染抛错时兜底展示，避免落到 React Router 默认英文错误页。
         errorElement: <RouteErrorBoundary />,
         children: [
+            // —— 公开路由：无需登录 ——
             { path: "/login", element: <LoginPage /> },
             { path: "/verify-email", element: <VerifyEmailPage /> },
             { path: "/reset-password", element: <ResetPasswordPage /> },
@@ -75,6 +77,7 @@ export const router = createBrowserRouter([
             // 条款与隐私页公开可访问，不进登录守卫（差异清单 #113）。
             { path: "/terms", element: <TermsPage /> },
             { path: "/privacy", element: <PrivacyPage /> },
+            // —— 业务路由：统一登录守卫 + 主站布局 ——
             {
                 element: (
                     <RequireAuth>
@@ -85,6 +88,7 @@ export const router = createBrowserRouter([
                     </RequireAuth>
                 ),
                 children: [
+                    // 工具页
                     { path: "/", element: <HomePage /> },
                     { path: "/image", element: <ImagePage /> },
                     { path: "/video", element: <VideoPage /> },
@@ -96,13 +100,18 @@ export const router = createBrowserRouter([
                     { path: "/prompts", element: <PromptsPage /> },
                     { path: "/canvas", element: <CanvasPage /> },
                     { path: "/canvas/:id", element: <CanvasProjectPage /> },
+                    // 账户与运营页
                     { path: "/config", element: <ConfigPage /> },
                     { path: "/feedback", element: <FeedbackPage /> },
+                    // AI 办公工作台（第六期原型）：URL 驱动选中会话，入口显隐后续接 office.read 权限点。
+                    { path: "/office", element: <OfficePage /> },
+                    { path: "/office/s/:sessionId", element: <OfficePage /> },
                     { path: "/pricing", element: <PricingPage /> },
                     { path: "/profile", element: <ProfilePage /> },
                     { path: "/billing", element: <BillingPage /> },
                 ],
             },
+            // 兜底：其余路径（含主域名下的 /admin/*，后台已拆独立应用）全部落 NotFound。
             { path: "*", element: <NotFound /> },
         ],
     },

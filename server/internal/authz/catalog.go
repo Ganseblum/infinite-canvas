@@ -48,6 +48,8 @@ const (
 	PermFeedbackWrite        = "feedback.write"
 	PermBlogRead             = "blog.read"
 	PermBlogWrite            = "blog.write"
+	PermOfficeRead           = "office.read"
+	PermOfficeWrite          = "office.write"
 )
 
 // PermissionDef 是一个权限点在代码里的定义。
@@ -76,6 +78,7 @@ var moduleLabels = map[string]string{
 	"sso":        "单点登录",
 	"feedback":   "反馈工单",
 	"blog":       "博客",
+	"office":     "办公助理",
 }
 
 // registry 是权限点注册表，按模块与 Sort 升序排列。修改这里必须同步更新金标测试。
@@ -112,8 +115,11 @@ var registry = []PermissionDef{
 	{Key: PermFeedbackWrite, Module: "feedback", Name: "处理反馈工单", Description: "回复工单、更新工单状态", Sort: 290},
 	{Key: PermBlogRead, Module: "blog", Name: "查看博客", Description: "查看博客文章、栏目与评论列表", Sort: 300},
 	{Key: PermBlogWrite, Module: "blog", Name: "管理博客", Description: "新建、编辑、发布、删除文章与栏目，处理评论", Sort: 310},
+	{Key: PermOfficeRead, Module: "office", Name: "查看办公助理", Description: "查看用户办公会话、消息与运行统计", Sort: 320},
+	{Key: PermOfficeWrite, Module: "office", Name: "管理办公助理", Description: "管理办公助理会话与运行，本期仅注册预留", Sort: 330},
 }
 
+// registryIndex 是注册表的 key → 定义索引，包初始化时构建一次，IsKnown/Lookup 共用。
 var registryIndex = func() map[string]PermissionDef {
 	index := make(map[string]PermissionDef, len(registry))
 	for _, def := range registry {

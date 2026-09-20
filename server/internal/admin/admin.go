@@ -1,3 +1,5 @@
+// Package admin 是管理后台接口域：路由全部挂在 /api/admin，要求后台角色并按权限点鉴权
+// （路由表集中在 admin_routes.go），写操作统一写审计日志。
 package admin
 
 import (
@@ -60,6 +62,7 @@ type releaseWatermarker interface {
 	Video(ctx context.Context, data []byte, mimeType string) ([]byte, error)
 }
 
+// NewAdminHandler 便捷构造：不注入上游服务，渠道创建/更新会按 500 拒绝（见 CreateChannel）。
 func NewAdminHandler(db *gorm.DB, cfg *config.Config, stor storage.Storage) *AdminHandler {
 	return NewAdminHandlerWithUpstream(db, cfg, stor, nil)
 }
@@ -95,6 +98,8 @@ func (h *AdminHandler) SetWatermark(wm releaseWatermarker, enabled func() bool) 
 
 // ===== 用户管理 =====
 
+// adminUserSorts 是用户列表排序白名单：键为 sort 参数，值为 SQL 列；
+// purchased/granted/storage 三列来自 LEFT JOIN 聚合，故用 COALESCE 兜空值。
 var adminUserSorts = map[string]string{
 	"createdAt":       "platform_users.created_at",
 	"purchasedMicros": "COALESCE(ca.purchased_micros, 0)",
@@ -295,6 +300,8 @@ func planFilter(planID string, now time.Time) (string, []any) {
 	}
 }
 
+// ListUsers 用户列表：q 模糊匹配邮箱/用户名，status、planId（free/paid/sunset）筛选；
+// 点数与存储来自 LEFT JOIN 聚合列，档位/paidUntil 逐行派生（D6 口径，见循环处注释）。
 func (h *AdminHandler) ListUsers(c *gin.Context) {
 	params, ok := httpx.ParsePageParams(c)
 	if !ok {
@@ -411,6 +418,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": params.Page, "size": params.Size})
 }
 
+// GetUser 用户详情：聚合档位、存储用量、点数余额与媒体数；点数账户行不存在按 0 处理。
 func (h *AdminHandler) GetUser(c *gin.Context) {
 	userID, ok := parseUUIDParam(c)
 	if !ok {
@@ -486,6 +494,8 @@ type patchUserReq struct {
 	Status *string `json:"status"`
 }
 
+// PatchUser 封禁/解封用户：封禁即撤销全部会话并递增媒体令牌版本（立即掉线）；
+// 系统角色上的最后一个 active 用户不允许封禁（防锁死）。
 func (h *AdminHandler) PatchUser(c *gin.Context) {
 	userID, ok := parseUUIDParam(c)
 	if !ok {
@@ -553,6 +563,7 @@ type resetPasswordReq struct {
 	Password string `json:"password"`
 }
 
+// ResetPassword 重置为指定密码并撤销全部会话；是否强制下次登录改密按操作者是否本人决定（见事务内注释）。
 func (h *AdminHandler) ResetPassword(c *gin.Context) {
 	userID, ok := parseUUIDParam(c)
 	if !ok {
@@ -604,6 +615,8 @@ type adjustCreditsReq struct {
 	Note         string `json:"note"`
 }
 
+// AdjustCredits 手工增减点数：amountMicros 可为负（扣减），扣穿余额返回 402；
+// 说明必填，同时写入流水与审计。
 func (h *AdminHandler) AdjustCredits(c *gin.Context) {
 	userID, ok := parseUUIDParam(c)
 	if !ok {
@@ -654,6 +667,7 @@ func (h *AdminHandler) AdjustCredits(c *gin.Context) {
 	})
 }
 
+// RecalculateUsage 重算并回写用户存储用量，用于计数与实际记录漂移后的修复。
 func (h *AdminHandler) RecalculateUsage(c *gin.Context) {
 	userID, ok := parseUUIDParam(c)
 	if !ok {
@@ -668,6 +682,7 @@ func (h *AdminHandler) RecalculateUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"storageBytes": used})
 }
 
+// ReclaimMedia 按用户档位的保留期与存储上限清理孤儿/过期/超限媒体；dryRun=true 只出报告不删除。
 func (h *AdminHandler) ReclaimMedia(c *gin.Context) {
 	userID, ok := parseUUIDParam(c)
 	if !ok {
@@ -691,6 +706,8 @@ func (h *AdminHandler) ReclaimMedia(c *gin.Context) {
 
 // ===== 总览 =====
 
+// Stats 总览卡片指标。「今日」以 UTC 零点为界（Truncate 24h），与用量分析的
+// stat_date（UTC+8 日界）不是同一口径。
 func (h *AdminHandler) Stats(c *gin.Context) {
 	now := time.Now()
 	dayStart := now.UTC().Truncate(24 * time.Hour)
@@ -717,6 +734,7 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 
 // ===== 模型目录 =====
 
+// ListModels 返回全部模型目录项（含未启用），按 sort、name 排序。
 func (h *AdminHandler) ListModels(c *gin.Context) {
 	var models []model.ModelCatalog
 	if err := h.db.Order("sort ASC, name ASC").Find(&models).Error; err != nil {
@@ -730,6 +748,8 @@ func (h *AdminHandler) ListModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
+// modelReq 是模型新增/更新共用的载荷：constraints 与 creditCost 传 JSON 原文，
+// 由服务端解析并做组合校验；指针字段在更新时未传即不改。
 type modelReq struct {
 	Name              string          `json:"name"`
 	DisplayName       string          `json:"displayName"`
@@ -743,6 +763,7 @@ type modelReq struct {
 	Sort              *int            `json:"sort"`
 }
 
+// CreateModel 新增模型：name 唯一（先查重，唯一键冲突兜底），constraints/creditCost 过组合校验后落库。
 func (h *AdminHandler) CreateModel(c *gin.Context) {
 	var req modelReq
 	if err := c.ShouldBindJSON(&req); err != nil || !validModelReq(&req) {
@@ -808,6 +829,7 @@ func (h *AdminHandler) CreateModel(c *gin.Context) {
 	c.JSON(http.StatusCreated, service.NewModelSummary(item))
 }
 
+// UpdateModel 部分更新模型：空串/nil 字段保持原值；constraints/creditCost 改动后重新做组合校验。
 func (h *AdminHandler) UpdateModel(c *gin.Context) {
 	modelID, ok := parseUUIDParam(c)
 	if !ok {
@@ -907,6 +929,8 @@ func (h *AdminHandler) UpdateModel(c *gin.Context) {
 	c.JSON(http.StatusOK, service.NewModelSummary(item))
 }
 
+// DeleteModel 删除模型：已产生过消费流水的模型只能下架（enabled=false）不能删；
+// 删除时连带清理该模型的折扣活动。
 func (h *AdminHandler) DeleteModel(c *gin.Context) {
 	modelID, ok := parseUUIDParam(c)
 	if !ok {
@@ -994,6 +1018,8 @@ type promotionReq struct {
 	Reason      string          `json:"reason"`
 }
 
+// CreatePromotion 新增折扣活动：先过冲突校验（同期折扣冲突返回 409），
+// 初始状态按起止时间推导。
 func (h *AdminHandler) CreatePromotion(c *gin.Context) {
 	var req promotionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1127,6 +1153,7 @@ func (h *AdminHandler) UpdatePromotion(c *gin.Context) {
 	c.JSON(http.StatusOK, promotionPayload(&promotion))
 }
 
+// promotionStatus 按起止时间推导展示状态：未开始 scheduled、进行中 active、已结束 ended。
 func promotionStatus(promotion model.ModelPricePromotion, now time.Time) string {
 	switch {
 	case now.Before(promotion.StartsAt):
@@ -1208,6 +1235,7 @@ type packageReq struct {
 	Sort            *int   `json:"sort"`
 }
 
+// CreatePackage 新增充值档位：id 由管理员指定且全局唯一，币种固定 CNY，价格必须整分。
 func (h *AdminHandler) CreatePackage(c *gin.Context) {
 	var req packageReq
 	if err := c.ShouldBindJSON(&req); err != nil || req.ID == "" || req.Name == "" || req.PriceMicros == nil {
@@ -1328,6 +1356,8 @@ var adminOrderSorts = map[string]string{
 	"priceMicros": "price_micros",
 }
 
+// ListOrders 订单列表：status/provider/userId 筛选，排序走白名单；
+// 单项复用用户侧 OrderPayload，再补 userId 键。
 func (h *AdminHandler) ListOrders(c *gin.Context) {
 	params, ok := httpx.ParsePageParams(c)
 	if !ok {
@@ -1390,6 +1420,7 @@ func validOrderStatusValue(status string) bool {
 
 // ===== 公共辅助 =====
 
+// parseUUIDParam 解析路径 :id；不是合法 UUID 一律按 404 处理，不区分格式错误与不存在。
 func parseUUIDParam(c *gin.Context) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

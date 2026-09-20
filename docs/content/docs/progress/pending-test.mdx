@@ -295,3 +295,16 @@ description: 当前版本已实现、仍需人工验证确认的变更项
 - 部署文档验收：`deploy/README.md`、Docker 与本地开发页明确两套数据库、SSH/DBeaver 和分阶段实施；本地服务器手册不保存密码。完整双 Go 共享模式仍明确列为 TODO，不应描述为已部署或已验收。本次变更是文档规划，不是服务器部署。
 
 - 用量分析看板：以持有 `stats.usage` 权限的后台角色进入 admin，侧边栏应出现「用量分析」入口且页面可打开；无该权限的角色不应看到入口（页面级守卫与菜单同源）。页面应显示 7/30/90 天切换（页面默认选中 7 天，接口缺省 30）、KPI 卡（生成请求、成功率、消费点数、活跃用户、活跃会话）、按天趋势折线（请求数 + 消费点数）、模型分布条形图（前 10）、能力分布饼图、规格分布条形图与消费用户排行表（前 10），切换天数后图表与 KPI 随之刷新，趋势图缺数日期应补零显示。`days` 传 7/30/90 以外的值接口应返回 400。在主站生成图片、视频、音频和文本对话后，浏览器网络面板中四类请求 body 应带 `sessionId`（同一标签页刷新保持不变，新开标签页为新值）；统计按 UTC+8 日界归天，消费点数只计成功请求（审核拒绝不退点会造成的低估见接口注释）。
+
+## AI 办公助理 M1（第六期，本地联调版）
+
+- 前置（本地三进程）：office-agent——`office-agent/` 目录 `node --env-file=.env node_modules/tsx/dist/cli.mjs src/index.ts`（8902）；Go——构建 `server/cmd/server` 后以 `PORT=8093`、`DATABASE_URL=sqlite:/tmp/ic-office/app.db`、`SEED_TEST_DATA=true`、`OFFICE_AGENT_URL=http://127.0.0.1:8902`、`OFFICE_INTERNAL_TOKEN` 与 agent 侧一致启动；web vite（3001）`/api` 代理指向 8093（验收完改回 8091 还原原验收链路）。模型 key 在 `office-agent/.env`（已被 gitignore）。
+- 用 `test@example.com` / `test123456` 登录主站（3001）后打开 `/office`：新建会话发消息应收到流式回复，done 后消息落快照（刷新不丢不重复）；同一会话第二轮提问应能引用上一轮内容（resume 续接）；执行中点停止应变 cancelled 且已生成部分保留；点数为 0 时发消息应被 `credits_exhausted` 拦截（admin 后台「调整点数」充值后恢复）；断网后恢复应按 lastSeq 续流不重复。
+- 已知边界：权限点 `office.read`/`office.write` 未接入（M1 仅登录态，M3 落内测角色）；compose/nginx 与 LiteLLM 未接入（本地原生三进程，模型直连 new-api 网关）；每日消息限流与事件保留期清理未实现（待边界值报批）；模型工具调用（读文件/跑命令）已在链路上，产物落工作区，Artifacts 事件化识别是 M2（T11）。
+
+## AI 办公助理管理面与服务器部署（第六期）
+
+- 服务器部署在 `/opt/worke`（独立 compose 项目 worke：db/api/office-agent/app/admin 五容器，回环端口 3300-3302，nginx vhost `work.youc.online`（主站+/office）与 `sim-work.youc.online`（admin 后台））。域名 DNS 尚未生效（8.8.8.8 NXDOMAIN），当前用 `curl --resolve` 验证；DNS 生效后执行 `certbot --nginx -d work.youc.online -d sim-work.youc.online` 补 TLS。
+- admin 后台（sim-work.youc.online，管理员见 /opt/worke/.env 的 ADMIN_EMAIL/ADMIN_PASSWORD）：侧边栏「办公助理」两个页签——会话页（按用户邮箱/ID 与状态筛选、游标分页、详情抽屉只读查看完整对话）；统计页（7/30 天切换：总运行/消息/会话/活跃用户 KPI、状态分布饼图含成功失败率、模型 Top10、工具调用 Top10、活跃用户 Top10）。
+- 权限：`office.read`/`office.write` 已入金标（32→34）；admin 系统角色隐式拥有，普通用户/support 角色访问管理面应 403。
+- 计费：预检（余额≤0 拒）+ 终态微元粒度扣费（1 点/1000 输出 token）已实测（0.126 点精确扣减）；新用户免费赠送仅含图像/视频体验次数、无对话点数（FREE_GRANT 现有语义），office 点数发放策略在 M3 计费闭环收口，内测期用 admin「调整点数」。

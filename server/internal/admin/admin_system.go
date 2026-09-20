@@ -40,6 +40,7 @@ func (h *AdminHandler) PublicSettings(c *gin.Context) {
 	})
 }
 
+// GetSettings 返回全量设置快照（要求权限点）；免登录的公开子集见 PublicSettings。
 func (h *AdminHandler) GetSettings(c *gin.Context) {
 	if h.settings == nil {
 		errs.Abort(c, errs.ErrInternal)

@@ -18,6 +18,7 @@ import AdminModelsPage from "@admin/pages/models";
 import AdminModerationPage from "@admin/pages/moderation";
 import AdminFeedbackPage from "@admin/pages/feedback";
 import AdminBlogPage from "@admin/pages/blog";
+import AdminOfficePage from "@admin/pages/office";
 import NoPermissionPage from "@admin/pages/no-permission";
 import AdminOrdersPage from "@admin/pages/orders";
 import AdminProductPlaceholderPage from "@admin/pages/product";
@@ -72,11 +73,22 @@ export const router = createBrowserRouter([
                 ),
                 children: [
                     { path: "/admin", element: <AdminHomeRoute /> },
-                    { path: "/admin/blog", element: (
-                        <RequirePermission required={permissionsForPath("/admin/blog")}>
-                            <AdminBlogPage />
-                        </RequirePermission>
-                    ) },
+                    {
+                        path: "/admin/blog",
+                        element: (
+                            <RequirePermission required={permissionsForPath("/admin/blog")}>
+                                <AdminBlogPage />
+                            </RequirePermission>
+                        ),
+                    },
+                    {
+                        path: "/admin/office",
+                        element: (
+                            <RequirePermission required={permissionsForPath("/admin/office")}>
+                                <AdminOfficePage />
+                            </RequirePermission>
+                        ),
+                    },
                     {
                         path: "/admin/analytics",
                         element: (

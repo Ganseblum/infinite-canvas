@@ -48,8 +48,9 @@ export default defineConfig({
     },
     server: {
         proxy: {
+            // office M1 联调栈（Go 8093 + office-agent 8902）；验收完改回 8091 即还原原验收链路。
             "/api": {
-                target: "http://127.0.0.1:8080",
+                target: "http://127.0.0.1:8093",
                 changeOrigin: true,
             },
         },

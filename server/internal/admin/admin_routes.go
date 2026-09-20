@@ -8,6 +8,7 @@ import (
 	"github.com/infinite-canvas/server/internal/authz"
 	"github.com/infinite-canvas/server/internal/blog"
 	"github.com/infinite-canvas/server/internal/middleware"
+	"github.com/infinite-canvas/server/internal/office"
 )
 
 // openAdminRoutes 是唯一允许不带权限点注册的管理路由：GET /me 与 GET /meta 只要求有
@@ -175,5 +176,12 @@ func RegisterRoutes(g *gin.RouterGroup, h *AdminHandler) []adminRouteSpec {
 	r.POST("/feedback/tickets/:id/replies", authz.PermFeedbackWrite, h.ReplyFeedbackTicket)
 	r.PATCH("/feedback/tickets/:id/status", authz.PermFeedbackWrite, h.UpdateFeedbackTicketStatus)
 	r.GET("/feedback/generations", authz.PermFeedbackRead, h.ListGenerationFeedbacks)
+
+	// ===== AI 办公助理（管理面；handler 在 internal/office，路由表仍由 admin 包统一注册）=====
+	// 本期全部只读挂 office.read；office.write 仅注册预留，无执行点。
+	officeAdmin := office.NewAdminHandler(h.db)
+	r.GET("/office/sessions", authz.PermOfficeRead, officeAdmin.ListSessions)
+	r.GET("/office/sessions/:id", authz.PermOfficeRead, officeAdmin.GetSession)
+	r.GET("/office/stats", authz.PermOfficeRead, officeAdmin.Stats)
 	return r.specs
 }

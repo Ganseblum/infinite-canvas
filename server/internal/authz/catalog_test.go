@@ -20,6 +20,8 @@ var goldenPermissionKeys = []string{
 	"moderation.compensate",
 	"moderation.read",
 	"moderation.review",
+	"office.read",
+	"office.write",
 	"orders.read",
 	"orders.refund",
 	"packages.read",
@@ -75,6 +77,7 @@ func TestRegistryCoversEveryPermissionConstant(t *testing.T) {
 		PermSSORead, PermSSOWrite,
 		PermFeedbackRead, PermFeedbackWrite,
 		PermBlogRead, PermBlogWrite,
+		PermOfficeRead, PermOfficeWrite,
 	}
 	for _, key := range constants {
 		if !IsKnown(key) {
@@ -103,8 +106,8 @@ func TestRegistryDefinitionIsComplete(t *testing.T) {
 			t.Fatalf("权限点 %s 的模块 %s 缺少展示名", def.Key, def.Module)
 		}
 	}
-	if len(registry) != 32 {
-		t.Fatalf("权限点总数应为 32, got %d", len(registry))
+	if len(registry) != 34 {
+		t.Fatalf("权限点总数应为 34, got %d", len(registry))
 	}
 	if IsKnown("stats.unknown") || IsKnown("") {
 		t.Fatalf("未注册的 key 不允许通过 IsKnown")

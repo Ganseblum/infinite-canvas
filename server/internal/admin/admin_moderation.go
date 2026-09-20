@@ -343,6 +343,8 @@ func (h *AdminHandler) CompensateModeration(c *gin.Context) {
 		}
 		credit = updated
 		// 补偿流水用审核记录 id 作为 ref_id，Rewr调整接口写的是 admin ref，这里补一条标记。
+		// 即：Adjust 落的流水 ref_type=admin、ref_id=操作者，这里把刚插入的最新一条改写为
+		// moderation:<recordID>，入口处的「已补偿」查重靠这对 ref 命中。
 		if err := tx.Model(&model.CreditTransaction{}).
 			Where("ref_type = ? AND ref_id = ? AND created_at = (SELECT MAX(created_at) FROM credit_transactions WHERE user_id = ?)",
 				"admin", actorID.String(), record.UserID).
@@ -386,6 +388,7 @@ func (h *AdminHandler) ModerationStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// loadModerationRecord 是详情/预览/复核/补偿共用的取记录入口；id 非法或不存在一律 404。
 func (h *AdminHandler) loadModerationRecord(c *gin.Context) (*model.ModerationRecord, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

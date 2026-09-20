@@ -512,6 +512,7 @@ func loadRolePermissions(db *gorm.DB, role model.Role) ([]string, error) {
 	return granted, nil
 }
 
+// replaceRolePermissions 全量替换角色权限：先删后插，调用方必须在事务内执行。
 func replaceRolePermissions(tx *gorm.DB, roleKey string, permissions []string) error {
 	if err := tx.Where("role_key = ?", roleKey).Delete(&model.RolePermission{}).Error; err != nil {
 		return err

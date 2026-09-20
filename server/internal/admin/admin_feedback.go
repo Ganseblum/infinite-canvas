@@ -239,6 +239,7 @@ func (h *AdminHandler) ListGenerationFeedbacks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": params.Page, "size": params.Size})
 }
 
+// loadFeedbackTicket 是工单详情/回复/状态更新共用的取数入口；id 非法或不存在一律 404。
 func (h *AdminHandler) loadFeedbackTicket(c *gin.Context) (*model.FeedbackTicket, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

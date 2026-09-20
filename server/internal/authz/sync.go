@@ -107,6 +107,8 @@ func ensureSupportRole(db *gorm.DB) error {
 	return nil
 }
 
+// syncPermissions 把代码注册表投影进 permissions 表：缺失的新增、字段变化更新、
+// 误删后恢复的撤销废弃标记；注册表中已消失的 key 只标废弃不删行。
 func syncPermissions(db *gorm.DB) error {
 	keys := make([]string, 0, len(registry))
 	for _, def := range registry {

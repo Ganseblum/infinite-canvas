@@ -1,0 +1,105 @@
+# 「AI 办公助理」独立部署栈（worke 项目）。
+# 与仓库主 compose 完全隔离：独立项目名 worke、独立网络、独立数据卷（./data/*），
+# 端口只绑回环 3300(app)/3301(admin)/3302(api)，office-agent 不映射宿主端口。
+# 复制本文件到部署目录（如 /opt/worke/）后与 server/ web/ admin/ office-agent/ 同级摆放，
+# 构建上下文按相对路径解析。
+name: worke
+
+services:
+  db:
+    image: mysql:8.4.11
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  office-agent:
+    build:
+      context: ./office-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      OFFICE_PORT: "8902"
+      OFFICE_INTERNAL_TOKEN: ${OFFICE_INTERNAL_TOKEN}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-glm-5.3}
+      CLAUDE_CONFIG_DIR: /data/.claude
+      OFFICE_WORKSPACE_DIR: /data/workspaces
+    volumes:
+      - ./data/office:/data
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      office-agent:
+        condition: service_started
+    environment:
+      PORT: "8080"
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY}
+      APP_BASE_URL: ${APP_BASE_URL:-https://work.youc.online}
+      COOKIE_SECURE: "true"
+      SITE_ENV: ${SITE_ENV:-test}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      MAIL_DRIVER: log
+      SEED_TEST_DATA: "${SEED_TEST_DATA:-true}"
+      REGISTRATION_ENABLED: "${REGISTRATION_ENABLED:-true}"
+      FREE_GRANT_ENABLED: "${FREE_GRANT_ENABLED:-true}"
+      FREE_GRANT_CAMPAIGN_ID: ${FREE_GRANT_CAMPAIGN_ID}
+      FREE_GRANT_DAILY_BUDGET_MICROS: "${FREE_GRANT_DAILY_BUDGET_MICROS}"
+      FREE_GRANT_RISK_THRESHOLD: "${FREE_GRANT_RISK_THRESHOLD}"
+      TRUSTED_PROXIES: 172.16.0.0/12
+      OFFICE_AGENT_URL: http://office-agent:8902
+      OFFICE_INTERNAL_TOKEN: ${OFFICE_INTERNAL_TOKEN}
+      OFFICE_WORKSPACE_DIR: /data/office-workspaces
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    ports:
+      - "127.0.0.1:3302:8080"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3300:3000"
+
+  admin:
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+    restart: unless-stopped
+    environment:
+      # admin 强制要求非空 API_BASE_URL（fail-fast）；填自身域名走本 vhost 的 /api 反代 = 同源直连，零 CORS。
+      API_BASE_URL: ${ADMIN_API_BASE_URL:-https://sim-work.youc.online}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3301:3000"

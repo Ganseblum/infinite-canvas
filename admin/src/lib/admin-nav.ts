@@ -26,6 +26,7 @@ export const PERM = {
     feedbackWrite: "feedback.write",
     blogRead: "blog.read",
     blogWrite: "blog.write",
+    officeRead: "office.read",
     packagesRead: "packages.read",
     ordersRead: "orders.read",
     settingsRead: "settings.read",
@@ -78,6 +79,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     { path: "/admin/moderation", labelKey: "admin.tabs.moderation", anyOf: [PERM.moderationRead] },
     { path: "/admin/feedback", labelKey: "admin.tabs.feedback", anyOf: [PERM.feedbackRead] },
     { path: "/admin/blog", labelKey: "admin.tabs.blog", anyOf: [PERM.blogRead] },
+    { path: "/admin/office", labelKey: "admin.tabs.office", anyOf: [PERM.officeRead] },
     { path: "/admin/credit-packages", labelKey: "admin.tabs.packages", anyOf: [PERM.packagesRead] },
     { path: "/admin/orders", labelKey: "admin.tabs.orders", anyOf: [PERM.ordersRead] },
     // 系统页由四个 tab 组成，任一 tab 有权限就显示入口；tab 自身再按权限过滤。

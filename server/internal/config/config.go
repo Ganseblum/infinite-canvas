@@ -1,3 +1,6 @@
+// Package config 从环境变量加载服务端强类型配置：取值与派生默认值在 Load，
+// 关键约束（密钥长度、SMTP、存储、审核、水印等）在 validate 启动期校验，
+// 配置不合法直接拒绝启动。
 package config
 
 import (
@@ -16,6 +19,8 @@ import (
 // maxWatermarkTextRunes 是水印文案的字符上限（按 Unicode 字符计，非字节）。
 const maxWatermarkTextRunes = 40
 
+// Config 是服务端全部环境变量的强类型集合，字段默认值见 Load，约束见 validate
+// 与各字段注释。
 type Config struct {
 	Port          string
 	DatabaseURL   string
@@ -112,6 +117,16 @@ type Config struct {
 	AIVideoTaskTimeout     time.Duration
 	AIAllowPrivateUpstream bool
 
+	// AI 办公助理（第六期 M1）
+	// OfficeAgentURL 是契约二 office-agent（Runtime）内网地址。
+	OfficeAgentURL string
+	// OfficeInternalToken 是契约二共享密钥；为空时启动期随机生成并打日志，
+	// 必须把同一值注入 office-agent，否则全部 /v1/runs 调用 401。
+	OfficeInternalToken string
+	// OfficeWorkspaceDir 是会话工作区卷根目录（部署口径）。M1 工作区路径推导在
+	// Runtime 侧按 sessionId 进行，Go 侧仅落配置以对齐部署模板与 compose 卷声明。
+	OfficeWorkspaceDir string
+
 	// 媒体存储（第二期）
 	StorageDriver string // local | s3
 	MediaRoot     string // local 驱动的落盘根目录
@@ -132,6 +147,9 @@ type Config struct {
 	S3PresignTTL      time.Duration
 }
 
+// Load 读取环境变量构造 Config：先取值（普通项非法时回退默认值），再派生
+// 少量关联项（S3 预签名参数、可信代理、CORS 白名单），最后整体校验，
+// 任何一步失败都返回错误终止启动。
 func Load() (*Config, error) {
 	c := &Config{
 		Port:                 getenv("PORT", "8080"),
@@ -201,6 +219,9 @@ func Load() (*Config, error) {
 		AIStreamIdleTimeout:        getenvDurationOr("AI_STREAM_IDLE_TIMEOUT", 60*time.Second),
 		AIVideoTaskTimeout:         getenvDurationOr("AI_VIDEO_TASK_TIMEOUT", 20*time.Minute),
 		AIAllowPrivateUpstream:     getenvBool("AI_ALLOW_PRIVATE_UPSTREAM", false),
+		OfficeAgentURL:             getenv("OFFICE_AGENT_URL", "http://127.0.0.1:8902"),
+		OfficeInternalToken:        os.Getenv("OFFICE_INTERNAL_TOKEN"),
+		OfficeWorkspaceDir:         getenv("OFFICE_WORKSPACE_DIR", "./data/office-workspaces"),
 		StorageDriver:              getenv("STORAGE_DRIVER", "local"),
 		MediaRoot:                  getenv("MEDIA_ROOT", "/data/media"),
 		WatermarkEnabled:           parseWatermarkEnabled(os.Getenv("WATERMARK_ENABLED")),
@@ -287,6 +308,8 @@ func parseCORSAllowedOrigins(raw string) ([]string, error) {
 	return origins, nil
 }
 
+// validate 校验必填项与取值约束，并就地写入派生默认值（支付回调地址、权益天数兜底）；
+// 失败时返回带环境变量名的错误，由启动方直接退出。
 func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		return errors.New("DATABASE_URL 未配置")

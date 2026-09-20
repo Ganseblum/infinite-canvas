@@ -31,6 +31,7 @@ import (
 	"github.com/infinite-canvas/server/internal/middleware"
 	"github.com/infinite-canvas/server/internal/model"
 	"github.com/infinite-canvas/server/internal/moderation"
+	"github.com/infinite-canvas/server/internal/office"
 	platformbilling "github.com/infinite-canvas/server/internal/platform/billing"
 	"github.com/infinite-canvas/server/internal/platform/identity"
 	platformstorage "github.com/infinite-canvas/server/internal/platform/storage"
@@ -39,6 +40,8 @@ import (
 	"github.com/infinite-canvas/server/internal/watermark"
 )
 
+// main 是装配入口：先初始化基础设施（日志、数据库、存储），再按依赖顺序构建
+// 平台层与各产品域的处理器，最后注册路由并启动 HTTP 服务；任何一步失败即退出。
 func main() {
 	// 本地 go run 直启时加载仓库根目录的 .env（已存在的环境变量不被覆盖）；
 	// 容器内该文件不存在，静默跳过（差异清单 #69）。
@@ -51,6 +54,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 日志统一 JSON 输出到 stdout，级别取 LOG_LEVEL（非法值已在 config.Load 拦下）
 	level := new(slog.LevelVar)
 	switch cfg.LogLevel {
 	case "debug":
@@ -72,6 +76,11 @@ func main() {
 	}
 	if err := db.Migrate(gormDB); err != nil {
 		slog.Error("AutoMigrate 失败", "err", err)
+		os.Exit(1)
+	}
+	// 第六期 M1：office 域五张表的迁移由域包自带（db 包 import 产品域会违反依赖方向）。
+	if err := office.Migrate(gormDB); err != nil {
+		slog.Error("office AutoMigrate 失败", "err", err)
 		os.Exit(1)
 	}
 	// 结构版本留痕：AutoMigrate 无回滚，先记录「哪个版本建出了当前结构」。
@@ -104,6 +113,7 @@ func main() {
 		}
 	}
 
+	// 邮件服务：smtp 直发或 log 打印（MAIL_DRIVER），验证码与告警等出站邮件统一走它
 	mailer := mail.New(mail.Config{
 		Driver:     cfg.MailDriver,
 		Host:       cfg.SMTPHost,
@@ -144,6 +154,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 站点设置单例：启动时读库，admin / 社区 / 活动域共享同一实例
 	siteSettings := service.NewSiteSettingService(gormDB)
 	if err := siteSettings.Load(context.Background()); err != nil {
 		slog.Error("读取站点设置失败", "err", err)
@@ -151,6 +162,7 @@ func main() {
 	}
 	// 平台身份域：认证、授权与管理端的身份读写统一入口。
 	idn := identity.NewService(gormDB)
+	// 处理器装配模式：构造函数只收核心依赖，可选依赖（设置、审核、水印等）用 Set* 后置注入
 	authHandler := account.NewAuthHandler(gormDB, cfg, mailer)
 	authHandler.SetSettings(siteSettings)
 	grantService := service.NewFreeGrantService(gormDB)
@@ -190,6 +202,7 @@ func main() {
 	// 下发闸门与下载端点不读该开关、永远在线（计划红线）。
 	wmService := watermark.NewService(cfg.WatermarkFontPath, cfg.WatermarkText)
 	mediaHandler := ai.NewMediaHandler(gormDB, mediaStorage, moderationService, []byte(cfg.JWTSecret), wmService)
+	// 支付渠道注册表：下单与回调验签共用同一份渠道配置，配置无效启动即退出
 	paymentRegistry, err := service.NewPaymentRegistry(cfg)
 	if err != nil {
 		slog.Error("支付渠道配置无效", "err", err)
@@ -200,6 +213,7 @@ func main() {
 	paymentHandler := billing.NewPaymentHandler(gormDB, paymentRegistry)
 	catalogHandler := ai.NewModelHandler(gormDB, func() bool { return cfg.PromotionEnabled })
 
+	// 上游超时集合：默认值可被 AI_*_TIMEOUT 系列环境变量逐项覆盖
 	timeouts := service.DefaultUpstreamTimeouts()
 	if cfg.AIImageTimeout > 0 {
 		timeouts.ImageTotal = cfg.AIImageTimeout
@@ -240,6 +254,14 @@ func main() {
 	communityHandler := canvas.NewCommunityHandler(gormDB, siteSettings)
 	activityHandler := canvas.NewActivityHandler(gormDB, siteSettings, grantService, cfg)
 
+	// 第六期 M1：AI 办公助理编排域。权限点 office.read/write 的接入是 M3 任务，
+	// 当前契约一只挂登录中间件；点数读写复用同一 platform/billing 服务实例。
+	officeService := office.NewService(gormDB, billingService, office.RuntimeConfig{
+		BaseURL: cfg.OfficeAgentURL,
+		Token:   cfg.OfficeInternalToken,
+	})
+	officeHandler := office.NewOfficeHandler(officeService)
+
 	// 博客产品域：公共内容读与互动在 /api/v1/blog，管理面经 admin 包注册（blog.read/write）。
 	blogRevalidator := blog.NewRevalidator(cfg.BlogRevalidateURL, cfg.BlogRevalidateSecret)
 	blogPublic := blog.NewPublicHandler(gormDB)
@@ -264,6 +286,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// gin.New 不带任何默认中间件：RequestID/日志/Recovery/CORS 全部显式挂载，注册顺序即执行顺序。
 	router := gin.New()
 	router.Use(middleware.RequestID(), middleware.Logger(level.Level()), middleware.Recovery())
 	// 管理后台独立部署时跨源直连 API；CORS_ALLOWED_ORIGINS 为空则完全不启用。
@@ -280,6 +303,7 @@ func main() {
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	// 就绪探针：真正 ping 一次数据库，连接池耗尽或库不可达时返回 503
 	router.GET("/readyz", func(c *gin.Context) {
 		sqlDB, err := gormDB.DB()
 		if err != nil {
@@ -293,6 +317,8 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
+	// 平台会话凭据：HS256，/api/v1 与 /api/admin 的 middleware.Auth 共用这一份；
+	// OIDC 签发验签走独立 RS256 密钥，两套凭据互不通用（见下方 /api/v1/oidc 注释）。
 	secret := []byte(cfg.JWTSecret)
 
 	// 限流器（认证域的三个限流器随 account.MountAuthRoutes 注册）
@@ -387,6 +413,9 @@ func main() {
 	blog.MountContentRoutes(api.Group("/blog"), blogPublic)
 	blog.MountInteractionRoutes(api.Group("/blog", middleware.Auth(secret), active, passwordGate), blogPublic)
 
+	// AI 办公助理：契约一 A1–A9 挂 /api/v1/office，登录即可用（权限点接入是 M3）。
+	office.MountOfficeRoutes(api.Group("/office", middleware.Auth(secret), active, passwordGate), officeHandler)
+
 	// 运营活动：签到与邀请返利只进赠送桶。
 	activity := api.Group("/activity", middleware.Auth(secret), active, passwordGate)
 	{
@@ -458,6 +487,7 @@ func main() {
 		Handler: router,
 	}
 
+	// SIGINT/SIGTERM 触发 ctx 取消：后台定时任务随之停止，主流程进入优雅关闭。
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -471,6 +501,8 @@ func main() {
 			slog.Info("已关闭超时订单", "count", n)
 		}
 	})
+	// 第六期 E13：office 孤儿 run 回收扫描（启动即跑一次，之后每 60s）。
+	go officeService.StartOrphanScan(ctx)
 	// 第四期：启动时收敛滞留的生成请求，并恢复视频任务轮询。
 	if count, err := requestService.ConvergeStaleRunning(ctx, upstreamService.TimeoutFor, time.Now()); err != nil {
 		slog.Error("收敛滞留生成请求失败", "err", err)
@@ -516,6 +548,7 @@ func main() {
 		}
 	}()
 
+	// 阻塞等待退出信号，最多再给在途请求 10 秒排空
 	<-ctx.Done()
 	slog.Info("正在优雅关闭…")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
